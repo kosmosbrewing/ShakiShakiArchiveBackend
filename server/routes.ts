@@ -1,26 +1,128 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import session from "express-session";
+import connectPg from "connect-pg-simple";
 import { storage } from "./storage";
-import { setupAuth, isAuthenticated, isAdmin } from "./replitAuth";
+import { isAuthenticated, isAdmin, hashPassword, verifyPassword, populateUser } from "./auth";
 import {
   insertProductSchema,
   insertCategorySchema,
   insertCartItemSchema,
   insertOrderSchema,
+  signupSchema,
+  loginSchema,
 } from "@shared/schema";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  await setupAuth(app);
+  // Setup session
+  const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
+  const pgStore = connectPg(session);
+  const sessionStore = new pgStore({
+    conString: process.env.DATABASE_URL,
+    createTableIfMissing: false,
+    ttl: sessionTtl,
+    tableName: "sessions",
+  });
+
+  app.set("trust proxy", 1);
+  app.use(
+    session({
+      secret: process.env.SESSION_SECRET!,
+      store: sessionStore,
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        maxAge: sessionTtl,
+      },
+    })
+  );
+
+  // Populate user in all requests
+  app.use(populateUser);
 
   // Auth routes
-  app.get("/api/auth/user", isAuthenticated, async (req: any, res) => {
+  app.post("/api/auth/signup", async (req, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const validatedData = signupSchema.parse(req.body);
+      
+      // Check if user already exists
+      const existingUser = await storage.getUserByEmail(validatedData.email);
+      if (existingUser) {
+        return res.status(400).json({ message: "이미 사용 중인 이메일입니다" });
+      }
+
+      // Hash password and create user
+      const passwordHash = await hashPassword(validatedData.password);
+      const user = await storage.createUser({
+        email: validatedData.email,
+        passwordHash,
+        firstName: validatedData.firstName,
+        lastName: validatedData.lastName,
+      });
+
+      // Create session
+      req.session.userId = user.id;
+
+      // Return user without password hash
+      const { passwordHash: _, ...userWithoutPassword } = user;
+      res.json(userWithoutPassword);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/auth/login", async (req, res) => {
+    try {
+      const validatedData = loginSchema.parse(req.body);
+      
+      // Find user by email
+      const user = await storage.getUserByEmail(validatedData.email);
+      if (!user) {
+        return res.status(401).json({ message: "이메일 또는 비밀번호가 올바르지 않습니다" });
+      }
+
+      // Verify password
+      const isValidPassword = await verifyPassword(validatedData.password, user.passwordHash);
+      if (!isValidPassword) {
+        return res.status(401).json({ message: "이메일 또는 비밀번호가 올바르지 않습니다" });
+      }
+
+      // Create session
+      req.session.userId = user.id;
+
+      // Return user without password hash
+      const { passwordHash: _, ...userWithoutPassword } = user;
+      res.json(userWithoutPassword);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/auth/logout", (req, res) => {
+    req.session.destroy((err) => {
+      if (err) {
+        return res.status(500).json({ message: "로그아웃 중 오류가 발생했습니다" });
+      }
+      res.clearCookie("connect.sid");
+      res.json({ message: "로그아웃되었습니다" });
+    });
+  });
+
+  app.get("/api/auth/user", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
       const user = await storage.getUser(userId);
-      res.json(user);
+      if (!user) {
+        return res.status(404).json({ message: "사용자를 찾을 수 없습니다" });
+      }
+      // Return user without password hash
+      const { passwordHash: _, ...userWithoutPassword } = user;
+      res.json(userWithoutPassword);
     } catch (error) {
       console.error("Error fetching user:", error);
-      res.status(500).json({ message: "Failed to fetch user" });
+      res.status(500).json({ message: "사용자 정보를 가져오는 데 실패했습니다" });
     }
   });
 
@@ -59,9 +161,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Cart routes (protected)
-  app.get("/api/cart", isAuthenticated, async (req: any, res) => {
+  app.get("/api/cart", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.session.userId!;
       const cartItems = await storage.getCartItems(userId);
       res.json(cartItems);
     } catch (error: any) {
@@ -69,9 +171,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/cart", isAuthenticated, async (req: any, res) => {
+  app.post("/api/cart", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.session.userId!;
       const validatedData = insertCartItemSchema.parse({
         ...req.body,
         userId,
@@ -109,9 +211,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Order routes (protected)
-  app.post("/api/orders", isAuthenticated, async (req: any, res) => {
+  app.post("/api/orders", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.session.userId!;
 
       // Get cart items
       const cartItems = await storage.getCartItems(userId);
@@ -155,9 +257,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/orders", isAuthenticated, async (req: any, res) => {
+  app.get("/api/orders", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.session.userId!;
       const orders = await storage.getOrders(userId);
       res.json(orders);
     } catch (error: any) {
@@ -165,7 +267,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/orders/:id", isAuthenticated, async (req: any, res) => {
+  app.get("/api/orders/:id", isAuthenticated, async (req, res) => {
     try {
       const order = await storage.getOrder(req.params.id);
       if (!order) {
@@ -173,7 +275,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Verify user owns this order
-      const userId = req.user.claims.sub;
+      const userId = req.session.userId!;
       const user = await storage.getUser(userId);
       if (order.userId !== userId && !user?.isAdmin) {
         return res.status(403).json({ message: "Forbidden" });

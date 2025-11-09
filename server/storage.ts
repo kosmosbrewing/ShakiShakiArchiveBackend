@@ -24,6 +24,8 @@ import { eq, and, like, sql, desc } from "drizzle-orm";
 export interface IStorage {
   // User operations
   getUser(id: string): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
+  createUser(user: Omit<UpsertUser, 'id'>): Promise<User>;
   upsertUser(user: UpsertUser): Promise<User>;
 
   // Product operations
@@ -51,7 +53,7 @@ export interface IStorage {
   clearCart(userId: string): Promise<void>;
 
   // Order operations
-  createOrder(order: InsertOrder, items: InsertOrderItem[]): Promise<string>;
+  createOrder(order: InsertOrder, items: Omit<InsertOrderItem, 'orderId'>[]): Promise<string>;
   getOrders(userId: string): Promise<Order[]>;
   getOrder(orderId: string): Promise<(Order & { orderItems: (OrderItem & { product: Product })[] }) | undefined>;
   getAllOrders(): Promise<Order[]>;
@@ -66,6 +68,16 @@ export class DatabaseStorage implements IStorage {
   // User operations
   async getUser(id: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user;
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.email, email));
+    return user;
+  }
+
+  async createUser(userData: Omit<UpsertUser, 'id'>): Promise<User> {
+    const [user] = await db.insert(users).values(userData).returning();
     return user;
   }
 
@@ -189,7 +201,7 @@ export class DatabaseStorage implements IStorage {
     if (existing.length > 0) {
       const [updated] = await db
         .update(cartItems)
-        .set({ quantity: existing[0].quantity + item.quantity })
+        .set({ quantity: existing[0].quantity + (item.quantity || 1) })
         .where(eq(cartItems.id, existing[0].id))
         .returning();
       return updated;
@@ -217,7 +229,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Order operations
-  async createOrder(order: InsertOrder, items: InsertOrderItem[]): Promise<string> {
+  async createOrder(order: InsertOrder, items: Omit<InsertOrderItem, 'orderId'>[]): Promise<string> {
     const [newOrder] = await db.insert(orders).values(order).returning();
 
     const orderItemsWithOrderId = items.map((item) => ({

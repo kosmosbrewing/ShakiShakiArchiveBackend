@@ -25,10 +25,11 @@ export const sessions = pgTable(
   (table) => [index("IDX_session_expire").on(table.expire)]
 );
 
-// Users table (Replit Auth integration)
+// Users table (Email/Password authentication)
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  email: varchar("email").unique(),
+  email: varchar("email").unique().notNull(),
+  passwordHash: varchar("password_hash", { length: 255 }).notNull(),
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
   profileImageUrl: varchar("profile_image_url"),
@@ -39,6 +40,21 @@ export const users = pgTable("users", {
 
 export type User = typeof users.$inferSelect;
 export type UpsertUser = typeof users.$inferInsert;
+
+// Auth schemas
+export const signupSchema = z.object({
+  email: z.string().email("유효한 이메일 주소를 입력해주세요"),
+  password: z.string().min(8, "비밀번호는 최소 8자 이상이어야 합니다"),
+  firstName: z.string().min(1, "이름을 입력해주세요"),
+  lastName: z.string().min(1, "성을 입력해주세요"),
+});
+export type SignupInput = z.infer<typeof signupSchema>;
+
+export const loginSchema = z.object({
+  email: z.string().email("유효한 이메일 주소를 입력해주세요"),
+  password: z.string().min(1, "비밀번호를 입력해주세요"),
+});
+export type LoginInput = z.infer<typeof loginSchema>;
 
 // Categories table
 export const categories = pgTable("categories", {
