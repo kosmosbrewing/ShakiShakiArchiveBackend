@@ -108,7 +108,7 @@ npm run db:push --force
 
 ## 4. Vite 설정 수정 (중요!)
 
-프로젝트를 React에서 Vue 3로 전환했으므로, `vite.config.ts` 파일을 수정해야 합니다.
+프로젝트를 React 에서 Vue 3로 전환했으므로, `vite.config.ts` 파일을 수정해야 합니다.
 
 **vite.config.ts** 파일을 열어 다음과 같이 수정:
 
