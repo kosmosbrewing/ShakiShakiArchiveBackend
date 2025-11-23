@@ -1,111 +1,188 @@
-<script setup lang="ts">
-import { computed } from 'vue';
-import { useAuthStore } from '@/stores/auth';
-import { useCartStore } from '@/stores/cart';
-import { useRouter } from 'vue-router';
+<script lang="ts" setup>
+import { ref } from "vue";
 
-const authStore = useAuthStore();
-const cartStore = useCartStore();
-const router = useRouter();
+import { useColorMode } from "@vueuse/core";
+const mode = useColorMode();
+mode.value = "light";
 
-const cartItemCount = computed(() => cartStore.totalItems);
+import {
+  NavigationMenu,
+  NavigationMenuItem,
+  NavigationMenuLink,
+  NavigationMenuList,
+} from "@/components/ui/navigation-menu";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 
-async function handleLogout() {
-  await authStore.logout();
-  router.push('/login');
+import { Button } from "@/components/ui/button";
+import { Menu } from "lucide-react";
+
+interface RouteProps {
+  path: string;
+  label: string;
 }
+
+const routeList: RouteProps[] = [
+  {
+    path: "/products/all",
+    label: "ALL",
+  },
+  {
+    path: "/products/outerwear",
+    label: "OUTERWEAR",
+  },
+  {
+    path: "/products/top",
+    label: "TOP",
+  },
+  {
+    path: "/products/bottom",
+    label: "BOTTOM",
+  },
+  {
+    path: "/products/accessory",
+    label: "ACCESSORY",
+  },
+
+  {
+    path: "/contact",
+    label: "CONTACT",
+  },
+
+  {
+    path: "/instagram",
+    label: "INSTAGRAM",
+  },
+
+  {
+    path: "/about",
+    label: "ABOUT",
+  },
+
+  {
+    path: "/login",
+    label: "LOGIN",
+  },
+  {
+    path: "/account",
+    label: "ACCOUNT",
+  },
+  {
+    path: "/orders",
+    label: "ORDER",
+  },
+];
+
+const isOpen = ref<boolean>(false);
 </script>
 
 <template>
-  <header class="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-    <div class="container mx-auto px-4">
-      <div class="flex h-16 items-center justify-between">
-        <!-- 로고 -->
-        <router-link 
-          to="/" 
-          class="flex items-center gap-2 text-xl font-bold text-primary hover:opacity-80 transition-opacity"
-          data-testid="link-home"
-        >
-          ShopHub
-        </router-link>
+  <header
+    :class="{
+      'shadow-light': mode === 'light',
+      'w-[70%] md:w-[85%] lg:w-[85%] lg:max-w-screen-xl top-5 mx-auto sticky z-40 rounded-2xl flex justify-between items-center p-2 bg-card shadow-md': true,
+    }"
+    :style="{
+      backgroundColor: 'rgba(var(--color-card-rgb, 255, 255, 255), 0.1)',
+    }"
+  >
+    <!-- Mobile -->
+    <div class="grid grid-cols-3 items-center lg:hidden">
+      <a></a>
 
-        <!-- 네비게이션 -->
-        <nav class="flex items-center gap-6">
-          <router-link 
-            to="/" 
-            class="text-sm font-medium text-foreground/60 hover:text-foreground transition-colors"
-            data-testid="link-products"
+      <a href="/" class="flex items-center justify-center">
+        <img src="@/icons/logo01.png" alt="Logo" class="h-8 w-18 ml-3 m-1" />
+      </a>
+
+      <div class="flex justify-end">
+        <Sheet v-model:open="isOpen">
+          <SheetTrigger as-child>
+            <Menu @click="isOpen = true" class="cursor-pointer" />
+          </SheetTrigger>
+
+          <SheetContent
+            side="left"
+            class="flex flex-col justify-between rounded-tr-2xl rounded-br-2xl bg-card"
           >
-            상품
-          </router-link>
+            <div>
+              <SheetHeader class="mb-4">
+                <SheetTitle class="flex items-center">
+                  <a href="/" class="flex items-center">
+                    <img
+                      src="@/icons/logo01.png"
+                      alt="Logo"
+                      class="h-8 w-18 ml-3 mt-7"
+                    />
+                  </a>
+                </SheetTitle>
+              </SheetHeader>
 
-          <template v-if="authStore.isAuthenticated">
-            <!-- 로그인된 경우 -->
-            <router-link 
-              to="/orders" 
-              class="text-sm font-medium text-foreground/60 hover:text-foreground transition-colors"
-              data-testid="link-orders"
-            >
-              주문내역
-            </router-link>
-
-            <router-link 
-              v-if="authStore.isAdmin" 
-              to="/admin" 
-              class="text-sm font-medium text-foreground/60 hover:text-foreground transition-colors"
-              data-testid="link-admin"
-            >
-              관리자
-            </router-link>
-
-            <router-link 
-              to="/cart" 
-              class="relative text-sm font-medium text-foreground/60 hover:text-foreground transition-colors"
-              data-testid="link-cart"
-            >
-              장바구니
-              <span 
-                v-if="cartItemCount > 0" 
-                class="absolute -top-2 -right-3 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground"
-                data-testid="text-cart-count"
-              >
-                {{ cartItemCount }}
-              </span>
-            </router-link>
-
-            <div class="flex items-center gap-2">
-              <span class="text-sm text-foreground/60" data-testid="text-user-name">
-                {{ authStore.user?.firstName }} {{ authStore.user?.lastName }}
-              </span>
-              <button
-                @click="handleLogout"
-                class="text-sm font-medium text-foreground/60 hover:text-foreground transition-colors"
-                data-testid="button-logout"
-              >
-                로그아웃
-              </button>
+              <div class="flex flex-col gap-2 mt-8">
+                <Button
+                  v-for="{ path, label } in routeList"
+                  :key="label"
+                  as-child
+                  variant="ghost"
+                  class="justify-start text-sm"
+                  @click="isOpen = false"
+                >
+                  <div
+                    :class="[
+                      'w-full',
+                      ['CONTACT', 'LOGIN'].includes(label) ? 'mt-8' : 'mt-0',
+                    ]"
+                  >
+                    <RouterLink :to="path">
+                      <span class="block">{{ label }}</span>
+                    </RouterLink>
+                  </div>
+                </Button>
+              </div>
             </div>
-          </template>
-
-          <template v-else>
-            <!-- 로그인 안된 경우 -->
-            <router-link 
-              to="/login" 
-              class="text-sm font-medium text-foreground/60 hover:text-foreground transition-colors"
-              data-testid="link-login"
-            >
-              로그인
-            </router-link>
-            <router-link 
-              to="/signup" 
-              class="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-              data-testid="link-signup"
-            >
-              회원가입
-            </router-link>
-          </template>
-        </nav>
+          </SheetContent>
+        </Sheet>
       </div>
+    </div>
+    <!-- Desktop -->
+    <div class="hidden lg:flex items-center">
+      <a href="/">
+        <img src="@/icons/logo01.png" alt="Logo" class="h-8 w-18 ml-3 m-1" />
+      </a>
+
+      <NavigationMenu>
+        <NavigationMenuList>
+          <NavigationMenuItem>
+            <NavigationMenuLink asChild>
+              <Button
+                v-for="{ path, label } in routeList"
+                :key="label"
+                as-child
+                variant="ghost"
+                class="justify-start text-sm"
+              >
+                <RouterLink :to="path"
+                  >{{
+                    label === "CONTACT" || label === "LOGIN"
+                      ? "&nbsp&nbsp&nbsp&nbsp;" + label
+                      : label
+                  }}
+                </RouterLink>
+              </Button>
+            </NavigationMenuLink>
+          </NavigationMenuItem>
+        </NavigationMenuList>
+      </NavigationMenu>
     </div>
   </header>
 </template>
+
+<style scoped>
+.shadow-light {
+  box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.085);
+}
+</style>
