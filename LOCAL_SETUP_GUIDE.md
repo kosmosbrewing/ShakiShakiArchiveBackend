@@ -52,7 +52,7 @@ PostgreSQL 콘솔에서:
 CREATE DATABASE shophub_dev;
 
 -- 사용자 생성 (선택사항, 기존 postgres 사용자 사용 가능)
-CREATE USER shophub_user WITH PASSWORD 'your_password';
+CREATE USER shophub_user WITH PASSWORD 'AA742800!!';
 
 -- 권한 부여
 GRANT ALL PRIVILEGES ON DATABASE shophub_dev TO shophub_user;
@@ -240,7 +240,31 @@ npx tsx server/scripts/seed-data.ts
 
 ### API 500 오류 (products, categories 로드 실패)
 
-이 오류는 주로 **데이터베이스 연결 실패**로 인해 발생합니다.
+이 오류는 주로 **데이터베이스 스키마 미적용** 또는 **데이터베이스 연결 실패**로 인해 발생합니다.
+
+---
+
+#### 먼저 시도: 데이터베이스 스키마 재적용
+
+```bash
+npm run db:push
+```
+
+위 명령이 실패하면:
+
+```bash
+npm run db:push --force
+```
+
+그 후 앱 재시작:
+
+```cmd
+dev.bat
+```
+
+---
+
+문제가 계속되면 아래 단계를 따르세요:
 
 #### 1단계: PostgreSQL 서비스 확인
 
@@ -279,7 +303,7 @@ NODE_ENV=development
 - `localhost:5432` → PostgreSQL 기본 포트 (변경했으면 수정)
 - `shophub_dev` → 생성한 데이터베이스명
 
-#### 3단계: PostgreSQL 연결 테스트
+#### 3단계: PostgreSQL 연결 및 테이블 확인
 
 **Windows Command Prompt:**
 ```cmd
@@ -294,16 +318,29 @@ psql -U postgres -d shophub_dev
 성공하면 `shophub_dev=#` 프롬프트가 나타납니다.
 
 ```sql
--- 테이블 확인
+-- 테이블 목록 확인 (중요!)
 \dt
+
+-- products, categories, users 등의 테이블이 있어야 함
+-- 없으면 아래에서 스키마 적용 진행
 
 -- 종료
 \q
 ```
 
+**테이블이 없는 경우:**
+```bash
+npm run db:push
+```
+
+또는:
+```bash
+npm run db:push --force
+```
+
 만약 오류가 나면:
 - **"cannot connect to server"** → PostgreSQL 서비스가 실행 중인지 확인
-- **"database does not exist"** → 데이터베이스 생성 필요 (3단계 참고)
+- **"database does not exist"** → 데이터베이스 생성 필요 (다음 섹션 참고)
 - **"password authentication failed"** → 비밀번호가 잘못됨
 
 #### 4단계: 스키마 적용
