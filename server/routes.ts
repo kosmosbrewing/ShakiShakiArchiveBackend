@@ -134,7 +134,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const products = await storage.getProducts({ search, categoryId });
       res.json(products);
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      console.error("Error fetching products:", error);
+      res.status(500).json({ message: error.message || "Failed to fetch products" });
     }
   });
 
@@ -156,7 +157,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const categories = await storage.getCategories();
       res.json(categories);
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      console.error("Error fetching categories:", error);
+      res.status(500).json({ message: error.message || "Failed to fetch categories" });
     }
   });
 
