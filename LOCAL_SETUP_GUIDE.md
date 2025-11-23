@@ -138,23 +138,38 @@ npm run dev
 
 ### Windows
 
-Windows에서는 환경 변수 설정 문법이 다릅니다.
+#### 방법 1: 배치 파일 사용 (권장) ⭐
 
-**방법 1: Command Prompt (CMD)**
+프로젝트 루트에 있는 `dev.bat` 파일을 더블클릭하거나, Command Prompt에서 다음을 실행합니다:
 
 ```cmd
-set NODE_ENV=development && npm run dev
+dev.bat
 ```
 
-**방법 2: PowerShell**
+또는:
+
+```cmd
+.\dev.bat
+```
+
+#### 방법 2: PowerShell 스크립트 사용
+
+PowerShell에서 다음을 실행합니다:
 
 ```powershell
-$env:NODE_ENV='development'; npm run dev
+.\dev.ps1
 ```
 
-**방법 3: Git Bash 또는 WSL (권장)**
+만약 스크립트 실행이 제한되었다는 오류가 나면:
 
-Git Bash나 Windows Subsystem for Linux(WSL)을 사용하면 Unix 명령어를 그대로 사용 가능합니다:
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+.\dev.ps1
+```
+
+#### 방법 3: Git Bash 또는 WSL 사용
+
+Git Bash나 Windows Subsystem for Linux(WSL)을 설치하면 Unix 명령어를 직접 사용할 수 있습니다:
 
 ```bash
 npm run dev
