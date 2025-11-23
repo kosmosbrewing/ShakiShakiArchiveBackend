@@ -238,18 +238,6 @@ npx tsx server/scripts/seed-data.ts
 
 ## 문제 해결
 
-### Windows에서 포트 바인드 오류
-
-`Error: listen ENOTSUP: operation not supported on socket 0.0.0.0:5000` 오류가 발생하는 경우:
-
-이 오류는 이미 수정되었습니다. 다음 중 하나를 시도하세요:
-
-1. **프로젝트 재다운로드** (최신 버전)
-2. **`server/index.ts` 수정** (기존 프로젝트):
-   - 76번 라인에서 `host: "0.0.0.0",`을 `host: "localhost",`로 변경
-   - `reusePort: true,` 제거
-3. **`dev.bat` 실행** (수정 후)
-
 ### 포트 충돌
 
 포트 5000이 이미 사용 중인 경우, `server/index.ts` 파일에서 포트를 변경:
