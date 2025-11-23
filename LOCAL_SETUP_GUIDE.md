@@ -130,10 +130,37 @@ import vue from "@vitejs/plugin-vue";
 
 ## 5. 애플리케이션 실행
 
+### macOS / Linux
+
 ```bash
-# 개발 서버 실행
 npm run dev
 ```
+
+### Windows
+
+Windows에서는 환경 변수 설정 문법이 다릅니다.
+
+**방법 1: Command Prompt (CMD)**
+
+```cmd
+set NODE_ENV=development && npm run dev
+```
+
+**방법 2: PowerShell**
+
+```powershell
+$env:NODE_ENV='development'; npm run dev
+```
+
+**방법 3: Git Bash 또는 WSL (권장)**
+
+Git Bash나 Windows Subsystem for Linux(WSL)을 사용하면 Unix 명령어를 그대로 사용 가능합니다:
+
+```bash
+npm run dev
+```
+
+---
 
 성공적으로 실행되면:
 - 백엔드: `http://localhost:5000`
