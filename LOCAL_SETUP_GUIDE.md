@@ -238,39 +238,142 @@ npx tsx server/scripts/seed-data.ts
 
 ## 문제 해결
 
-### 포트 충돌
+### API 500 오류 (products, categories 로드 실패)
 
-포트 5000이 이미 사용 중인 경우, `server/index.ts` 파일에서 포트를 변경:
+이 오류는 주로 **데이터베이스 연결 실패**로 인해 발생합니다.
 
-```typescript
-const PORT = process.env.PORT || 5001; // 포트 변경
+#### 1단계: PostgreSQL 서비스 확인
+
+**Windows:**
+1. `Services` 앱 열기 (`Win + R` 입력 후 `services.msc` 실행)
+2. 목록에서 `postgresql-x64-*` 찾기
+3. 상태가 "Running"인지 확인
+4. 실행 중이 아니면 오른쪽 클릭 → `Start`
+
+또는 Command Prompt에서:
+```cmd
+sc query postgresql-x64-14
 ```
 
-### 데이터베이스 연결 오류
+**macOS/Linux:**
+```bash
+# PostgreSQL 상태 확인
+sudo systemctl status postgresql
 
-1. PostgreSQL이 실행 중인지 확인:
-   ```bash
-   # macOS/Linux
-   sudo systemctl status postgresql
-   
-   # Windows - 서비스 관리자에서 확인
-   ```
+# 실행 중이 아니면 시작
+sudo systemctl start postgresql
+```
 
-2. `.env` 파일의 `DATABASE_URL`이 올바른지 확인
+#### 2단계: `.env` 파일 설정 확인
 
-3. PostgreSQL 연결 테스트:
-   ```bash
-   psql -U postgres -d shophub_dev
-   ```
+프로젝트 루트에 `.env` 파일이 있는지 확인하고, 다음 내용이 정확한지 확인합니다:
+
+```env
+DATABASE_URL=postgresql://postgres:your_password@localhost:5432/shophub_dev
+SESSION_SECRET=your-super-secret-session-key-change-this
+NODE_ENV=development
+```
+
+**중요:**
+- `your_password` → PostgreSQL 설치 시 설정한 슈퍼유저 비밀번호로 변경
+- `localhost:5432` → PostgreSQL 기본 포트 (변경했으면 수정)
+- `shophub_dev` → 생성한 데이터베이스명
+
+#### 3단계: PostgreSQL 연결 테스트
+
+**Windows Command Prompt:**
+```cmd
+psql -U postgres -d shophub_dev
+```
+
+**macOS/Linux:**
+```bash
+psql -U postgres -d shophub_dev
+```
+
+성공하면 `shophub_dev=#` 프롬프트가 나타납니다.
+
+```sql
+-- 테이블 확인
+\dt
+
+-- 종료
+\q
+```
+
+만약 오류가 나면:
+- **"cannot connect to server"** → PostgreSQL 서비스가 실행 중인지 확인
+- **"database does not exist"** → 데이터베이스 생성 필요 (3단계 참고)
+- **"password authentication failed"** → 비밀번호가 잘못됨
+
+#### 4단계: 스키마 적용
+
+```bash
+npm run db:push
+```
+
+실패하면:
+```bash
+npm run db:push --force
+```
+
+#### 5단계: 애플리케이션 재시작
+
+```cmd
+dev.bat
+```
+
+또는 이미 실행 중이면 `Ctrl+C`로 중지하고 다시 실행합니다.
+
+---
+
+### 데이터베이스 생성이 안 된 경우
+
+PostgreSQL이 설치되었지만 데이터베이스가 없다면:
+
+**Windows Command Prompt:**
+```cmd
+psql -U postgres
+```
+
+그 후 다음을 실행:
+```sql
+CREATE DATABASE shophub_dev;
+\q
+```
+
+**또는 한 줄에:**
+```cmd
+psql -U postgres -c "CREATE DATABASE shophub_dev"
+```
+
+### 포트 충돌
+
+포트 5000이 이미 사용 중인 경우:
+
+**Windows:**
+```cmd
+netstat -ano | findstr :5000
+```
+
+다른 포트로 변경하려면:
+```cmd
+set PORT=5001 && dev.bat
+```
+
+또는 `.env` 파일에 추가:
+```env
+PORT=5001
+```
 
 ### npm run db:push 오류
 
 ```bash
-# 기존 테이블을 모두 삭제하고 재생성
+# 모든 테이블을 삭제하고 재생성 (주의!)
 npm run db:push --force
 ```
 
-**주의:** 이 명령은 모든 데이터를 삭제합니다.
+**경고:** 이 명령은 모든 데이터를 삭제합니다.
 
 ## 개발 팁
 
