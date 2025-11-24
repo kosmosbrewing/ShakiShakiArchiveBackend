@@ -14,6 +14,10 @@ run = ["npm", "run", "start"]
 localPort = 5000
 externalPort = 80
 
+[[ports]]
+localPort = 44557
+externalPort = 3000
+
 [env]
 PORT = "5000"
 
@@ -43,3 +47,9 @@ integrations = ["javascript_object_storage:1.0.0", "javascript_stripe:1.0.0", "j
 
 [objectStorage]
 defaultBucketID = "replit-objstore-a4c5b3cf-7e9a-464b-aa7f-076a85958a42"
+
+[userenv]
+
+[userenv.shared]
+NODE_ENV = "development"
+PORT = "5000"
