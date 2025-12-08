@@ -7,7 +7,7 @@ declare global {
   namespace Express {
     interface Request {
       user?: {
-        id: string;
+        id: number;
         email: string;
         isAdmin: boolean;
       };
@@ -43,11 +43,7 @@ export function isAuthenticated(
 }
 
 // Middleware to check if user is admin
-export async function isAdmin(
-  req: Request,
-  res: Response,
-  next: NextFunction
-) {
+export async function isAdmin(req: Request, res: Response, next: NextFunction) {
   try {
     if (!req.session || !req.session.userId) {
       return res.status(401).json({ message: "인증이 필요합니다" });
@@ -96,6 +92,6 @@ export async function populateUser(
 // Extend session data type
 declare module "express-session" {
   interface SessionData {
-    userId: string;
+    userId: number;
   }
 }

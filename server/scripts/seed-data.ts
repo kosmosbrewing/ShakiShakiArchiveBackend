@@ -3,7 +3,7 @@ import { categories, products } from "../../shared/schema";
 
 /**
  * 샘플 데이터 생성 스크립트
- * 
+ *
  * 사용법:
  * npx tsx server/scripts/seed-data.ts
  */
@@ -62,7 +62,8 @@ async function seedData() {
         categoryId: createdCategories[0].id,
         stockQuantity: 50,
         isAvailable: true,
-        imageUrl: "https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=800",
+        imageUrl:
+          "https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=800",
       },
       {
         name: "스마트워치",
@@ -72,7 +73,8 @@ async function seedData() {
         categoryId: createdCategories[0].id,
         stockQuantity: 30,
         isAvailable: true,
-        imageUrl: "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=800",
+        imageUrl:
+          "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=800",
       },
       {
         name: "노트북 스탠드",
@@ -82,7 +84,8 @@ async function seedData() {
         categoryId: createdCategories[0].id,
         stockQuantity: 100,
         isAvailable: true,
-        imageUrl: "https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?w=800",
+        imageUrl:
+          "https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?w=800",
       },
 
       // 의류
@@ -95,7 +98,8 @@ async function seedData() {
         categoryId: createdCategories[1].id,
         stockQuantity: 200,
         isAvailable: true,
-        imageUrl: "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=800",
+        imageUrl:
+          "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=800",
       },
       {
         name: "데님 청바지",
@@ -105,7 +109,8 @@ async function seedData() {
         categoryId: createdCategories[1].id,
         stockQuantity: 80,
         isAvailable: true,
-        imageUrl: "https://images.unsplash.com/photo-1542272604-787c3835535d?w=800",
+        imageUrl:
+          "https://images.unsplash.com/photo-1542272604-787c3835535d?w=800",
       },
 
       // 도서
@@ -117,7 +122,8 @@ async function seedData() {
         categoryId: createdCategories[2].id,
         stockQuantity: 150,
         isAvailable: true,
-        imageUrl: "https://images.unsplash.com/photo-1532012197267-da84d127e765?w=800",
+        imageUrl:
+          "https://images.unsplash.com/photo-1532012197267-da84d127e765?w=800",
       },
       {
         name: "Vue.js 완벽 가이드",
@@ -127,7 +133,8 @@ async function seedData() {
         categoryId: createdCategories[2].id,
         stockQuantity: 75,
         isAvailable: true,
-        imageUrl: "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=800",
+        imageUrl:
+          "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=800",
       },
 
       // 식품
@@ -139,7 +146,8 @@ async function seedData() {
         categoryId: createdCategories[3].id,
         stockQuantity: 120,
         isAvailable: true,
-        imageUrl: "https://images.unsplash.com/photo-1599599810769-bcde5a160d32?w=800",
+        imageUrl:
+          "https://images.unsplash.com/photo-1599599810769-bcde5a160d32?w=800",
       },
       {
         name: "프리미엄 다크 초콜릿",
@@ -150,7 +158,8 @@ async function seedData() {
         categoryId: createdCategories[3].id,
         stockQuantity: 90,
         isAvailable: true,
-        imageUrl: "https://images.unsplash.com/photo-1511381939415-e44015466834?w=800",
+        imageUrl:
+          "https://images.unsplash.com/photo-1511381939415-e44015466834?w=800",
       },
 
       // 가전제품
@@ -163,7 +172,8 @@ async function seedData() {
         categoryId: createdCategories[4].id,
         stockQuantity: 25,
         isAvailable: true,
-        imageUrl: "https://images.unsplash.com/photo-1558317374-067fb5f30001?w=800",
+        imageUrl:
+          "https://images.unsplash.com/photo-1558317374-067fb5f30001?w=800",
       },
       {
         name: "커피 머신",
@@ -173,9 +183,10 @@ async function seedData() {
         categoryId: createdCategories[4].id,
         stockQuantity: 15,
         isAvailable: true,
-        imageUrl: "https://images.unsplash.com/photo-1517668808822-9ebb02f2a0e6?w=800",
+        imageUrl:
+          "https://images.unsplash.com/photo-1517668808822-9ebb02f2a0e6?w=800",
       },
-      
+
       // 품절 상품 예시
       {
         name: "한정판 헤드폰",
@@ -185,7 +196,8 @@ async function seedData() {
         categoryId: createdCategories[0].id,
         stockQuantity: 0,
         isAvailable: false,
-        imageUrl: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=800",
+        imageUrl:
+          "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=800",
       },
     ];
 

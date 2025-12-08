@@ -10,6 +10,8 @@ import {
   boolean,
   jsonb,
   index,
+  serial,
+  bigint,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -25,13 +27,20 @@ export const sessions = pgTable(
   (table) => [index("IDX_session_expire").on(table.expire)]
 );
 
-// Users table (Email/Password authentication)
+// [수정] Users table
 export const users = pgTable("users", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: serial("id").primaryKey(),
   email: varchar("email").unique().notNull(),
   passwordHash: varchar("password_hash", { length: 255 }).notNull(),
-  firstName: varchar("first_name"),
-  lastName: varchar("last_name"),
+  // [변경] firstName, lastName -> userName
+  userName: varchar("user_name", { length: 100 }).notNull(),
+  // [추가] 주소 및 연락처 정보
+  zipCode: varchar("zip_code", { length: 20 }),
+  address: varchar("address", { length: 255 }),
+  detailAddress: varchar("detail_address", { length: 255 }),
+  phone: varchar("phone", { length: 20 }),
+  emailOptIn: boolean("email_opt_in").default(false).notNull(), // 이메일 수신 여부
+
   profileImageUrl: varchar("profile_image_url"),
   isAdmin: boolean("is_admin").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -41,12 +50,17 @@ export const users = pgTable("users", {
 export type User = typeof users.$inferSelect;
 export type UpsertUser = typeof users.$inferInsert;
 
-// Auth schemas
+// [수정] Auth schemas
 export const signupSchema = z.object({
   email: z.string().email("유효한 이메일 주소를 입력해주세요"),
   password: z.string().min(8, "비밀번호는 최소 8자 이상이어야 합니다"),
-  firstName: z.string().min(1, "이름을 입력해주세요"),
-  lastName: z.string().min(1, "성을 입력해주세요"),
+  userName: z.string().min(1, "이름을 입력해주세요"), // 변경됨
+  // 선택 정보 (회원가입 시 받을 수도, 나중에 수정할 수도 있음)
+  zipCode: z.string().optional(),
+  address: z.string().optional(),
+  detailAddress: z.string().optional(),
+  phone: z.string().optional(),
+  emailOptIn: z.boolean().optional(),
 });
 export type SignupInput = z.infer<typeof signupSchema>;
 
@@ -58,7 +72,7 @@ export type LoginInput = z.infer<typeof loginSchema>;
 
 // Categories table
 export const categories = pgTable("categories", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: serial("id").primaryKey(),
   name: varchar("name", { length: 100 }).notNull(),
   slug: varchar("slug", { length: 100 }).unique().notNull(),
   description: text("description"),
@@ -79,15 +93,18 @@ export type InsertCategory = z.infer<typeof insertCategorySchema>;
 
 // Products table
 export const products = pgTable("products", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: serial("id").primaryKey(),
   name: varchar("name", { length: 255 }).notNull(),
   slug: varchar("slug", { length: 255 }).unique().notNull(),
   description: text("description"),
   price: decimal("price", { precision: 10, scale: 2 }).notNull(),
   originalPrice: decimal("original_price", { precision: 10, scale: 2 }),
-  categoryId: varchar("category_id").references(() => categories.id),
+  categoryId: bigint("category_id", { mode: "number" }).references(
+    () => categories.id
+  ),
   imageUrl: varchar("image_url"),
   images: text("images").array(),
+  detailImages: text("detail_images").array(),
   stockQuantity: integer("stock_quantity").default(0).notNull(),
   isAvailable: boolean("is_available").default(true).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -113,11 +130,11 @@ export type InsertProduct = z.infer<typeof insertProductSchema>;
 
 // Shopping cart items
 export const cartItems = pgTable("cart_items", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id")
+  id: serial("id").primaryKey(),
+  userId: bigint("user_id", { mode: "number" })
     .references(() => users.id, { onDelete: "cascade" })
     .notNull(),
-  productId: varchar("product_id")
+  productId: bigint("product_id", { mode: "number" })
     .references(() => products.id, { onDelete: "cascade" })
     .notNull(),
   quantity: integer("quantity").default(1).notNull(),
@@ -158,8 +175,8 @@ export type OrderStatus = (typeof orderStatusEnum)[number];
 
 // Orders table
 export const orders = pgTable("orders", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id")
+  id: serial("id").primaryKey(),
+  userId: bigint("user_id", { mode: "number" })
     .references(() => users.id)
     .notNull(),
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
@@ -194,11 +211,11 @@ export type InsertOrder = z.infer<typeof insertOrderSchema>;
 
 // Order items table
 export const orderItems = pgTable("order_items", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  orderId: varchar("order_id")
+  id: serial("id").primaryKey(),
+  orderId: bigint("order_id", { mode: "number" })
     .references(() => orders.id, { onDelete: "cascade" })
     .notNull(),
-  productId: varchar("product_id")
+  productId: bigint("product_id", { mode: "number" })
     .references(() => products.id)
     .notNull(),
   productName: varchar("product_name", { length: 255 }).notNull(),
@@ -224,3 +241,78 @@ export const insertOrderItemSchema = createInsertSchema(orderItems).omit({
   createdAt: true,
 });
 export type InsertOrderItem = z.infer<typeof insertOrderItemSchema>;
+
+// Product variants/sizes table
+export const productVariants = pgTable("product_variants", {
+  id: serial("id").primaryKey(),
+  productId: bigint("product_id", { mode: "number" })
+    .references(() => products.id, { onDelete: "cascade" })
+    .notNull(),
+  size: varchar("size", { length: 50 }).notNull(),
+  color: varchar("color", { length: 50 }),
+  sku: varchar("sku", { length: 100 }).unique(),
+  price: decimal("price", { precision: 10, scale: 2 }),
+  stockQuantity: integer("stock_quantity").default(0).notNull(),
+  isAvailable: boolean("is_available").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const productVariantsRelations = relations(
+  productVariants,
+  ({ one }) => ({
+    product: one(products, {
+      fields: [productVariants.productId],
+      references: [products.id],
+    }),
+  })
+);
+
+export type ProductVariant = typeof productVariants.$inferSelect;
+export const insertProductVariantSchema = createInsertSchema(
+  productVariants
+).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertProductVariant = z.infer<typeof insertProductVariantSchema>;
+
+// Product size measurements table
+export const productSizeMeasurements = pgTable("product_size_measurements", {
+  id: serial("id").primaryKey(),
+  productVariantId: bigint("product_variant_id", { mode: "number" })
+    .references(() => productVariants.id, { onDelete: "cascade" })
+    .notNull(),
+  totalLength: decimal("total_length", { precision: 8, scale: 2 }),
+  shoulderWidth: decimal("shoulder_width", { precision: 8, scale: 2 }),
+  chestSection: decimal("chest_section", { precision: 8, scale: 2 }),
+  sleeveLength: decimal("sleeve_length", { precision: 8, scale: 2 }),
+  waistSection: decimal("waist_section", { precision: 8, scale: 2 }),
+  hipSection: decimal("hip_section", { precision: 8, scale: 2 }),
+  thighSection: decimal("thigh_section", { precision: 8, scale: 2 }),
+  displayOrder: integer("display_order").default(0).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const productSizeMeasurementsRelations = relations(
+  productSizeMeasurements,
+  ({ one }) => ({
+    productVariant: one(productVariants, {
+      fields: [productSizeMeasurements.productVariantId],
+      references: [productVariants.id],
+    }),
+  })
+);
+
+export type ProductSizeMeasurement =
+  typeof productSizeMeasurements.$inferSelect;
+export const insertProductSizeMeasurementSchema = createInsertSchema(
+  productSizeMeasurements
+).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertProductSizeMeasurement = z.infer<
+  typeof insertProductSizeMeasurementSchema
+>;

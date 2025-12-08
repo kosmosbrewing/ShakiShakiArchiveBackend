@@ -5,6 +5,8 @@ import {
   cartItems,
   orders,
   orderItems,
+  productVariants,
+  productSizeMeasurements,
   type User,
   type UpsertUser,
   type Product,
@@ -17,48 +19,92 @@ import {
   type InsertOrder,
   type OrderItem,
   type InsertOrderItem,
+  type ProductVariant,
+  type InsertProductVariant,
+  type ProductSizeMeasurement,
+  type InsertProductSizeMeasurement,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, like, sql, desc } from "drizzle-orm";
 
 export interface IStorage {
   // User operations
-  getUser(id: string): Promise<User | undefined>;
+  getUser(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
-  createUser(user: Omit<UpsertUser, 'id'>): Promise<User>;
+  createUser(user: Omit<UpsertUser, "id">): Promise<User>;
   upsertUser(user: UpsertUser): Promise<User>;
+  updateUser(id: number, user: Partial<UpsertUser>): Promise<User | undefined>;
 
   // Product operations
   getProducts(filters?: {
     search?: string;
-    categoryId?: string;
+    categoryId?: number;
   }): Promise<Product[]>;
-  getProduct(id: string): Promise<Product | undefined>;
+  getProduct(id: number): Promise<Product | undefined>;
   createProduct(product: InsertProduct): Promise<Product>;
-  updateProduct(id: string, product: Partial<InsertProduct>): Promise<Product | undefined>;
-  deleteProduct(id: string): Promise<void>;
+  updateProduct(
+    id: number,
+    product: Partial<InsertProduct>
+  ): Promise<Product | undefined>;
+  deleteProduct(id: number): Promise<void>;
+
+  // Product variant operations
+  getProductVariants(productId: number): Promise<ProductVariant[]>;
+  getProductVariant(id: number): Promise<ProductVariant | undefined>;
+  createProductVariant(variant: InsertProductVariant): Promise<ProductVariant>;
+  updateProductVariant(
+    id: number,
+    variant: Partial<InsertProductVariant>
+  ): Promise<ProductVariant | undefined>;
+  deleteProductVariant(id: number): Promise<void>;
+
+  // Product size measurements operations ✨ NEW
+  getProductSizeMeasurements(
+    productVariantId: number
+  ): Promise<ProductSizeMeasurement[]>;
+  getProductSizeMeasurement(
+    id: number
+  ): Promise<ProductSizeMeasurement | undefined>;
+  createProductSizeMeasurement(
+    measurement: InsertProductSizeMeasurement
+  ): Promise<ProductSizeMeasurement>;
+  updateProductSizeMeasurement(
+    id: number,
+    measurement: Partial<InsertProductSizeMeasurement>
+  ): Promise<ProductSizeMeasurement | undefined>;
+  deleteProductSizeMeasurement(id: number): Promise<void>;
 
   // Category operations
   getCategories(): Promise<Category[]>;
-  getCategory(id: string): Promise<Category | undefined>;
+  getCategory(id: number): Promise<Category | undefined>;
   createCategory(category: InsertCategory): Promise<Category>;
-  updateCategory(id: string, category: Partial<InsertCategory>): Promise<Category | undefined>;
-  deleteCategory(id: string): Promise<void>;
+  updateCategory(
+    id: number,
+    category: Partial<InsertCategory>
+  ): Promise<Category | undefined>;
+  deleteCategory(id: number): Promise<void>;
 
   // Cart operations
-  getCartItems(userId: string): Promise<(CartItem & { product: Product })[]>;
+  getCartItems(userId: number): Promise<(CartItem & { product: Product })[]>;
   addCartItem(item: InsertCartItem): Promise<CartItem>;
-  updateCartItem(id: string, quantity: number): Promise<CartItem | undefined>;
-  deleteCartItem(id: string): Promise<void>;
-  clearCart(userId: string): Promise<void>;
+  updateCartItem(id: number, quantity: number): Promise<CartItem | undefined>;
+  deleteCartItem(id: number): Promise<void>;
+  clearCart(userId: number): Promise<void>;
 
   // Order operations
-  createOrder(order: InsertOrder, items: Omit<InsertOrderItem, 'orderId'>[]): Promise<string>;
-  getOrders(userId: string): Promise<Order[]>;
-  getOrder(orderId: string): Promise<(Order & { orderItems: (OrderItem & { product: Product })[] }) | undefined>;
+  createOrder(
+    order: InsertOrder,
+    items: Omit<InsertOrderItem, "orderId">[]
+  ): Promise<number>;
+  getOrders(userId: number): Promise<Order[]>;
+  getOrder(
+    orderId: number
+  ): Promise<
+    (Order & { orderItems: (OrderItem & { product: Product })[] }) | undefined
+  >;
   getAllOrders(): Promise<Order[]>;
   updateOrderStatus(
-    orderId: string,
+    orderId: number,
     status: string,
     trackingNumber?: string
   ): Promise<Order | undefined>;
@@ -66,7 +112,7 @@ export interface IStorage {
 
 export class DatabaseStorage implements IStorage {
   // User operations
-  async getUser(id: string): Promise<User | undefined> {
+  async getUser(id: number): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user;
   }
@@ -76,7 +122,7 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  async createUser(userData: Omit<UpsertUser, 'id'>): Promise<User> {
+  async createUser(userData: Omit<UpsertUser, "id">): Promise<User> {
     const [user] = await db.insert(users).values(userData).returning();
     return user;
   }
@@ -96,10 +142,25 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
+  async updateUser(
+    id: number,
+    userData: Partial<UpsertUser>
+  ): Promise<User | undefined> {
+    const [updated] = await db
+      .update(users)
+      .set({
+        ...userData,
+        updatedAt: new Date(), // 수정 시간 갱신
+      })
+      .where(eq(users.id, id))
+      .returning();
+    return updated;
+  }
+
   // Product operations
   async getProducts(filters?: {
     search?: string;
-    categoryId?: string;
+    categoryId?: number;
   }): Promise<Product[]> {
     let query = db.select().from(products);
 
@@ -119,8 +180,11 @@ export class DatabaseStorage implements IStorage {
     return results;
   }
 
-  async getProduct(id: string): Promise<Product | undefined> {
-    const [product] = await db.select().from(products).where(eq(products.id, id));
+  async getProduct(id: number): Promise<Product | undefined> {
+    const [product] = await db
+      .select()
+      .from(products)
+      .where(eq(products.id, id));
     return product;
   }
 
@@ -130,7 +194,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateProduct(
-    id: string,
+    id: number,
     product: Partial<InsertProduct>
   ): Promise<Product | undefined> {
     const [updated] = await db
@@ -141,8 +205,99 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async deleteProduct(id: string): Promise<void> {
+  async deleteProduct(id: number): Promise<void> {
     await db.delete(products).where(eq(products.id, id));
+  }
+
+  // Product variant operations
+  async getProductVariants(productId: number): Promise<ProductVariant[]> {
+    return await db
+      .select()
+      .from(productVariants)
+      .where(eq(productVariants.productId, productId))
+      .orderBy(productVariants.size);
+  }
+
+  async getProductVariant(id: number): Promise<ProductVariant | undefined> {
+    const [variant] = await db
+      .select()
+      .from(productVariants)
+      .where(eq(productVariants.id, id));
+    return variant;
+  }
+
+  async createProductVariant(
+    variant: InsertProductVariant
+  ): Promise<ProductVariant> {
+    const [newVariant] = await db
+      .insert(productVariants)
+      .values(variant)
+      .returning();
+    return newVariant;
+  }
+
+  async updateProductVariant(
+    id: number,
+    variant: Partial<InsertProductVariant>
+  ): Promise<ProductVariant | undefined> {
+    const [updated] = await db
+      .update(productVariants)
+      .set({ ...variant, updatedAt: new Date() })
+      .where(eq(productVariants.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteProductVariant(id: number): Promise<void> {
+    await db.delete(productVariants).where(eq(productVariants.id, id));
+  }
+
+  // Product size measurements operations ✨ NEW
+  async getProductSizeMeasurements(
+    productVariantId: number
+  ): Promise<ProductSizeMeasurement[]> {
+    return await db
+      .select()
+      .from(productSizeMeasurements)
+      .where(eq(productSizeMeasurements.productVariantId, productVariantId));
+  }
+
+  async getProductSizeMeasurement(
+    id: number
+  ): Promise<ProductSizeMeasurement | undefined> {
+    const [measurement] = await db
+      .select()
+      .from(productSizeMeasurements)
+      .where(eq(productSizeMeasurements.id, id));
+    return measurement;
+  }
+
+  async createProductSizeMeasurement(
+    measurement: InsertProductSizeMeasurement
+  ): Promise<ProductSizeMeasurement> {
+    const [newMeasurement] = await db
+      .insert(productSizeMeasurements)
+      .values(measurement)
+      .returning();
+    return newMeasurement;
+  }
+
+  async updateProductSizeMeasurement(
+    id: number,
+    measurement: Partial<InsertProductSizeMeasurement>
+  ): Promise<ProductSizeMeasurement | undefined> {
+    const [updated] = await db
+      .update(productSizeMeasurements)
+      .set(measurement)
+      .where(eq(productSizeMeasurements.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteProductSizeMeasurement(id: number): Promise<void> {
+    await db
+      .delete(productSizeMeasurements)
+      .where(eq(productSizeMeasurements.id, id));
   }
 
   // Category operations
@@ -150,18 +305,24 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(categories).orderBy(categories.name);
   }
 
-  async getCategory(id: string): Promise<Category | undefined> {
-    const [category] = await db.select().from(categories).where(eq(categories.id, id));
+  async getCategory(id: number): Promise<Category | undefined> {
+    const [category] = await db
+      .select()
+      .from(categories)
+      .where(eq(categories.id, id));
     return category;
   }
 
   async createCategory(category: InsertCategory): Promise<Category> {
-    const [newCategory] = await db.insert(categories).values(category).returning();
+    const [newCategory] = await db
+      .insert(categories)
+      .values(category)
+      .returning();
     return newCategory;
   }
 
   async updateCategory(
-    id: string,
+    id: number,
     category: Partial<InsertCategory>
   ): Promise<Category | undefined> {
     const [updated] = await db
@@ -172,12 +333,14 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async deleteCategory(id: string): Promise<void> {
+  async deleteCategory(id: number): Promise<void> {
     await db.delete(categories).where(eq(categories.id, id));
   }
 
   // Cart operations
-  async getCartItems(userId: string): Promise<(CartItem & { product: Product })[]> {
+  async getCartItems(
+    userId: number
+  ): Promise<(CartItem & { product: Product })[]> {
     const items = await db
       .select()
       .from(cartItems)
@@ -195,7 +358,10 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(cartItems)
       .where(
-        and(eq(cartItems.userId, item.userId), eq(cartItems.productId, item.productId))
+        and(
+          eq(cartItems.userId, item.userId),
+          eq(cartItems.productId, item.productId)
+        )
       );
 
     if (existing.length > 0) {
@@ -211,7 +377,10 @@ export class DatabaseStorage implements IStorage {
     return newItem;
   }
 
-  async updateCartItem(id: string, quantity: number): Promise<CartItem | undefined> {
+  async updateCartItem(
+    id: number,
+    quantity: number
+  ): Promise<CartItem | undefined> {
     const [updated] = await db
       .update(cartItems)
       .set({ quantity, updatedAt: new Date() })
@@ -220,16 +389,19 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async deleteCartItem(id: string): Promise<void> {
+  async deleteCartItem(id: number): Promise<void> {
     await db.delete(cartItems).where(eq(cartItems.id, id));
   }
 
-  async clearCart(userId: string): Promise<void> {
+  async clearCart(userId: number): Promise<void> {
     await db.delete(cartItems).where(eq(cartItems.userId, userId));
   }
 
   // Order operations
-  async createOrder(order: InsertOrder, items: Omit<InsertOrderItem, 'orderId'>[]): Promise<string> {
+  async createOrder(
+    order: InsertOrder,
+    items: Omit<InsertOrderItem, "orderId">[]
+  ): Promise<number> {
     const [newOrder] = await db.insert(orders).values(order).returning();
 
     const orderItemsWithOrderId = items.map((item) => ({
@@ -242,7 +414,7 @@ export class DatabaseStorage implements IStorage {
     return newOrder.id;
   }
 
-  async getOrders(userId: string): Promise<Order[]> {
+  async getOrders(userId: number): Promise<Order[]> {
     return await db
       .select()
       .from(orders)
@@ -251,9 +423,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getOrder(
-    orderId: string
-  ): Promise<(Order & { orderItems: (OrderItem & { product: Product })[] }) | undefined> {
-    const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
+    orderId: number
+  ): Promise<
+    (Order & { orderItems: (OrderItem & { product: Product })[] }) | undefined
+  > {
+    const [order] = await db
+      .select()
+      .from(orders)
+      .where(eq(orders.id, orderId));
 
     if (!order) return undefined;
 
@@ -277,7 +454,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateOrderStatus(
-    orderId: string,
+    orderId: number,
     status: string,
     trackingNumber?: string
   ): Promise<Order | undefined> {

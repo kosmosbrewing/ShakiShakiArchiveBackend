@@ -5,7 +5,7 @@ import bcrypt from "bcryptjs";
 
 /**
  * 관리자 계정 생성 스크립트
- * 
+ *
  * 사용법:
  * npx tsx server/scripts/create-admin.ts
  */
@@ -15,8 +15,7 @@ async function createAdmin() {
     // 여기에서 이메일과 비밀번호를 변경하세요
     const email = "admin@shophub.com";
     const password = "admin123!";
-    const firstName = "관리자";
-    const lastName = "계정";
+    const userName = "이규빈";
 
     console.log("관리자 계정 생성 중...");
 
@@ -31,19 +30,18 @@ async function createAdmin() {
         .update(users)
         .set({ isAdmin: true })
         .where(eq(users.email, email));
-      
+
       console.log(`✅ 기존 사용자 ${email}를 관리자로 업그레이드했습니다.`);
     } else {
       // 새 관리자 계정 생성
       const hashedPassword = await bcrypt.hash(password, 10);
-      
+
       const [newUser] = await db
         .insert(users)
         .values({
           email,
           passwordHash: hashedPassword,
-          firstName,
-          lastName,
+          userName,
           isAdmin: true,
         })
         .returning();
