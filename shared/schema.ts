@@ -221,6 +221,13 @@ export const orderItems = pgTable("order_items", {
   productName: varchar("product_name", { length: 255 }).notNull(),
   productPrice: decimal("product_price", { precision: 10, scale: 2 }).notNull(),
   quantity: integer("quantity").notNull(),
+
+  // [추가됨] 개별 상품 상태 및 운송장
+  status: varchar("status", { length: 50 })
+    .default("pending_payment")
+    .notNull(),
+  trackingNumber: varchar("tracking_number", { length: 100 }),
+
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -316,3 +323,28 @@ export const insertProductSizeMeasurementSchema = createInsertSchema(
 export type InsertProductSizeMeasurement = z.infer<
   typeof insertProductSizeMeasurementSchema
 >;
+
+// [신규] 배송지 관리 테이블
+export const deliveryAddresses = pgTable("delivery_addresses", {
+  id: serial("id").primaryKey(),
+  userId: bigint("user_id", { mode: "number" })
+    .references(() => users.id, { onDelete: "cascade" })
+    .notNull(),
+  recipient: varchar("recipient", { length: 100 }).notNull(), // 받는 사람 이름
+  phone: varchar("phone", { length: 20 }).notNull(), // 전화번호
+  zipCode: varchar("zip_code", { length: 20 }).notNull(), // 우편번호
+  address: varchar("address", { length: 255 }).notNull(), // 기본 주소
+  detailAddress: varchar("detail_address", { length: 255 }), // 상세 주소
+  requestNote: varchar("request_note", { length: 255 }), // 배송 요청사항
+  isDefault: boolean("is_default").default(false).notNull(), // 기본 배송지 여부
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type DeliveryAddress = typeof deliveryAddresses.$inferSelect;
+export const insertDeliveryAddressSchema = createInsertSchema(
+  deliveryAddresses
+).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertDeliveryAddress = z.infer<typeof insertDeliveryAddressSchema>;
