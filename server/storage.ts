@@ -7,6 +7,7 @@ import {
   orderItems,
   productVariants,
   productSizeMeasurements,
+  deliveryAddresses,
   type User,
   type UpsertUser,
   type Product,
@@ -23,17 +24,18 @@ import {
   type InsertProductVariant,
   type ProductSizeMeasurement,
   type InsertProductSizeMeasurement,
+  type DeliveryAddress,
+  type InsertDeliveryAddress,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, like, sql, desc } from "drizzle-orm";
-
 export interface IStorage {
   // User operations
   getUser(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: Omit<UpsertUser, "id">): Promise<User>;
   upsertUser(user: UpsertUser): Promise<User>;
-  updateUser(id: number, user: Partial<UpsertUser>): Promise<User | undefined>;
+  updateUser(id: number, user: Partial<UpsertUser>): Promise<User | undefined>; // [추가됨]
 
   // Product operations
   getProducts(filters?: {
@@ -58,7 +60,7 @@ export interface IStorage {
   ): Promise<ProductVariant | undefined>;
   deleteProductVariant(id: number): Promise<void>;
 
-  // Product size measurements operations ✨ NEW
+  // Product size measurements operations
   getProductSizeMeasurements(
     productVariantId: number
   ): Promise<ProductSizeMeasurement[]>;
@@ -103,11 +105,34 @@ export interface IStorage {
     (Order & { orderItems: (OrderItem & { product: Product })[] }) | undefined
   >;
   getAllOrders(): Promise<Order[]>;
+
+  // [수정] 관리자용: 모든 주문과 상세 아이템 조회
+  getAllOrdersWithItems(): Promise<(Order & { orderItems: any[] })[]>;
+
   updateOrderStatus(
     orderId: number,
     status: string,
     trackingNumber?: string
   ): Promise<Order | undefined>;
+
+  // 주문 아이템 상태 업데이트
+  updateOrderItemStatus(
+    itemId: number,
+    status: string,
+    trackingNumber?: string
+  ): Promise<OrderItem | undefined>;
+
+  // [신규] 배송지 관리
+  getDeliveryAddresses(userId: number): Promise<DeliveryAddress[]>;
+  createDeliveryAddress(
+    address: InsertDeliveryAddress
+  ): Promise<DeliveryAddress>;
+  updateDeliveryAddress(
+    id: number,
+    userId: number,
+    address: Partial<InsertDeliveryAddress>
+  ): Promise<DeliveryAddress | undefined>;
+  deleteDeliveryAddress(id: number, userId: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -142,6 +167,7 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
+  // [추가됨] 정보 수정 전용 (UPDATE Only)
   async updateUser(
     id: number,
     userData: Partial<UpsertUser>
@@ -150,7 +176,7 @@ export class DatabaseStorage implements IStorage {
       .update(users)
       .set({
         ...userData,
-        updatedAt: new Date(), // 수정 시간 갱신
+        updatedAt: new Date(),
       })
       .where(eq(users.id, id))
       .returning();
@@ -252,7 +278,7 @@ export class DatabaseStorage implements IStorage {
     await db.delete(productVariants).where(eq(productVariants.id, id));
   }
 
-  // Product size measurements operations ✨ NEW
+  // Product size measurements operations
   async getProductSizeMeasurements(
     productVariantId: number
   ): Promise<ProductSizeMeasurement[]> {
@@ -453,6 +479,33 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(orders).orderBy(desc(orders.createdAt));
   }
 
+  // [수정] 관리자용: 모든 주문과 상세 아이템 조회 (Join)
+  async getAllOrdersWithItems() {
+    const allOrders = await db
+      .select()
+      .from(orders)
+      .orderBy(desc(orders.createdAt));
+
+    const allItems = await db
+      .select()
+      .from(orderItems)
+      .leftJoin(products, eq(orderItems.productId, products.id));
+
+    return allOrders.map((order) => {
+      const items = allItems
+        .filter((row) => row.order_items.orderId === order.id)
+        .map((row) => ({
+          ...row.order_items,
+          product: row.products,
+        }));
+
+      return {
+        ...order,
+        orderItems: items,
+      };
+    });
+  }
+
   async updateOrderStatus(
     orderId: number,
     status: string,
@@ -469,6 +522,88 @@ export class DatabaseStorage implements IStorage {
       .where(eq(orders.id, orderId))
       .returning();
     return updated;
+  }
+
+  async updateOrderItemStatus(
+    itemId: number,
+    status: string,
+    trackingNumber?: string
+  ): Promise<OrderItem | undefined> {
+    const updateData: any = { status };
+    if (trackingNumber !== undefined) {
+      updateData.trackingNumber = trackingNumber;
+    }
+
+    const [updated] = await db
+      .update(orderItems)
+      .set(updateData)
+      .where(eq(orderItems.id, itemId))
+      .returning();
+    return updated;
+  }
+
+  // [구현] 배송지 목록 조회 (기본 배송지가 맨 위로 오도록 정렬)
+  async getDeliveryAddresses(userId: number): Promise<DeliveryAddress[]> {
+    return await db
+      .select()
+      .from(deliveryAddresses)
+      .where(eq(deliveryAddresses.userId, userId))
+      .orderBy(
+        desc(deliveryAddresses.isDefault),
+        desc(deliveryAddresses.createdAt)
+      );
+  }
+
+  // [구현] 배송지 추가
+  async createDeliveryAddress(
+    addressData: InsertDeliveryAddress
+  ): Promise<DeliveryAddress> {
+    // 만약 이번에 추가하는 주소가 '기본 배송지'라면, 기존 것들의 기본 설정을 해제
+    if (addressData.isDefault) {
+      await db
+        .update(deliveryAddresses)
+        .set({ isDefault: false })
+        .where(eq(deliveryAddresses.userId, addressData.userId));
+    }
+
+    const [newAddress] = await db
+      .insert(deliveryAddresses)
+      .values(addressData)
+      .returning();
+    return newAddress;
+  }
+
+  // [구현] 배송지 수정
+  async updateDeliveryAddress(
+    id: number,
+    userId: number,
+    addressData: Partial<InsertDeliveryAddress>
+  ): Promise<DeliveryAddress | undefined> {
+    // 기본 배송지로 설정하는 경우, 다른 주소들 초기화
+    if (addressData.isDefault) {
+      await db
+        .update(deliveryAddresses)
+        .set({ isDefault: false })
+        .where(eq(deliveryAddresses.userId, userId));
+    }
+
+    const [updated] = await db
+      .update(deliveryAddresses)
+      .set(addressData)
+      .where(
+        and(eq(deliveryAddresses.id, id), eq(deliveryAddresses.userId, userId))
+      )
+      .returning();
+    return updated;
+  }
+
+  // [구현] 배송지 삭제
+  async deleteDeliveryAddress(id: number, userId: number): Promise<void> {
+    await db
+      .delete(deliveryAddresses)
+      .where(
+        and(eq(deliveryAddresses.id, id), eq(deliveryAddresses.userId, userId))
+      );
   }
 }
 

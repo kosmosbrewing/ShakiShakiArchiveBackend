@@ -19,6 +19,7 @@ import {
   insertProductSizeMeasurementSchema,
   signupSchema,
   loginSchema,
+  insertDeliveryAddressSchema,
 } from "@shared/schema";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -68,8 +69,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = await storage.createUser({
         email: validatedData.email,
         passwordHash,
-        userName: validatedData.userName, // [변경]
-        // [추가] 선택 정보들
+        userName: validatedData.userName,
         zipCode: validatedData.zipCode,
         address: validatedData.address,
         detailAddress: validatedData.detailAddress,
@@ -150,16 +150,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // [추가] 내 정보 수정 API (필요할 경우)
+  // [수정] 내 정보 수정 API
   app.patch("/api/auth/user", isAuthenticated, async (req, res) => {
     try {
       const userId = req.session.userId!;
 
-      // 프론트엔드에서 보낸 데이터 받기
       const { userName, zipCode, address, detailAddress, phone, emailOptIn } =
         req.body;
 
-      // 업데이트할 객체 구성
       const updateData: any = {};
       if (userName) updateData.userName = userName;
       if (phone !== undefined) updateData.phone = phone;
@@ -168,7 +166,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (detailAddress !== undefined) updateData.detailAddress = detailAddress;
       if (emailOptIn !== undefined) updateData.emailOptIn = emailOptIn;
 
-      // [핵심 변경] upsertUser 대신 updateUser 사용 (email 없어도 됨)
       const updatedUser = await storage.updateUser(userId, updateData);
 
       if (!updatedUser) {
@@ -188,14 +185,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { currentPassword, newPassword } = req.body;
       const userId = req.session.userId!;
 
-      // 1. 현재 유저 정보 가져오기 (해시된 비밀번호 확인용)
       const user = await storage.getUser(userId);
       if (!user) {
         return res.status(404).json({ message: "사용자를 찾을 수 없습니다" });
       }
 
-      // 2. 현재 비밀번호 검증 (보안 필수)
-      // Modify.vue에서 'password' 필드에 입력한 값을 currentPassword로 보냅니다.
       const isValid = await verifyPassword(currentPassword, user.passwordHash);
       if (!isValid) {
         return res
@@ -203,8 +197,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .json({ message: "현재 비밀번호가 일치하지 않습니다" });
       }
 
-      // 3. 새 비밀번호 해싱 및 업데이트
-      // 사용자가 입력한 비밀번호로 새로 설정합니다.
       const newPasswordHash = await hashPassword(newPassword);
 
       await storage.updateUser(userId, { passwordHash: newPasswordHash });
@@ -467,9 +459,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
+  // [수정] 관리자용 주문 조회 API (Order items 포함)
   app.get("/api/admin/orders", isAuthenticated, isAdmin, async (req, res) => {
     try {
-      const orders = await storage.getAllOrders();
+      const orders = await storage.getAllOrdersWithItems();
       res.json(orders);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -616,7 +609,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
-  // Admin product size measurements routes ✨ NEW
+  // Admin product size measurements routes
   app.get(
     "/api/admin/variants/:variantId/measurements",
     isAuthenticated,
@@ -689,6 +682,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
+  // [신규] 관리자: 주문 아이템 상태 수정 API
+  app.patch(
+    "/api/admin/order-items/:id",
+    isAuthenticated,
+    isAdmin,
+    async (req, res) => {
+      try {
+        const { status, trackingNumber } = req.body;
+        const item = await storage.updateOrderItemStatus(
+          Number(req.params.id),
+          status,
+          trackingNumber
+        );
+        if (!item) {
+          return res.status(404).json({ message: "Order item not found" });
+        }
+        res.json(item);
+      } catch (error: any) {
+        res.status(500).json({ message: error.message });
+      }
+    }
+  );
+  // [신규] 배송지 목록 조회
+  app.get("/api/user/addresses", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const addresses = await storage.getDeliveryAddresses(userId);
+      res.json(addresses);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // [신규] 배송지 추가
+  app.post("/api/user/addresses", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const validatedData = insertDeliveryAddressSchema.parse({
+        ...req.body,
+        userId, // 세션 ID 강제 주입
+      });
+      const address = await storage.createDeliveryAddress(validatedData);
+      res.status(201).json(address);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  // [신규] 배송지 수정
+  app.patch("/api/user/addresses/:id", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const addressId = Number(req.params.id);
+
+      const updated = await storage.updateDeliveryAddress(
+        addressId,
+        userId,
+        req.body
+      );
+      if (!updated) {
+        return res.status(404).json({ message: "Address not found" });
+      }
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // [신규] 배송지 삭제
+  app.delete("/api/user/addresses/:id", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const addressId = Number(req.params.id);
+
+      await storage.deleteDeliveryAddress(addressId, userId);
+      res.json({ message: "Address deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
   const httpServer = createServer(app);
   return httpServer;
 }
