@@ -111,6 +111,20 @@ export const products = pgTable("products", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// ------------------------------------------------------------------
+// [신규 생성] Users Relations (기존에 없었으므로 새로 정의)
+// ------------------------------------------------------------------
+export const usersRelations = relations(users, ({ many }) => ({
+  cartItems: many(cartItems),
+  orders: many(orders),
+  deliveryAddresses: many(deliveryAddresses),
+  // [추가] 위시리스트 연결
+  wishlistItems: many(wishlistItems),
+}));
+
+// ------------------------------------------------------------------
+// [수정] Products Relations (위시리스트 추가)
+// ------------------------------------------------------------------
 export const productsRelations = relations(products, ({ one, many }) => ({
   category: one(categories, {
     fields: [products.categoryId],
@@ -118,6 +132,9 @@ export const productsRelations = relations(products, ({ one, many }) => ({
   }),
   cartItems: many(cartItems),
   orderItems: many(orderItems),
+  productVariants: many(productVariants),
+  // [추가] 위시리스트 연결
+  wishlistItems: many(wishlistItems),
 }));
 
 export type Product = typeof products.$inferSelect;
@@ -137,6 +154,10 @@ export const cartItems = pgTable("cart_items", {
   productId: bigint("product_id", { mode: "number" })
     .references(() => products.id, { onDelete: "cascade" })
     .notNull(),
+  variantId: bigint("variant_id", { mode: "number" }).references(
+    () => productVariants.id,
+    { onDelete: "set null" }
+  ),
   quantity: integer("quantity").default(1).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -150,6 +171,11 @@ export const cartItemsRelations = relations(cartItems, ({ one }) => ({
   product: one(products, {
     fields: [cartItems.productId],
     references: [products.id],
+  }),
+  // [신규] 옵션 정보 연결
+  variant: one(productVariants, {
+    fields: [cartItems.variantId],
+    references: [productVariants.id],
   }),
 }));
 
@@ -220,6 +246,7 @@ export const orderItems = pgTable("order_items", {
     .notNull(),
   productName: varchar("product_name", { length: 255 }).notNull(),
   productPrice: decimal("product_price", { precision: 10, scale: 2 }).notNull(),
+  options: text("options"),
   quantity: integer("quantity").notNull(),
 
   // [추가됨] 개별 상품 상태 및 운송장
@@ -347,4 +374,38 @@ export const insertDeliveryAddressSchema = createInsertSchema(
   id: true,
   createdAt: true,
 });
+
 export type InsertDeliveryAddress = z.infer<typeof insertDeliveryAddressSchema>;
+
+// ------------------------------------------------------------------
+// [신규] 7. 위시리스트 (Wishlist Items)
+// ------------------------------------------------------------------
+export const wishlistItems = pgTable("wishlist_items", {
+  id: serial("id").primaryKey(),
+  userId: bigint("user_id", { mode: "number" })
+    .references(() => users.id, { onDelete: "cascade" })
+    .notNull(),
+  productId: bigint("product_id", { mode: "number" })
+    .references(() => products.id, { onDelete: "cascade" })
+    .notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// 위시리스트 관계 정의 (User와 Product를 연결)
+export const wishlistItemsRelations = relations(wishlistItems, ({ one }) => ({
+  user: one(users, {
+    fields: [wishlistItems.userId],
+    references: [users.id],
+  }),
+  product: one(products, {
+    fields: [wishlistItems.productId],
+    references: [products.id],
+  }),
+}));
+
+export type WishlistItem = typeof wishlistItems.$inferSelect;
+export const insertWishlistItemSchema = createInsertSchema(wishlistItems).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertWishlistItem = z.infer<typeof insertWishlistItemSchema>;

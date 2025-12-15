@@ -34,8 +34,7 @@ async function seedDatabase() {
       .values({
         email: "admin@example.com",
         passwordHash,
-        firstName: "관리자",
-        lastName: "테스트",
+        userName: "관리자",
         isAdmin: true,
       })
       .onConflictDoUpdate({
@@ -273,7 +272,6 @@ async function seedDatabase() {
               .values({
                 productId: createdProduct.id,
                 size: variant.size,
-                color: variant.color || null,
                 sku: variant.sku,
                 stockQuantity: variant.stockQuantity,
                 isAvailable: true

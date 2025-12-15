@@ -1,25 +1,30 @@
-import express, { type Request, Response, NextFunction } from "express";
-import { registerRoutes } from "./routes";
+// server/index.ts
+// Express 앱 진입점
 
-function log(message: string, source = "express") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
+import express from "express";
+import { createServer } from "http";
+import { config } from "./config";
+import { corsMiddleware } from "./config/cors";
+import { createSessionMiddleware } from "./config/session";
+import {
+  errorHandler,
+  loggerMiddleware,
+  populateUser,
+  log,
+} from "./middleware";
+import routes from "./routes";
 
-  console.log(`${formattedTime} [${source}] ${message}`);
-}
-
+// Express 앱 초기화
 const app = express();
 
+// rawBody 저장 (Stripe webhook 등에서 필요)
 declare module "http" {
   interface IncomingMessage {
     rawBody: unknown;
   }
 }
 
+// Body 파싱
 app.use(
   express.json({
     verify: (req, _res, buf) => {
@@ -29,81 +34,35 @@ app.use(
 );
 app.use(express.urlencoded({ extended: false }));
 
-// CORS Middleware - Allow requests from any origin
-app.use((req, res, next) => {
-  const origin = req.headers.origin || "*";
-  res.header("Access-Control-Allow-Origin", origin);
-  res.header("Access-Control-Allow-Credentials", "true");
-  res.header(
-    "Access-Control-Allow-Methods",
-    "GET, POST, PUT, DELETE, PATCH, OPTIONS"
-  );
-  res.header(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, X-Requested-With"
-  );
+// CORS
+app.use(corsMiddleware);
 
-  // Handle preflight requests
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(200);
+// 세션
+app.set("trust proxy", 1);
+app.use(createSessionMiddleware());
+
+// 사용자 정보 주입
+app.use(populateUser);
+
+// 요청 로깅
+app.use(loggerMiddleware);
+
+// API 라우트
+app.use("/api", routes);
+
+// 글로벌 에러 핸들러 (서버 크래시 방지)
+app.use(errorHandler);
+
+// 서버 시작
+const httpServer = createServer(app);
+
+httpServer.listen(
+  {
+    port: config.port,
+    host: "localhost",
+  },
+  () => {
+    log(`API Server serving on port ${config.port}`);
+    log(`Environment: ${config.nodeEnv}`);
   }
-
-  next();
-});
-
-app.use((req, res, next) => {
-  const start = Date.now();
-  const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
-
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      if (logLine.length > 80) {
-        logLine = logLine.slice(0, 79) + "…";
-      }
-
-      log(logLine);
-    }
-  });
-
-  next();
-});
-
-(async () => {
-  const server = await registerRoutes(app);
-
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
-
-    res.status(status).json({ message });
-    throw err;
-  });
-
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Default to 5000 if not specified.
-  // API Only Backend
-  const port = parseInt(process.env.PORT || "5000", 10);
-  server.listen(
-    {
-      port,
-      host: "localhost",
-    },
-    () => {
-      log(`🚀 API Server serving on port ${port}`);
-      log(`Environment: ${process.env.NODE_ENV || "development"}`);
-    }
-  );
-})();
+);

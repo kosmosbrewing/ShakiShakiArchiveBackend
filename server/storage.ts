@@ -8,6 +8,7 @@ import {
   productVariants,
   productSizeMeasurements,
   deliveryAddresses,
+  wishlistItems,
   type User,
   type UpsertUser,
   type Product,
@@ -19,23 +20,30 @@ import {
   type Order,
   type InsertOrder,
   type OrderItem,
-  type InsertOrderItem,
   type ProductVariant,
   type InsertProductVariant,
   type ProductSizeMeasurement,
   type InsertProductSizeMeasurement,
   type DeliveryAddress,
   type InsertDeliveryAddress,
+  type WishlistItem,
+  // [삭제됨] type InsertWishlistItem, (미사용으로 제거)
 } from "@shared/schema";
-import { db } from "./db";
-import { eq, and, like, sql, desc } from "drizzle-orm";
+import { db, pool } from "./db";
+import { eq, and, like, desc, isNull } from "drizzle-orm";
+import type {
+  OrderItemCreateData,
+  OrderStatusUpdate,
+  OrderItemStatusUpdate,
+} from "./types";
+
 export interface IStorage {
   // User operations
   getUser(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: Omit<UpsertUser, "id">): Promise<User>;
   upsertUser(user: UpsertUser): Promise<User>;
-  updateUser(id: number, user: Partial<UpsertUser>): Promise<User | undefined>; // [추가됨]
+  updateUser(id: number, user: Partial<UpsertUser>): Promise<User | undefined>;
 
   // Product operations
   getProducts(filters?: {
@@ -93,10 +101,17 @@ export interface IStorage {
   deleteCartItem(id: number): Promise<void>;
   clearCart(userId: number): Promise<void>;
 
+  // Wishlist operations
+  getWishlistItems(
+    userId: number
+  ): Promise<(WishlistItem & { product: Product })[]>;
+  addWishlistItem(userId: number, productId: number): Promise<WishlistItem>;
+  deleteWishlistItem(userId: number, productId: number): Promise<void>;
+
   // Order operations
   createOrder(
     order: InsertOrder,
-    items: Omit<InsertOrderItem, "orderId">[]
+    items: OrderItemCreateData[]
   ): Promise<number>;
   getOrders(userId: number): Promise<Order[]>;
   getOrder(
@@ -105,9 +120,9 @@ export interface IStorage {
     (Order & { orderItems: (OrderItem & { product: Product })[] }) | undefined
   >;
   getAllOrders(): Promise<Order[]>;
-
-  // [수정] 관리자용: 모든 주문과 상세 아이템 조회
-  getAllOrdersWithItems(): Promise<(Order & { orderItems: any[] })[]>;
+  getAllOrdersWithItems(): Promise<
+    (Order & { orderItems: (OrderItem & { product: Product | null })[] })[]
+  >;
 
   updateOrderStatus(
     orderId: number,
@@ -115,14 +130,13 @@ export interface IStorage {
     trackingNumber?: string
   ): Promise<Order | undefined>;
 
-  // 주문 아이템 상태 업데이트
   updateOrderItemStatus(
     itemId: number,
     status: string,
     trackingNumber?: string
   ): Promise<OrderItem | undefined>;
 
-  // [신규] 배송지 관리
+  // Delivery Address operations
   getDeliveryAddresses(userId: number): Promise<DeliveryAddress[]>;
   createDeliveryAddress(
     address: InsertDeliveryAddress
@@ -136,7 +150,9 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
+  // ------------------------------------------------------------------
   // User operations
+  // ------------------------------------------------------------------
   async getUser(id: number): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user;
@@ -167,7 +183,6 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  // [추가됨] 정보 수정 전용 (UPDATE Only)
   async updateUser(
     id: number,
     userData: Partial<UpsertUser>
@@ -183,7 +198,9 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
+  // ------------------------------------------------------------------
   // Product operations
+  // ------------------------------------------------------------------
   async getProducts(filters?: {
     search?: string;
     categoryId?: number;
@@ -199,7 +216,8 @@ export class DatabaseStorage implements IStorage {
     }
 
     if (conditions.length > 0) {
-      query = query.where(and(...conditions)) as any;
+      // @ts-ignore: Drizzle query builder type complexity
+      query = query.where(and(...conditions));
     }
 
     const results = await query.orderBy(desc(products.createdAt));
@@ -235,7 +253,9 @@ export class DatabaseStorage implements IStorage {
     await db.delete(products).where(eq(products.id, id));
   }
 
+  // ------------------------------------------------------------------
   // Product variant operations
+  // ------------------------------------------------------------------
   async getProductVariants(productId: number): Promise<ProductVariant[]> {
     return await db
       .select()
@@ -278,7 +298,9 @@ export class DatabaseStorage implements IStorage {
     await db.delete(productVariants).where(eq(productVariants.id, id));
   }
 
+  // ------------------------------------------------------------------
   // Product size measurements operations
+  // ------------------------------------------------------------------
   async getProductSizeMeasurements(
     productVariantId: number
   ): Promise<ProductSizeMeasurement[]> {
@@ -326,7 +348,9 @@ export class DatabaseStorage implements IStorage {
       .where(eq(productSizeMeasurements.id, id));
   }
 
+  // ------------------------------------------------------------------
   // Category operations
+  // ------------------------------------------------------------------
   async getCategories(): Promise<Category[]> {
     return await db.select().from(categories).orderBy(categories.name);
   }
@@ -363,32 +387,46 @@ export class DatabaseStorage implements IStorage {
     await db.delete(categories).where(eq(categories.id, id));
   }
 
+  // ------------------------------------------------------------------
   // Cart operations
+  // ------------------------------------------------------------------
   async getCartItems(
     userId: number
-  ): Promise<(CartItem & { product: Product })[]> {
+  ): Promise<(CartItem & { product: Product; variant?: ProductVariant })[]> {
     const items = await db
       .select()
       .from(cartItems)
       .innerJoin(products, eq(cartItems.productId, products.id))
+      // [신규] 옵션 정보 가져오기 (Left Join: 옵션 없는 상품도 조회됨)
+      .leftJoin(productVariants, eq(cartItems.variantId, productVariants.id))
       .where(eq(cartItems.userId, userId));
 
     return items.map((item) => ({
       ...item.cart_items,
       product: item.products,
+      // [신규] variant 정보 매핑 (없으면 undefined)
+      variant: item.product_variants || undefined,
     }));
   }
 
   async addCartItem(item: InsertCartItem): Promise<CartItem> {
+    // variantId 비교 조건 추가 (버그 수정: 같은 상품이라도 다른 옵션이면 별도 아이템)
+    const conditions = [
+      eq(cartItems.userId, item.userId),
+      eq(cartItems.productId, item.productId),
+    ];
+
+    // variantId가 있으면 해당 조건 추가, 없으면 null 체크
+    if (item.variantId) {
+      conditions.push(eq(cartItems.variantId, item.variantId));
+    } else {
+      conditions.push(isNull(cartItems.variantId));
+    }
+
     const existing = await db
       .select()
       .from(cartItems)
-      .where(
-        and(
-          eq(cartItems.userId, item.userId),
-          eq(cartItems.productId, item.productId)
-        )
-      );
+      .where(and(...conditions));
 
     if (existing.length > 0) {
       const [updated] = await db
@@ -423,21 +461,116 @@ export class DatabaseStorage implements IStorage {
     await db.delete(cartItems).where(eq(cartItems.userId, userId));
   }
 
-  // Order operations
+  // ------------------------------------------------------------------
+  // Wishlist operations
+  // ------------------------------------------------------------------
+  async getWishlistItems(
+    userId: number
+  ): Promise<(WishlistItem & { product: Product })[]> {
+    const items = await db
+      .select()
+      .from(wishlistItems)
+      .innerJoin(products, eq(wishlistItems.productId, products.id))
+      .where(eq(wishlistItems.userId, userId))
+      .orderBy(desc(wishlistItems.createdAt));
+
+    return items.map((item) => ({
+      ...item.wishlist_items,
+      product: item.products,
+    }));
+  }
+
+  async addWishlistItem(
+    userId: number,
+    productId: number
+  ): Promise<WishlistItem> {
+    // 중복 확인
+    const existing = await db
+      .select()
+      .from(wishlistItems)
+      .where(
+        and(
+          eq(wishlistItems.userId, userId),
+          eq(wishlistItems.productId, productId)
+        )
+      );
+
+    if (existing.length > 0) {
+      return existing[0];
+    }
+
+    const [newItem] = await db
+      .insert(wishlistItems)
+      .values({ userId, productId })
+      .returning();
+    return newItem;
+  }
+
+  async deleteWishlistItem(userId: number, productId: number): Promise<void> {
+    await db
+      .delete(wishlistItems)
+      .where(
+        and(
+          eq(wishlistItems.userId, userId),
+          eq(wishlistItems.productId, productId)
+        )
+      );
+  }
+
+  // ------------------------------------------------------------------
+  // Order operations (트랜잭션 적용)
+  // ------------------------------------------------------------------
   async createOrder(
     order: InsertOrder,
-    items: Omit<InsertOrderItem, "orderId">[]
+    items: OrderItemCreateData[]
   ): Promise<number> {
-    const [newOrder] = await db.insert(orders).values(order).returning();
+    // 트랜잭션으로 주문과 주문 아이템을 원자적으로 생성
+    const client = await pool.connect();
 
-    const orderItemsWithOrderId = items.map((item) => ({
-      ...item,
-      orderId: newOrder.id,
-    }));
+    try {
+      await client.query("BEGIN");
 
-    await db.insert(orderItems).values(orderItemsWithOrderId);
+      // 1. 주문 생성
+      const orderResult = await client.query(
+        `INSERT INTO orders (user_id, total_amount, status, shipping_name, shipping_phone, shipping_address, shipping_postal_code)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+        [
+          order.userId,
+          order.totalAmount,
+          order.status,
+          order.shippingName,
+          order.shippingPhone,
+          order.shippingAddress,
+          order.shippingPostalCode,
+        ]
+      );
+      const orderId = orderResult.rows[0].id;
 
-    return newOrder.id;
+      // 2. 주문 아이템 생성
+      for (const item of items) {
+        await client.query(
+          `INSERT INTO order_items (order_id, product_id, product_name, product_price, quantity, options, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            orderId,
+            item.productId,
+            item.productName,
+            item.productPrice,
+            item.quantity,
+            item.options,
+            "pending_payment",
+          ]
+        );
+      }
+
+      await client.query("COMMIT");
+      return orderId;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async getOrders(userId: number): Promise<Order[]> {
@@ -479,31 +612,42 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(orders).orderBy(desc(orders.createdAt));
   }
 
-  // [수정] 관리자용: 모든 주문과 상세 아이템 조회 (Join)
-  async getAllOrdersWithItems() {
-    const allOrders = await db
+  async getAllOrdersWithItems(): Promise<
+    (Order & { orderItems: (OrderItem & { product: Product | null })[] })[]
+  > {
+    // N+1 쿼리 개선: 단일 JOIN 쿼리로 모든 데이터 조회
+    const result = await db
       .select()
       .from(orders)
+      .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
+      .leftJoin(products, eq(orderItems.productId, products.id))
       .orderBy(desc(orders.createdAt));
 
-    const allItems = await db
-      .select()
-      .from(orderItems)
-      .leftJoin(products, eq(orderItems.productId, products.id));
+    // 결과를 주문별로 그룹화
+    const orderMap = new Map<
+      number,
+      Order & { orderItems: (OrderItem & { product: Product | null })[] }
+    >();
 
-    return allOrders.map((order) => {
-      const items = allItems
-        .filter((row) => row.order_items.orderId === order.id)
-        .map((row) => ({
+    for (const row of result) {
+      const orderId = row.orders.id;
+
+      if (!orderMap.has(orderId)) {
+        orderMap.set(orderId, {
+          ...row.orders,
+          orderItems: [],
+        });
+      }
+
+      if (row.order_items) {
+        orderMap.get(orderId)!.orderItems.push({
           ...row.order_items,
           product: row.products,
-        }));
+        });
+      }
+    }
 
-      return {
-        ...order,
-        orderItems: items,
-      };
-    });
+    return Array.from(orderMap.values());
   }
 
   async updateOrderStatus(
@@ -511,7 +655,8 @@ export class DatabaseStorage implements IStorage {
     status: string,
     trackingNumber?: string
   ): Promise<Order | undefined> {
-    const updateData: any = { status, updatedAt: new Date() };
+    // any 타입 제거: 명시적 타입 사용
+    const updateData: OrderStatusUpdate = { status, updatedAt: new Date() };
     if (trackingNumber !== undefined) {
       updateData.trackingNumber = trackingNumber;
     }
@@ -529,7 +674,8 @@ export class DatabaseStorage implements IStorage {
     status: string,
     trackingNumber?: string
   ): Promise<OrderItem | undefined> {
-    const updateData: any = { status };
+    // any 타입 제거: 명시적 타입 사용
+    const updateData: OrderItemStatusUpdate = { status };
     if (trackingNumber !== undefined) {
       updateData.trackingNumber = trackingNumber;
     }
@@ -542,7 +688,9 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  // [구현] 배송지 목록 조회 (기본 배송지가 맨 위로 오도록 정렬)
+  // ------------------------------------------------------------------
+  // Delivery Address operations
+  // ------------------------------------------------------------------
   async getDeliveryAddresses(userId: number): Promise<DeliveryAddress[]> {
     return await db
       .select()
@@ -554,50 +702,102 @@ export class DatabaseStorage implements IStorage {
       );
   }
 
-  // [구현] 배송지 추가
   async createDeliveryAddress(
     addressData: InsertDeliveryAddress
   ): Promise<DeliveryAddress> {
-    // 만약 이번에 추가하는 주소가 '기본 배송지'라면, 기존 것들의 기본 설정을 해제
-    if (addressData.isDefault) {
-      await db
-        .update(deliveryAddresses)
-        .set({ isDefault: false })
-        .where(eq(deliveryAddresses.userId, addressData.userId));
+    // 기본 배송지가 아니면 트랜잭션 불필요
+    if (!addressData.isDefault) {
+      const [newAddress] = await db
+        .insert(deliveryAddresses)
+        .values(addressData)
+        .returning();
+      return newAddress;
     }
 
-    const [newAddress] = await db
-      .insert(deliveryAddresses)
-      .values(addressData)
-      .returning();
-    return newAddress;
+    // 기본 배송지 설정 시 트랜잭션으로 원자적 처리
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // 1. 기존 기본 배송지 해제
+      await client.query(
+        `UPDATE delivery_addresses SET is_default = false WHERE user_id = $1`,
+        [addressData.userId]
+      );
+
+      // 2. 새 배송지 추가
+      const result = await client.query(
+        `INSERT INTO delivery_addresses (user_id, recipient, phone, zip_code, address, detail_address, request_note, is_default)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        [
+          addressData.userId,
+          addressData.recipient,
+          addressData.phone,
+          addressData.zipCode,
+          addressData.address,
+          addressData.detailAddress || null,
+          addressData.requestNote || null,
+          addressData.isDefault,
+        ]
+      );
+
+      await client.query("COMMIT");
+      return result.rows[0] as DeliveryAddress;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
-  // [구현] 배송지 수정
   async updateDeliveryAddress(
     id: number,
     userId: number,
     addressData: Partial<InsertDeliveryAddress>
   ): Promise<DeliveryAddress | undefined> {
-    // 기본 배송지로 설정하는 경우, 다른 주소들 초기화
-    if (addressData.isDefault) {
-      await db
+    // 기본 배송지 변경이 아니면 트랜잭션 불필요
+    if (!addressData.isDefault) {
+      const [updated] = await db
         .update(deliveryAddresses)
-        .set({ isDefault: false })
-        .where(eq(deliveryAddresses.userId, userId));
+        .set(addressData)
+        .where(
+          and(
+            eq(deliveryAddresses.id, id),
+            eq(deliveryAddresses.userId, userId)
+          )
+        )
+        .returning();
+      return updated;
     }
 
-    const [updated] = await db
-      .update(deliveryAddresses)
-      .set(addressData)
-      .where(
-        and(eq(deliveryAddresses.id, id), eq(deliveryAddresses.userId, userId))
-      )
-      .returning();
-    return updated;
+    // 기본 배송지 변경 시 트랜잭션으로 원자적 처리
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // 1. 기존 기본 배송지 해제
+      await client.query(
+        `UPDATE delivery_addresses SET is_default = false WHERE user_id = $1`,
+        [userId]
+      );
+
+      // 2. 선택한 배송지를 기본으로 설정
+      const result = await client.query(
+        `UPDATE delivery_addresses SET is_default = true WHERE id = $1 AND user_id = $2 RETURNING *`,
+        [id, userId]
+      );
+
+      await client.query("COMMIT");
+      return result.rows[0] as DeliveryAddress | undefined;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
-  // [구현] 배송지 삭제
   async deleteDeliveryAddress(id: number, userId: number): Promise<void> {
     await db
       .delete(deliveryAddresses)
