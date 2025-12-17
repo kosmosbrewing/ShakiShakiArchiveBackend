@@ -6,6 +6,7 @@ import productRoutes from "./product.routes";
 import orderRoutes from "./order.routes";
 import categoryRoutes from "./category.routes";
 import variantRoutes from "./variant.routes";
+import paymentRoutes from "./payment.routes";
 
 const router = Router();
 
@@ -14,6 +15,9 @@ router.use("/products", productRoutes);
 
 // 주문 관리 (orders, order-items)
 router.use("/", orderRoutes);
+
+// 결제 관리
+router.use("/payments", paymentRoutes);
 
 // 카테고리 관리
 router.use("/categories", categoryRoutes);

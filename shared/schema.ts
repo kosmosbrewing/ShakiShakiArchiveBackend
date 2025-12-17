@@ -31,7 +31,8 @@ export const sessions = pgTable(
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   email: varchar("email").unique().notNull(),
-  passwordHash: varchar("password_hash", { length: 255 }).notNull(),
+  // [수정] nullable로 변경 - 소셜 로그인 사용자는 비밀번호 없음
+  passwordHash: varchar("password_hash", { length: 255 }),
   // [변경] firstName, lastName -> userName
   userName: varchar("user_name", { length: 100 }).notNull(),
   // [추가] 주소 및 연락처 정보
@@ -43,6 +44,11 @@ export const users = pgTable("users", {
 
   profileImageUrl: varchar("profile_image_url"),
   isAdmin: boolean("is_admin").default(false).notNull(),
+
+  // [추가] 소셜 로그인 관련 필드
+  naverId: varchar("naver_id", { length: 100 }).unique(), // 네이버 고유 ID
+  socialProvider: varchar("social_provider", { length: 20 }), // 'naver', 'kakao' 등
+
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -70,9 +76,9 @@ export const loginSchema = z.object({
 });
 export type LoginInput = z.infer<typeof loginSchema>;
 
-// Categories table
+// Categories table (id 직접 입력 가능)
 export const categories = pgTable("categories", {
-  id: serial("id").primaryKey(),
+  id: integer("id").primaryKey(), // serial 대신 integer로 변경하여 직접 입력 가능
   name: varchar("name", { length: 100 }).notNull(),
   slug: varchar("slug", { length: 100 }).unique().notNull(),
   description: text("description"),
@@ -86,7 +92,6 @@ export const categoriesRelations = relations(categories, ({ many }) => ({
 
 export type Category = typeof categories.$inferSelect;
 export const insertCategorySchema = createInsertSchema(categories).omit({
-  id: true,
   createdAt: true,
 });
 export type InsertCategory = z.infer<typeof insertCategorySchema>;
@@ -209,12 +214,26 @@ export const orders = pgTable("orders", {
   status: varchar("status", { length: 50 })
     .default("pending_payment")
     .notNull(),
+  // 배송 정보 (deliveryAddresses 테이블 구조 참고)
   shippingName: varchar("shipping_name", { length: 100 }).notNull(),
   shippingPhone: varchar("shipping_phone", { length: 20 }).notNull(),
-  shippingAddress: text("shipping_address").notNull(),
-  shippingPostalCode: varchar("shipping_postal_code", { length: 20 }),
+  shippingPostalCode: varchar("shipping_postal_code", { length: 20 }).notNull(),
+  shippingAddress: text("shipping_address").notNull(), // 기본 주소
+  shippingDetailAddress: varchar("shipping_detail_address", { length: 255 }), // 상세 주소
+  shippingRequestNote: varchar("shipping_request_note", { length: 255 }), // 배송 요청사항
   trackingNumber: varchar("tracking_number", { length: 100 }),
-  stripePaymentIntentId: varchar("stripe_payment_intent_id"),
+  // 결제 정보 (PG사 통합 대응: 토스페이먼츠, 네이버페이 등)
+  paymentProvider: varchar("payment_provider", { length: 50 }), // 'toss', 'naverpay', 'kakaopay' 등
+  paymentKey: varchar("payment_key", { length: 200 }), // PG사 결제 고유 키
+  externalOrderId: varchar("external_order_id", { length: 64 }), // PG사 주문 ID
+  paymentMethod: varchar("payment_method", { length: 50 }), // 'card', 'transfer', 'naverpay' 등
+  paidAt: timestamp("paid_at"),
+  canceledAt: timestamp("canceled_at"),
+  cancelReason: text("cancel_reason"),
+  refundedAmount: decimal("refunded_amount", {
+    precision: 10,
+    scale: 2,
+  }).default("0"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -409,3 +428,71 @@ export const insertWishlistItemSchema = createInsertSchema(wishlistItems).omit({
   createdAt: true,
 });
 export type InsertWishlistItem = z.infer<typeof insertWishlistItemSchema>;
+
+// ------------------------------------------------------------------
+// 토스페이먼츠 결제 관련 Zod 스키마
+// ------------------------------------------------------------------
+
+// 결제 승인 요청 스키마
+export const confirmPaymentSchema = z.object({
+  paymentKey: z.string().max(200, "paymentKey는 최대 200자입니다"),
+  orderId: z.string().min(6).max(64, "orderId는 6-64자입니다"),
+  amount: z.number().positive("결제 금액은 양수여야 합니다"),
+});
+export type ConfirmPaymentInput = z.infer<typeof confirmPaymentSchema>;
+
+// 결제 취소 요청 스키마
+export const cancelPaymentSchema = z.object({
+  cancelReason: z.string().min(1, "취소 사유를 입력해주세요"),
+  cancelAmount: z.number().positive().optional(), // 부분 취소 시
+  refundReceiveAccount: z
+    .object({
+      bank: z.string(),
+      accountNumber: z.string(),
+      holderName: z.string(),
+    })
+    .optional(), // 가상계좌 환불 시
+});
+export type CancelPaymentInput = z.infer<typeof cancelPaymentSchema>;
+
+// ------------------------------------------------------------------
+// 이메일 인증코드 테이블
+// ------------------------------------------------------------------
+export const emailVerifications = pgTable("email_verifications", {
+  id: serial("id").primaryKey(),
+  email: varchar("email", { length: 255 }).notNull(),
+  code: varchar("code", { length: 6 }).notNull(), // 6자리 인증코드
+  type: varchar("type", { length: 20 }).notNull(), // 'signup', 'password_reset' 등
+  verified: boolean("verified").default(false).notNull(),
+  expiresAt: timestamp("expires_at").notNull(), // 만료 시간
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type EmailVerification = typeof emailVerifications.$inferSelect;
+export const insertEmailVerificationSchema = createInsertSchema(
+  emailVerifications
+).omit({
+  id: true,
+  verified: true,
+  createdAt: true,
+});
+export type InsertEmailVerification = z.infer<
+  typeof insertEmailVerificationSchema
+>;
+
+// 이메일 인증코드 요청 스키마
+export const sendVerificationCodeSchema = z.object({
+  email: z.string().email("유효한 이메일 주소를 입력해주세요"),
+  type: z.enum(["signup", "password_reset"]).default("signup"),
+});
+export type SendVerificationCodeInput = z.infer<
+  typeof sendVerificationCodeSchema
+>;
+
+// 이메일 인증코드 확인 스키마
+export const verifyEmailCodeSchema = z.object({
+  email: z.string().email("유효한 이메일 주소를 입력해주세요"),
+  code: z.string().length(6, "인증코드는 6자리입니다"),
+  type: z.enum(["signup", "password_reset"]).default("signup"),
+});
+export type VerifyEmailCodeInput = z.infer<typeof verifyEmailCodeSchema>;

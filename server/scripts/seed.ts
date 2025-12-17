@@ -49,10 +49,10 @@ async function seedDatabase() {
     // 3. 카테고리 생성
     console.log("📁 카테고리 생성 중...");
     const categoryNames = [
-      { name: "전자제품", slug: "electronics", description: "스마트폰, 노트북, 태블릿 등" },
-      { name: "패션", slug: "fashion", description: "의류, 신발, 액세서리" },
-      { name: "생활용품", slug: "lifestyle", description: "주방용품, 침구류, 가구" },
-      { name: "뷰티", slug: "beauty", description: "화장품, 스킨케어" },
+      { id: 1, name: "전자제품", slug: "electronics", description: "스마트폰, 노트북, 태블릿 등" },
+      { id: 2, name: "패션", slug: "fashion", description: "의류, 신발, 액세서리" },
+      { id: 3, name: "생활용품", slug: "lifestyle", description: "주방용품, 침구류, 가구" },
+      { id: 4, name: "뷰티", slug: "beauty", description: "화장품, 스킨케어" },
     ];
 
     const createdCategories = await Promise.all(

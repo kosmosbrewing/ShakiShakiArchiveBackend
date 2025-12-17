@@ -1,4 +1,4 @@
-# 백엔드 수정 가이드
+# ShakiShaki Archive 백엔드 가이드
 
 ## 목차
 
@@ -7,10 +7,10 @@
 3. [인증 시스템](#인증-시스템)
 4. [데이터베이스 스키마](#데이터베이스-스키마)
 5. [API 엔드포인트](#api-엔드포인트)
-6. [Storage 인터페이스](#storage-인터페이스)
-7. [새로운 기능 추가하기](#새로운-기능-추가하기)
-8. [환경 변수](#환경-변수)
-9. [데이터베이스 마이그레이션](#데이터베이스-마이그레이션)
+6. [결제 시스템](#결제-시스템)
+7. [Storage 인터페이스](#storage-인터페이스)
+8. [새로운 기능 추가하기](#새로운-기능-추가하기)
+9. [환경 변수](#환경-변수)
 10. [문제 해결](#문제-해결)
 
 ---
@@ -19,64 +19,69 @@
 
 ```
 server/
-├── index.ts          # 서버 진입점, Express 앱 초기화
-├── routes.ts         # 모든 API 라우트 정의
-├── auth.ts           # 인증 미들웨어 및 유틸리티
-├── storage.ts        # 데이터베이스 추상화 레이어
-├── db.ts             # Drizzle ORM 설정
-└── vite.ts           # Vite 개발 서버 통합
+├── index.ts                    # 서버 진입점, Express 앱 초기화
+├── db.ts                       # Drizzle ORM + pg Pool 설정
+├── storage.ts                  # IStorage 인터페이스 및 DatabaseStorage 구현
+├── config/
+│   ├── index.ts                # 환경 변수 중앙 관리
+│   ├── cors.ts                 # CORS 설정
+│   └── session.ts              # 세션 설정
+├── middleware/
+│   ├── index.ts                # 미들웨어 통합 export
+│   ├── auth.middleware.ts      # 인증 미들웨어 (isAuthenticated, isAdmin, populateUser)
+│   ├── error.middleware.ts     # 전역 에러 처리
+│   └── logger.middleware.ts    # 요청 로깅
+├── routes/
+│   ├── index.ts                # 라우트 통합 등록
+│   ├── auth.routes.ts          # 인증 API (/api/auth/*)
+│   ├── oauth.routes.ts         # 소셜 로그인 API (/api/oauth/*)
+│   ├── product.routes.ts       # 상품 API (/api/products/*)
+│   ├── category.routes.ts      # 카테고리 API (/api/categories/*)
+│   ├── cart.routes.ts          # 장바구니 API (/api/cart/*)
+│   ├── order.routes.ts         # 주문 API (/api/orders/*)
+│   ├── payment.routes.ts       # 결제 API (/api/payments/*)
+│   ├── wishlist.routes.ts      # 위시리스트 API (/api/wishlist/*)
+│   ├── address.routes.ts       # 배송지 API (/api/user/addresses/*)
+│   ├── variant.routes.ts       # 상품 옵션 API (/api/variants/*)
+│   └── admin/
+│       ├── index.ts            # 관리자 라우트 통합
+│       ├── product.routes.ts   # 관리자 상품 관리
+│       ├── category.routes.ts  # 관리자 카테고리 관리
+│       ├── order.routes.ts     # 관리자 주문 관리
+│       ├── variant.routes.ts   # 관리자 상품 옵션 관리
+│       └── payment.routes.ts   # 관리자 결제 관리
+├── services/
+│   ├── toss.service.ts         # 토스페이먼츠 API 클라이언트
+│   └── naver.service.ts        # 네이버 OAuth 서비스
+├── types/
+│   └── index.ts                # 커스텀 타입 정의
+├── utils/
+│   └── password.ts             # 비밀번호 해싱 유틸리티
+└── scripts/
+    ├── seed.ts                 # 데이터베이스 시드 스크립트
+    ├── seed-data.ts            # 시드 데이터 정의
+    └── create-admin.ts         # 관리자 계정 생성 스크립트
 
 shared/
-└── schema.ts         # Drizzle 스키마 및 Zod 검증 스키마
+└── schema.ts                   # Drizzle 스키마 + Zod 검증 + TypeScript 타입
 ```
-
-### 주요 파일 역할
-
-**server/index.ts**
-
-- Express 앱 초기화
-- JSON 파싱, 로깅 미들웨어 설정
-- routes 등록
-- 개발/프로덕션 모드에 따라 Vite 또는 정적 파일 제공
-
-**server/routes.ts**
-
-- 세션 설정
-- 모든 API 엔드포인트 정의
-- 인증 및 권한 검증
-- 요청 검증 및 에러 처리
-
-**server/auth.ts**
-
-- 비밀번호 해싱 및 검증
-- `isAuthenticated` 미들웨어: 로그인 확인
-- `isAdmin` 미들웨어: 관리자 권한 확인
-- `populateUser` 미들웨어: 모든 요청에 사용자 정보 추가
-
-**server/storage.ts**
-
-- `IStorage` 인터페이스: 모든 데이터베이스 작업 정의
-- `DatabaseStorage` 클래스: Drizzle ORM을 사용한 구현
-- 비즈니스 로직과 데이터베이스 로직 분리
-
-**shared/schema.ts**
-
-- Drizzle 테이블 스키마 정의
-- Zod 검증 스키마 생성
-- TypeScript 타입 추론
 
 ---
 
 ## 기술 스택
 
-- **런타임**: Node.js + TypeScript
-- **웹 프레임워크**: Express.js
-- **데이터베이스**: PostgreSQL
-- **ORM**: Drizzle ORM
-- **인증**: 세션 기반 (express-session + connect-pg-simple)
-- **비밀번호 해싱**: bcryptjs
-- **검증**: Zod
-- **빌드 도구**: Vite (개발), esbuild (프로덕션)
+| 분류 | 기술 |
+|------|------|
+| 런타임 | Node.js + TypeScript |
+| 웹 프레임워크 | Express.js |
+| 데이터베이스 | PostgreSQL (Neon Serverless) |
+| ORM | Drizzle ORM |
+| 인증 | 세션 기반 (express-session + connect-pg-simple) |
+| 소셜 로그인 | 네이버 OAuth (openid-client) |
+| 비밀번호 해싱 | bcryptjs |
+| 검증 | Zod + drizzle-zod |
+| 결제 | 토스페이먼츠 (네이버페이/카카오페이 확장 가능) |
+| 빌드 도구 | esbuild + tsx |
 
 ---
 
@@ -84,255 +89,219 @@ shared/
 
 ### 개요
 
-이 프로젝트는 **이메일/비밀번호 기반 세션 인증**을 사용합니다.
+이메일/비밀번호 기반 세션 인증 및 소셜 로그인(네이버)을 지원합니다.
 
-### 인증 흐름
+### 인증 방식
 
-#### 회원가입 (POST /api/auth/signup)
-
-1. 클라이언트가 이메일, 비밀번호, 이름을 전송
-2. `signupSchema`로 검증
-3. 이메일 중복 확인
-4. bcrypt로 비밀번호 해싱
-5. 사용자 생성
-6. 세션 생성 (`req.session.userId` 설정)
-7. 사용자 정보 반환 (비밀번호 제외)
+#### 1. 이메일/비밀번호 회원가입 (POST /api/auth/signup)
 
 ```typescript
-// 요청 예시
-POST /api/auth/signup
+// 요청
 {
   "email": "user@example.com",
   "password": "securepassword123",
-  "firstName": "홍",
-  "lastName": "길동"
+  "userName": "홍길동",
+  "phone": "010-1234-5678",        // 선택
+  "zipCode": "12345",              // 선택
+  "address": "서울시 강남구",       // 선택
+  "detailAddress": "101동 1001호", // 선택
+  "emailOptIn": true               // 선택
 }
 
-// 응답 예시
+// 응답
 {
-  "id": "uuid",
+  "id": 1,
   "email": "user@example.com",
-  "firstName": "홍",
-  "lastName": "길동",
+  "userName": "홍길동",
   "isAdmin": false,
-  "createdAt": "2025-11-09T...",
-  "updatedAt": "2025-11-09T..."
+  "createdAt": "2025-12-15T..."
 }
 ```
 
-#### 로그인 (POST /api/auth/login)
-
-1. 클라이언트가 이메일, 비밀번호 전송
-2. `loginSchema`로 검증
-3. 이메일로 사용자 조회
-4. bcrypt로 비밀번호 검증
-5. 세션 생성
-6. 사용자 정보 반환
+#### 2. 로그인 (POST /api/auth/login)
 
 ```typescript
-// 요청 예시
-POST /api/auth/login
+// 요청
 {
-  "id": "user@example.com",
+  "email": "user@example.com",
   "password": "securepassword123"
 }
 ```
 
-#### 로그아웃 (POST /api/auth/logout)
+#### 3. 네이버 소셜 로그인
 
-1. 세션 파기
-2. 쿠키 삭제
-
-#### 사용자 정보 조회 (GET /api/auth/user)
-
-- 로그인한 사용자의 정보 반환
-- `isAuthenticated` 미들웨어 필요
+```
+1. GET /api/oauth/naver/login     # 네이버 로그인 페이지로 리다이렉트
+2. GET /api/oauth/naver/callback  # 네이버에서 콜백 (자동 처리)
+3. 프론트엔드로 리다이렉트         # 로그인 완료
+```
 
 ### 미들웨어
 
-#### isAuthenticated
-
 ```typescript
-// 사용 예시
+// isAuthenticated - 로그인 확인
 app.get("/api/cart", isAuthenticated, async (req, res) => {
   const userId = req.session.userId!;
   // ...
 });
-```
 
-- 세션에 `userId`가 있는지 확인
-- 없으면 401 Unauthorized 반환
-
-#### isAdmin
-
-```typescript
-// 사용 예시
+// isAdmin - 관리자 권한 확인 (isAuthenticated 이후 사용)
 app.post("/api/admin/products", isAuthenticated, isAdmin, async (req, res) => {
   // ...
 });
+
+// populateUser - 세션에서 사용자 정보를 req.user에 주입
+// (모든 요청에 자동 적용됨)
 ```
 
-- `isAuthenticated` 후에 사용해야 함
-- 데이터베이스에서 사용자 조회
-- `isAdmin` 플래그 확인
-- 아니면 403 Forbidden 반환
-
-#### populateUser
+### Express 타입 확장
 
 ```typescript
-// routes.ts에서 자동으로 적용됨
-app.use(populateUser);
+// server/types/index.ts
+declare global {
+  namespace Express {
+    interface Request {
+      user?: {
+        id: number;
+        email: string;
+        isAdmin: boolean;
+      };
+    }
+  }
+}
+
+declare module "express-session" {
+  interface SessionData {
+    userId: number;
+    oauthState?: string; // OAuth CSRF 방지용
+  }
+}
 ```
-
-- 모든 요청에 대해 세션 확인
-- 세션이 있으면 `req.user` 객체 추가
-- 에러가 발생해도 다음 미들웨어로 진행
-
-### 세션 설정
-
-```typescript
-// routes.ts
-const sessionStore = new pgStore({
-  conString: process.env.DATABASE_URL,
-  createTableIfMissing: false,
-  ttl: 7 * 24 * 60 * 60 * 1000, // 1주일
-  tableName: "sessions",
-});
-
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET!,
-    store: sessionStore,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    },
-  })
-);
-```
-
-- **세션 저장소**: PostgreSQL `sessions` 테이블
-- **만료 시간**: 1주일
-- **쿠키 설정**:
-  - `httpOnly`: JavaScript로 접근 불가 (XSS 방지)
-  - `secure`: HTTPS에서만 전송 (프로덕션)
-  - `maxAge`: 1주일
 
 ---
 
 ## 데이터베이스 스키마
 
-### ERD (Entity Relationship Diagram)
+### ERD (주요 테이블)
 
 ```
 users (사용자)
-├── id (PK)
+├── id (PK, serial)
 ├── email (unique, required)
-├── passwordHash (required)
-├── firstName
-├── lastName
+├── passwordHash (nullable - 소셜 로그인 사용자는 비밀번호 없음)
+├── userName (required)
+├── phone, zipCode, address, detailAddress
+├── emailOptIn (default: false)
 ├── profileImageUrl
 ├── isAdmin (default: false)
-├── createdAt
-└── updatedAt
+├── naverId (unique) - 네이버 소셜 로그인 ID
+├── socialProvider - 'naver', 'kakao' 등
+├── createdAt, updatedAt
 
 categories (카테고리)
 ├── id (PK)
-├── name
-├── slug (unique)
-├── description
-├── imageUrl
+├── name, slug (unique)
+├── description, imageUrl
 └── createdAt
 
 products (상품)
 ├── id (PK)
-├── name
-├── slug (unique)
+├── name, slug (unique)
 ├── description
-├── price
-├── originalPrice
+├── price, originalPrice
 ├── categoryId (FK → categories.id)
-├── imageUrl
-├── images (array)
-├── stockQuantity
-├── isAvailable
-├── createdAt
-└── updatedAt
+├── imageUrl, images[], detailImages[]
+├── stockQuantity, isAvailable
+└── createdAt, updatedAt
 
-cart_items (장바구니)
+productVariants (상품 옵션)
 ├── id (PK)
-├── userId (FK → users.id, cascade)
 ├── productId (FK → products.id, cascade)
-├── quantity
-├── createdAt
-└── updatedAt
+├── size, color, sku (unique)
+├── price, stockQuantity, isAvailable
+└── createdAt, updatedAt
+
+productSizeMeasurements (사이즈별 실측)
+├── id (PK)
+├── productVariantId (FK → productVariants.id, cascade)
+├── totalLength, shoulderWidth, chestSection
+├── sleeveLength, waistSection, hipSection, thighSection
+├── displayOrder
+└── createdAt
 
 orders (주문)
 ├── id (PK)
 ├── userId (FK → users.id)
-├── totalAmount
-├── status
-├── shippingName
-├── shippingPhone
-├── shippingAddress
-├── shippingPostalCode
+├── totalAmount, status
+├── shippingName, shippingPhone
+├── shippingPostalCode, shippingAddress
+├── shippingDetailAddress - 상세 주소
+├── shippingRequestNote - 배송 요청사항
 ├── trackingNumber
-├── stripePaymentIntentId
-├── createdAt
-└── updatedAt
+├── paymentProvider - 'toss', 'naverpay', 'kakaopay' 등
+├── paymentKey - PG사 결제 고유 키
+├── externalOrderId - PG사 주문 ID
+├── paymentMethod - 'card', 'transfer' 등
+├── paidAt, canceledAt, cancelReason, refundedAmount
+└── createdAt, updatedAt
 
-order_items (주문 상품)
+orderItems (주문 상품)
 ├── id (PK)
 ├── orderId (FK → orders.id, cascade)
 ├── productId (FK → products.id)
-├── productName
-├── productPrice
-├── quantity
+├── productName, productPrice, options, quantity
+├── status, trackingNumber - 개별 상품 상태 관리
 └── createdAt
 
-sessions (세션)
+deliveryAddresses (배송지 관리)
+├── id (PK)
+├── userId (FK → users.id, cascade)
+├── recipient, phone, zipCode
+├── address, detailAddress
+├── requestNote - 배송 요청사항
+├── isDefault
+└── createdAt
+
+wishlistItems (위시리스트)
+├── id (PK)
+├── userId (FK → users.id, cascade)
+├── productId (FK → products.id, cascade)
+└── createdAt
+
+cartItems (장바구니)
+├── id (PK)
+├── userId (FK → users.id, cascade)
+├── productId (FK → products.id, cascade)
+├── variantId (FK → productVariants.id, nullable)
+├── quantity
+└── createdAt, updatedAt
+
+sessions (세션 저장소)
 ├── sid (PK)
 ├── sess (jsonb)
 └── expire
+
+emailVerifications (이메일 인증코드)
+├── id (PK)
+├── email (required)
+├── code (6자리 인증코드)
+├── type ('signup', 'password_reset')
+├── verified (default: false)
+├── expiresAt (만료 시간)
+└── createdAt
 ```
 
-### 주요 관계
-
-- **User → Cart Items**: 1:N (cascade delete)
-- **User → Orders**: 1:N
-- **Category → Products**: 1:N
-- **Product → Cart Items**: 1:N (cascade delete)
-- **Product → Order Items**: 1:N
-- **Order → Order Items**: 1:N (cascade delete)
-
-### 주문 상태
+### 주문 상태 (OrderStatus)
 
 ```typescript
 type OrderStatus =
-  | "pending_payment" // 결제 대기
-  | "payment_confirmed" // 결제 완료
-  | "preparing" // 상품 준비 중
-  | "shipped" // 배송 중
-  | "delivered" // 배송 완료
-  | "cancelled"; // 취소됨
+  | "pending_payment"    // 결제 대기
+  | "payment_confirmed"  // 결제 완료
+  | "preparing"          // 상품 준비 중
+  | "shipped"            // 배송 중
+  | "delivered"          // 배송 완료
+  | "cancelled";         // 취소됨
 ```
-
-**결제 시스템**: 이 프로젝트는 현재 자동 결제 시스템을 사용하지 않습니다. 주문 흐름은 다음과 같습니다:
-
-1. 사용자가 주문 생성 (`POST /api/orders`)
-2. 주문 상태는 자동으로 `pending_payment`로 설정됨
-3. 관리자가 수동으로 결제 확인 후 상태를 `payment_confirmed`로 변경
-4. 이후 `preparing` → `shipped` → `delivered` 순서로 진행
-5. 필요 시 관리자가 운송장 번호 입력
-
-향후 Stripe 등의 자동 결제 시스템을 통합하려면:
-
-- `stripePaymentIntentId` 필드 활용
-- 새로운 결제 엔드포인트 추가 (`POST /api/payments/create-intent`)
-- 주문 생성 시 자동으로 `payment_confirmed` 설정
 
 ---
 
@@ -340,65 +309,271 @@ type OrderStatus =
 
 ### 인증 API
 
-| 메서드 | 경로               | 인증 | 설명             |
-| ------ | ------------------ | ---- | ---------------- |
-| POST   | `/api/auth/signup` | 없음 | 회원가입         |
-| POST   | `/api/auth/login`  | 없음 | 로그인           |
-| POST   | `/api/auth/logout` | 없음 | 로그아웃         |
-| GET    | `/api/auth/user`   | 필요 | 현재 사용자 정보 |
+| 메서드 | 경로 | 인증 | 설명 |
+|--------|------|------|------|
+| POST | `/api/auth/signup` | 없음 | 회원가입 (이메일 인증 필수) |
+| POST | `/api/auth/login` | 없음 | 로그인 |
+| POST | `/api/auth/logout` | 없음 | 로그아웃 |
+| GET | `/api/auth/user` | 필요 | 현재 사용자 정보 |
+| PUT | `/api/auth/user` | 필요 | 사용자 정보 수정 |
+| PUT | `/api/auth/password` | 필요 | 비밀번호 변경 |
+| POST | `/api/auth/send-verification` | 없음 | 이메일 인증코드 발송 |
+| POST | `/api/auth/verify-email` | 없음 | 이메일 인증코드 확인 |
+| GET | `/api/auth/check-verification` | 없음 | 이메일 인증 상태 확인 |
+
+#### 이메일 인증 흐름
+
+```
+1. POST /api/auth/send-verification (인증코드 발송)
+   └─ 6자리 인증코드 이메일 발송 (10분 유효)
+
+2. POST /api/auth/verify-email (인증코드 확인)
+   └─ 인증코드 검증 및 인증 완료 처리
+
+3. POST /api/auth/signup (회원가입)
+   └─ 이메일 인증 완료 후에만 회원가입 가능
+```
+
+#### 이메일 인증코드 발송 요청
+
+```typescript
+POST /api/auth/send-verification
+{
+  "email": "user@example.com",
+  "type": "signup"  // 'signup' | 'password_reset'
+}
+
+// 응답
+{
+  "message": "인증코드가 발송되었습니다"
+}
+```
+
+#### 이메일 인증코드 확인 요청
+
+```typescript
+POST /api/auth/verify-email
+{
+  "email": "user@example.com",
+  "code": "123456",
+  "type": "signup"
+}
+
+// 응답
+{
+  "message": "이메일이 인증되었습니다",
+  "verified": true
+}
+```
+
+### OAuth API (소셜 로그인)
+
+| 메서드 | 경로 | 설명 |
+|--------|------|------|
+| GET | `/api/oauth/naver/login` | 네이버 로그인 시작 |
+| GET | `/api/oauth/naver/callback` | 네이버 로그인 콜백 |
 
 ### 공개 API
 
-| 메서드 | 경로                | 설명                            |
-| ------ | ------------------- | ------------------------------- |
-| GET    | `/api/products`     | 상품 목록 (검색, 카테고리 필터) |
-| GET    | `/api/products/:id` | 상품 상세                       |
-| GET    | `/api/categories`   | 카테고리 목록                   |
+| 메서드 | 경로 | 설명 |
+|--------|------|------|
+| GET | `/api/products` | 상품 목록 (검색, 카테고리 필터) |
+| GET | `/api/products/:id` | 상품 상세 |
+| GET | `/api/products/:id/variants` | 상품 옵션 목록 |
+| GET | `/api/categories` | 카테고리 목록 |
+| GET | `/api/variants` | 상품 옵션 전체 목록 |
 
 ### 보호된 API (인증 필요)
 
 #### 장바구니
 
-| 메서드 | 경로            | 설명                 |
-| ------ | --------------- | -------------------- |
-| GET    | `/api/cart`     | 장바구니 조회        |
-| POST   | `/api/cart`     | 장바구니에 상품 추가 |
-| PATCH  | `/api/cart/:id` | 장바구니 수량 변경   |
+| 메서드 | 경로 | 설명 |
+|--------|------|------|
+| GET | `/api/cart` | 장바구니 조회 |
+| POST | `/api/cart` | 장바구니에 상품 추가 |
+| PATCH | `/api/cart/:id` | 장바구니 수량 변경 |
 | DELETE | `/api/cart/:id` | 장바구니 아이템 삭제 |
 
 #### 주문
 
-| 메서드 | 경로              | 설명         |
-| ------ | ----------------- | ------------ |
-| POST   | `/api/orders`     | 주문 생성    |
-| GET    | `/api/orders`     | 내 주문 목록 |
-| GET    | `/api/orders/:id` | 주문 상세    |
+| 메서드 | 경로 | 설명 |
+|--------|------|------|
+| POST | `/api/orders` | 주문 생성 |
+| GET | `/api/orders` | 내 주문 목록 |
+| GET | `/api/orders/:id` | 주문 상세 |
+| POST | `/api/orders/:id/cancel` | 주문 취소 |
+
+#### 주문 생성 요청 예시
+
+```typescript
+POST /api/orders
+{
+  "shippingName": "홍길동",
+  "shippingPhone": "010-1234-5678",
+  "shippingPostalCode": "12345",
+  "shippingAddress": "서울시 강남구 테헤란로 123",
+  "shippingDetailAddress": "101동 1001호",
+  "shippingRequestNote": "부재 시 경비실에 맡겨주세요"
+}
+
+// 응답
+{
+  "orderId": 1,
+  "externalOrderId": "SHAKI_M1234_ABC123",  // PG사 주문번호
+  "orderName": "상품명 외 2건",
+  "amount": 50000
+}
+```
+
+#### 주문 취소 요청 예시
+
+```typescript
+POST /api/orders/:id/cancel
+{
+  "cancelReason": "고객 변심",  // 선택, 기본값: "고객 요청에 의한 취소"
+  "cancelAmount": 50000         // 선택, 부분 취소 시 사용
+}
+
+// 응답 (결제 완료 주문 취소 시)
+{
+  "message": "주문이 취소되었습니다",
+  "order": { ... },
+  "refund": {
+    "cancelAmount": 50000,
+    "refundableAmount": 0,
+    "canceledAt": "2025-12-16T..."
+  }
+}
+
+// 응답 (결제 대기 주문 취소 시)
+{
+  "message": "주문이 취소되었습니다",
+  "order": { ... }
+}
+```
+
+**주문 취소 가능 상태:**
+
+| 주문 상태 | 취소 가능 | 처리 방식 |
+|----------|----------|----------|
+| `pending_payment` | O | 단순 상태 변경 |
+| `payment_confirmed` | O | PG사 결제 취소 후 상태 변경 |
+| `preparing` | O | PG사 결제 취소 후 상태 변경 |
+| `shipped` | X | 취소 불가 (400 에러) |
+| `delivered` | X | 취소 불가 (400 에러) |
+| `cancelled` | X | 이미 취소됨 (400 에러) |
+
+#### 결제
+
+| 메서드 | 경로 | 설명 |
+|--------|------|------|
+| GET | `/api/payments/client-key` | 토스페이먼츠 클라이언트 키 |
+| POST | `/api/payments/confirm` | 결제 승인 |
+| POST | `/api/payments/:orderId/cancel` | 결제 취소 |
+| GET | `/api/payments/:orderId/status` | 결제 상태 조회 |
+
+#### 위시리스트
+
+| 메서드 | 경로 | 설명 |
+|--------|------|------|
+| GET | `/api/wishlist` | 위시리스트 조회 |
+| POST | `/api/wishlist` | 위시리스트에 추가 |
+| DELETE | `/api/wishlist/:productId` | 위시리스트에서 제거 |
+
+#### 배송지 관리
+
+| 메서드 | 경로 | 설명 |
+|--------|------|------|
+| GET | `/api/user/addresses` | 배송지 목록 |
+| POST | `/api/user/addresses` | 배송지 추가 |
+| PUT | `/api/user/addresses/:id` | 배송지 수정 |
+| DELETE | `/api/user/addresses/:id` | 배송지 삭제 |
 
 ### 관리자 API (인증 + 관리자 권한 필요)
 
-#### 상품 관리
-
-| 메서드 | 경로                      | 설명           |
-| ------ | ------------------------- | -------------- |
-| GET    | `/api/admin/products`     | 모든 상품 조회 |
-| POST   | `/api/admin/products`     | 상품 생성      |
-| PATCH  | `/api/admin/products/:id` | 상품 수정      |
-| DELETE | `/api/admin/products/:id` | 상품 삭제      |
-
-#### 주문 관리
-
-| 메서드 | 경로                    | 설명                      |
-| ------ | ----------------------- | ------------------------- |
-| GET    | `/api/admin/orders`     | 모든 주문 조회            |
-| PATCH  | `/api/admin/orders/:id` | 주문 상태/운송장 업데이트 |
-
-#### 카테고리 관리
-
-| 메서드 | 경로                        | 설명          |
-| ------ | --------------------------- | ------------- |
-| POST   | `/api/admin/categories`     | 카테고리 생성 |
-| PATCH  | `/api/admin/categories/:id` | 카테고리 수정 |
+| 메서드 | 경로 | 설명 |
+|--------|------|------|
+| GET | `/api/admin/orders` | 전체 주문 목록 |
+| PATCH | `/api/admin/orders/:id` | 주문 상태/운송장 수정 |
+| PATCH | `/api/admin/order-items/:id` | 개별 상품 상태 수정 |
+| POST | `/api/admin/products` | 상품 생성 |
+| PATCH | `/api/admin/products/:id` | 상품 수정 |
+| DELETE | `/api/admin/products/:id` | 상품 삭제 |
+| POST | `/api/admin/categories` | 카테고리 생성 |
+| PATCH | `/api/admin/categories/:id` | 카테고리 수정 |
 | DELETE | `/api/admin/categories/:id` | 카테고리 삭제 |
+| GET | `/api/admin/payments/:orderId` | 결제 상세 조회 |
+| POST | `/api/admin/payments/:orderId/cancel` | 강제 결제 취소 |
+
+---
+
+## 결제 시스템
+
+### 아키텍처 (PG사 통합 구조)
+
+현재 토스페이먼츠를 지원하며, 네이버페이/카카오페이 등 다른 PG사 확장이 용이한 구조입니다.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      orders 테이블                          │
+├─────────────────────────────────────────────────────────────┤
+│ paymentProvider: 'toss' | 'naverpay' | 'kakaopay' | ...    │
+│ paymentKey: PG사 결제 고유 키                               │
+│ externalOrderId: PG사 주문 ID                               │
+│ paymentMethod: 'card' | 'transfer' | 'naverpay' | ...      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 결제 흐름 (토스페이먼츠)
+
+```
+1. 주문 생성 (POST /api/orders)
+   └─ externalOrderId 생성 (SHAKI_XXXXX_XXXXX)
+
+2. 클라이언트: 토스페이먼츠 결제창 호출
+   └─ orderId = externalOrderId 사용
+
+3. 결제 승인 (POST /api/payments/confirm)
+   └─ paymentProvider: 'toss' 설정
+   └─ paymentKey, externalOrderId 저장
+
+4. 주문 상태 업데이트 → payment_confirmed
+```
+
+### 결제 승인 요청
+
+```typescript
+POST /api/payments/confirm
+{
+  "paymentKey": "toss_payment_key_xxx",
+  "orderId": "SHAKI_M1234_ABC123",
+  "amount": 50000
+}
+```
+
+### 결제 취소/환불
+
+```typescript
+POST /api/payments/:orderId/cancel
+{
+  "cancelReason": "고객 변심",
+  "cancelAmount": 50000  // 부분 취소 시
+}
+```
+
+### 네이버페이/카카오페이 연동 시 (향후)
+
+```typescript
+// 새 PG사 서비스 파일 생성
+// server/services/naverpay.service.ts
+
+// 결제 승인 시 paymentProvider로 분기
+if (paymentProvider === 'toss') {
+  await confirmTossPayment(paymentKey, orderId, amount);
+} else if (paymentProvider === 'naverpay') {
+  await confirmNaverPayment(paymentKey, orderId, amount);
+}
+```
 
 ---
 
@@ -406,125 +581,36 @@ type OrderStatus =
 
 ### 개요
 
-`IStorage` 인터페이스는 모든 데이터베이스 작업을 추상화합니다. 이를 통해:
+`IStorage` 인터페이스는 모든 데이터베이스 작업을 추상화합니다.
 
-- 비즈니스 로직과 데이터베이스 로직 분리
-- 테스트 용이성 향상
-- 향후 다른 데이터베이스로 전환 가능
-
-### 사용자 작업
+### 주요 메서드
 
 ```typescript
 interface IStorage {
-  // 사용자 조회 (ID)
-  getUser(id: string): Promise<User | undefined>;
-
-  // 사용자 조회 (이메일)
+  // 사용자
+  getUser(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
+  getUserByNaverId(naverId: string): Promise<User | undefined>;
+  createUser(user: UpsertUser): Promise<User>;
+  updateUser(id: number, data: UserUpdateData): Promise<User | undefined>;
 
-  // 사용자 생성
-  createUser(user: Omit<UpsertUser, "id">): Promise<User>;
-
-  // 사용자 생성 또는 업데이트
-  upsertUser(user: UpsertUser): Promise<User>;
-}
-```
-
-### 상품 작업
-
-```typescript
-interface IStorage {
-  // 상품 목록 (검색, 필터)
-  getProducts(filters?: {
-    search?: string;
-    categoryId?: string;
-  }): Promise<Product[]>;
-
-  // 상품 조회
-  getProduct(id: string): Promise<Product | undefined>;
-
-  // 상품 생성
+  // 상품
+  getProducts(options?): Promise<Product[]>;
+  getProduct(id: number): Promise<Product | undefined>;
   createProduct(product: InsertProduct): Promise<Product>;
+  updateProduct(id: number, data: Partial<InsertProduct>): Promise<Product | undefined>;
+  deleteProduct(id: number): Promise<boolean>;
 
-  // 상품 수정
-  updateProduct(
-    id: string,
-    product: Partial<InsertProduct>
-  ): Promise<Product | undefined>;
+  // 주문
+  createOrder(userId: number, orderData, items: OrderItemCreateData[]): Promise<Order>;
+  getOrder(id: number): Promise<Order | undefined>;
+  getOrderByExternalOrderId(externalOrderId: string): Promise<Order | undefined>;
+  getUserOrders(userId: number): Promise<Order[]>;
+  updateOrderStatus(id: number, statusUpdate: OrderStatusUpdate): Promise<Order | undefined>;
+  updateOrderPayment(id: number, paymentData): Promise<Order | undefined>;
+  cancelOrderPayment(id: number, cancelData): Promise<Order | undefined>;
 
-  // 상품 삭제
-  deleteProduct(id: string): Promise<void>;
-}
-```
-
-### 카테고리 작업
-
-```typescript
-interface IStorage {
-  getCategories(): Promise<Category[]>;
-  getCategory(id: string): Promise<Category | undefined>;
-  createCategory(category: InsertCategory): Promise<Category>;
-  updateCategory(
-    id: string,
-    category: Partial<InsertCategory>
-  ): Promise<Category | undefined>;
-  deleteCategory(id: string): Promise<void>;
-}
-```
-
-### 장바구니 작업
-
-```typescript
-interface IStorage {
-  // 장바구니 조회 (상품 정보 포함)
-  getCartItems(userId: string): Promise<(CartItem & { product: Product })[]>;
-
-  // 장바구니 추가 (기존 아이템이 있으면 수량 증가)
-  addCartItem(item: InsertCartItem): Promise<CartItem>;
-
-  // 장바구니 수량 변경
-  updateCartItem(id: string, quantity: number): Promise<CartItem | undefined>;
-
-  // 장바구니 아이템 삭제
-  deleteCartItem(id: string): Promise<void>;
-
-  // 장바구니 전체 삭제
-  clearCart(userId: string): Promise<void>;
-}
-```
-
-### 주문 작업
-
-```typescript
-interface IStorage {
-  // 주문 생성 (주문 아이템 포함)
-  // 반환: 생성된 주문 ID (string)
-  // 주의: 주문 상세 정보가 필요하면 getOrder()를 별도로 호출
-  createOrder(
-    order: InsertOrder,
-    items: Omit<InsertOrderItem, "orderId">[]
-  ): Promise<string>; // 주문 ID만 반환
-
-  // 내 주문 목록 (주문 기본 정보만, orderItems 미포함)
-  getOrders(userId: string): Promise<Order[]>;
-
-  // 주문 상세 (주문 아이템 + 상품 정보 포함)
-  getOrder(
-    orderId: string
-  ): Promise<
-    (Order & { orderItems: (OrderItem & { product: Product })[] }) | undefined
-  >;
-
-  // 모든 주문 조회 (관리자용, 주문 기본 정보만)
-  getAllOrders(): Promise<Order[]>;
-
-  // 주문 상태 업데이트
-  // trackingNumber는 선택사항 (배송 시작 시에만 설정)
-  updateOrderStatus(
-    orderId: string,
-    status: string,
-    trackingNumber?: string
-  ): Promise<Order | undefined>;
+  // 장바구니, 위시리스트, 배송지 등...
 }
 ```
 
@@ -534,261 +620,84 @@ interface IStorage {
 
 ### 1. 새로운 테이블 추가
 
-#### Step 1: schema.ts에 테이블 정의
-
-```typescript
-// shared/schema.ts
-export const reviews = pgTable("reviews", {
-  id: varchar("id")
-    .primaryKey()
-    .default(sql`gen_random_uuid()`),
-  userId: varchar("user_id")
-    .references(() => users.id)
-    .notNull(),
-  productId: varchar("product_id")
-    .references(() => products.id)
-    .notNull(),
-  rating: integer("rating").notNull(), // 1-5
-  comment: text("comment"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
-// Relations 정의
-export const reviewsRelations = relations(reviews, ({ one }) => ({
-  user: one(users, {
-    fields: [reviews.userId],
-    references: [users.id],
-  }),
-  product: one(products, {
-    fields: [reviews.productId],
-    references: [products.id],
-  }),
-}));
-
-// 타입 및 검증 스키마
-export type Review = typeof reviews.$inferSelect;
-export const insertReviewSchema = createInsertSchema(reviews).omit({
-  id: true,
-  createdAt: true,
-});
-export type InsertReview = z.infer<typeof insertReviewSchema>;
-```
-
-#### Step 2: 데이터베이스 푸시
-
 ```bash
+# Step 1: shared/schema.ts에 테이블 정의
+# Step 2: 데이터베이스 푸시
 npm run db:push
+
+# Step 3: server/storage.ts에 IStorage 인터페이스 메서드 추가
+# Step 4: server/routes/에 API 라우트 파일 생성
+# Step 5: server/routes/index.ts에 라우트 등록
 ```
 
-#### Step 3: Storage 인터페이스 업데이트
+### 2. 새로운 PG사 추가 (예: 네이버페이)
 
 ```typescript
-// server/storage.ts
-export interface IStorage {
-  // ... 기존 메서드들
+// Step 1: server/services/naverpay.service.ts 생성
+export async function confirmNaverPayment(...) { ... }
+export async function cancelNaverPayment(...) { ... }
 
-  // Review operations
-  createReview(review: InsertReview): Promise<Review>;
-  getProductReviews(productId: string): Promise<(Review & { user: User })[]>;
-  deleteReview(id: string): Promise<void>;
-}
+// Step 2: server/routes/payment.routes.ts에서 paymentProvider로 분기 처리
 
-export class DatabaseStorage implements IStorage {
-  // ... 기존 메서드들
-
-  async createReview(reviewData: InsertReview): Promise<Review> {
-    const [review] = await db.insert(reviews).values(reviewData).returning();
-    return review;
-  }
-
-  async getProductReviews(
-    productId: string
-  ): Promise<(Review & { user: User })[]> {
-    const reviewList = await db
-      .select()
-      .from(reviews)
-      .innerJoin(users, eq(reviews.userId, users.id))
-      .where(eq(reviews.productId, productId))
-      .orderBy(desc(reviews.createdAt));
-
-    return reviewList.map((item) => ({
-      ...item.reviews,
-      user: item.users,
-    }));
-  }
-
-  async deleteReview(id: string): Promise<void> {
-    await db.delete(reviews).where(eq(reviews.id, id));
-  }
+// Step 3: server/config/index.ts에 환경 변수 추가
+naverpay: {
+  clientId: process.env.NAVERPAY_CLIENT_ID,
+  secretKey: process.env.NAVERPAY_SECRET_KEY,
 }
 ```
 
-#### Step 4: API 엔드포인트 추가
+### 3. 새로운 소셜 로그인 추가 (예: 카카오)
 
 ```typescript
-// server/routes.ts
-import { insertReviewSchema } from "@shared/schema";
-
-// 리뷰 생성 (로그인 필요)
-app.post("/api/reviews", isAuthenticated, async (req, res) => {
-  try {
-    const userId = req.session.userId!;
-    const validatedData = insertReviewSchema.parse({
-      ...req.body,
-      userId,
-    });
-
-    const review = await storage.createReview(validatedData);
-    res.json(review);
-  } catch (error: any) {
-    res.status(400).json({ message: error.message });
-  }
-});
-
-// 상품 리뷰 조회 (공개)
-app.get("/api/products/:id/reviews", async (req, res) => {
-  try {
-    const reviews = await storage.getProductReviews(req.params.id);
-    res.json(reviews);
-  } catch (error: any) {
-    res.status(500).json({ message: error.message });
-  }
-});
-
-// 리뷰 삭제 (본인 또는 관리자만)
-app.delete("/api/reviews/:id", isAuthenticated, async (req, res) => {
-  try {
-    // TODO: 본인 또는 관리자 확인 로직 추가
-    await storage.deleteReview(req.params.id);
-    res.json({ message: "Review deleted" });
-  } catch (error: any) {
-    res.status(500).json({ message: error.message });
-  }
-});
+// Step 1: server/services/kakao.service.ts 생성
+// Step 2: server/routes/oauth.routes.ts에 카카오 라우트 추가
+// Step 3: shared/schema.ts의 users 테이블에 kakaoId 필드 추가
+// Step 4: server/config/index.ts에 카카오 OAuth 설정 추가
 ```
-
-### 2. 새로운 인증 방식 추가 (예: OAuth)
-
-현재 시스템은 이메일/비밀번호 인증만 지원합니다. 소셜 로그인을 추가하려면:
-
-1. **Passport.js 전략 추가**
-
-   ```bash
-   npm install passport-google-oauth20
-   ```
-
-2. **auth.ts에 OAuth 설정 추가**
-3. **routes.ts에 OAuth 라우트 추가**
-4. **users 테이블에 `oauthProvider`, `oauthId` 컬럼 추가**
 
 ---
 
 ## 환경 변수
 
-### 필수 환경 변수
+### 필수
 
-| 변수명           | 설명                   | 예시                                  |
-| ---------------- | ---------------------- | ------------------------------------- |
-| `DATABASE_URL`   | PostgreSQL 연결 문자열 | `postgresql://user:pass@host:5432/db` |
-| `SESSION_SECRET` | 세션 암호화 키         | 랜덤 문자열 (32자 이상 권장)          |
-| `NODE_ENV`       | 실행 환경              | `development` 또는 `production`       |
-| `PORT`           | 서버 포트              | `5000` (기본값)                       |
+| 변수명 | 설명 | 예시 |
+|--------|------|------|
+| `DATABASE_URL` | PostgreSQL 연결 문자열 | `postgresql://user:pass@host:5432/db` |
+| `SESSION_SECRET` | 세션 암호화 키 | 32자 이상 랜덤 문자열 |
 
-### 선택 환경 변수
+### 선택
 
-| 변수명   | 설명                            | 예시 |
-| -------- | ------------------------------- | ---- |
-| `VITE_*` | 프론트엔드에 노출되는 환경 변수 | -    |
+| 변수명 | 설명 | 기본값 |
+|--------|------|--------|
+| `NODE_ENV` | 실행 환경 | `development` |
+| `PORT` | 서버 포트 | `5000` |
+| `SECURE_COOKIE` | HTTPS 쿠키 설정 | `true` (프로덕션) |
+| `CORS_ORIGINS` | 허용된 CORS origin (쉼표 구분) | `*` |
+| `FRONTEND_URL` | 프론트엔드 URL (OAuth 리다이렉트용) | `http://localhost:3000` |
 
-**참고**: 이 프로젝트는 현재 **Stripe을 사용하지 않습니다**. `stripePaymentIntentId` 필드는 향후 확장을 위해 예약된 필드입니다. 현재는 수동 결제 시스템을 사용하며, 관리자가 주문 상태를 수동으로 관리합니다.
+### 토스페이먼츠
 
-### 환경 변수 설정
+| 변수명 | 설명 |
+|--------|------|
+| `TOSS_CLIENT_KEY` | 토스페이먼츠 클라이언트 키 |
+| `TOSS_SECRET_KEY` | 토스페이먼츠 시크릿 키 |
 
-#### 개발 환경
+### 네이버 OAuth
 
-Replit은 자동으로 `DATABASE_URL`, `SESSION_SECRET`, `PORT`를 설정합니다.
+| 변수명 | 설명 |
+|--------|------|
+| `NAVER_CLIENT_ID` | 네이버 개발자 앱 Client ID |
+| `NAVER_CLIENT_SECRET` | 네이버 개발자 앱 Client Secret |
+| `NAVER_CALLBACK_URL` | 네이버 OAuth 콜백 URL |
 
-#### 프로덕션 환경
+### Resend (이메일 발송)
 
-1. Replit Secrets 탭에서 환경 변수 설정
-2. 또는 `.env` 파일 사용 (비공개 리포지토리만)
-
-```bash
-# .env (Git에 커밋하지 마세요!)
-DATABASE_URL=postgresql://...
-SESSION_SECRET=very-secret-key-here
-NODE_ENV=production
-```
-
----
-
-## 데이터베이스 마이그레이션
-
-### Drizzle Kit 사용
-
-이 프로젝트는 **Drizzle Push**를 사용합니다. 마이그레이션 파일을 생성하지 않고 스키마를 직접 푸시합니다.
-
-#### 스키마 변경 후 데이터베이스 업데이트
-
-```bash
-npm run db:push
-```
-
-#### 강제 푸시 (데이터 손실 경고 무시)
-
-```bash
-npm run db:push -- --force
-```
-
-⚠️ **주의**: 프로덕션 데이터베이스에서는 신중하게 사용하세요!
-
-### 스키마 변경 시 주의사항
-
-1. **컬럼 추가 (nullable)**
-
-   ```typescript
-   // 안전: nullable 컬럼 추가
-   newColumn: varchar("new_column");
-   ```
-
-2. **컬럼 추가 (not null with default)**
-
-   ```typescript
-   // 안전: 기본값이 있는 not null 컬럼
-   newColumn: varchar("new_column").default("default").notNull();
-   ```
-
-3. **컬럼 추가 (not null without default)**
-
-   ```typescript
-   // 위험: 기존 데이터가 있으면 실패
-   newColumn: varchar("new_column").notNull();
-   ```
-
-   해결책: 기존 데이터 삭제 또는 기본값 설정
-
-4. **컬럼 이름 변경**
-
-   ```typescript
-   // Drizzle은 이름 변경을 "삭제 + 추가"로 인식
-   // 데이터 손실 발생!
-   ```
-
-   해결책:
-
-   - 새 컬럼 추가
-   - 데이터 복사
-   - 기존 컬럼 삭제
-
-5. **컬럼 타입 변경**
-   ```typescript
-   // 위험: 데이터 손실 가능
-   // varchar → integer 등
-   ```
-   해결책:
-   - 백업 생성
-   - 변환 스크립트 작성
-   - 점진적 마이그레이션
+| 변수명 | 설명 |
+|--------|------|
+| `RESEND_API_KEY` | Resend API 키 |
+| `EMAIL_FROM` | 발신자 이메일 주소 (기본값: `noreply@example.com`) |
+| `EMAIL_FROM_NAME` | 발신자 이름 (기본값: `ShakiShaki`) |
 
 ---
 
@@ -796,109 +705,119 @@ npm run db:push -- --force
 
 ### 1. 데이터베이스 연결 실패
 
-**증상**: `Error: connection refused` 또는 `ECONNREFUSED`
+```bash
+# DATABASE_URL 확인
+echo $DATABASE_URL
 
-**원인**:
-
-- `DATABASE_URL` 환경 변수가 설정되지 않음
-- 데이터베이스가 실행되지 않음
-
-**해결**:
-
-1. Replit Database 탭에서 PostgreSQL 데이터베이스 생성
-2. `DATABASE_URL` 환경 변수 확인
-3. 서버 재시작
-
-### 2. 세션이 유지되지 않음
-
-**증상**: 로그인 후 즉시 로그아웃됨
-
-**원인**:
-
-- 쿠키 설정 문제
-- `SESSION_SECRET` 없음
-- `sessions` 테이블 없음
-
-**해결**:
-
-```sql
--- sessions 테이블 확인
-SELECT * FROM sessions LIMIT 1;
-
--- 없으면 생성 (보통 connect-pg-simple이 자동 생성)
+# PostgreSQL 연결 테스트
+psql $DATABASE_URL -c "SELECT 1"
 ```
 
-### 3. 401 Unauthorized 오류
+### 2. 세션 유지 안됨
 
-**증상**: 로그인했는데도 401 오류 발생
+- `SESSION_SECRET` 환경 변수 확인
+- `sessions` 테이블 존재 확인
+- CORS `credentials: true` 설정 확인
+- 프론트엔드에서 `credentials: 'include'` 옵션 사용 확인
 
-**원인**:
+### 3. 네이버 로그인 실패
 
-- 세션 쿠키가 전송되지 않음
-- CORS 설정 문제
+- `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET` 환경 변수 확인
+- 네이버 개발자 센터에서 콜백 URL 등록 확인
+- `NAVER_CALLBACK_URL`이 등록된 URL과 일치하는지 확인
 
-**해결**:
+### 4. 결제 승인 실패
 
-- 프론트엔드에서 `credentials: 'include'` 설정 확인
-- 백엔드 CORS 설정 확인
+- 토스페이먼츠 시크릿 키 확인
+- 결제 금액 일치 여부 확인 (서버 vs 클라이언트)
+- `externalOrderId` 형식 확인 (6-64자)
 
-### 4. Zod 검증 오류
-
-**증상**: `ZodError: validation failed`
-
-**원인**:
-
-- 클라이언트가 잘못된 데이터 전송
-- 스키마가 요구사항과 불일치
-
-**해결**:
-
-1. 에러 메시지에서 어떤 필드가 문제인지 확인
-2. `signupSchema`, `loginSchema` 등 스키마 확인
-3. 프론트엔드 폼 검증 추가
-
-### 5. bcrypt 해싱 에러
-
-**증상**: `Error: data and hash arguments required`
-
-**원인**:
-
-- `passwordHash`가 없는 사용자 레코드
-
-**해결**:
+### 5. 관리자 권한 부여
 
 ```sql
--- passwordHash가 null인 사용자 확인
-SELECT * FROM users WHERE password_hash IS NULL;
-
--- 해당 사용자 삭제 또는 비밀번호 재설정
+UPDATE users SET is_admin = true WHERE email = 'admin@example.com';
 ```
 
-### 6. 관리자 권한 부여
+또는 스크립트 사용:
 
-**증상**: 관리자 페이지 접근 불가
-
-**해결**:
-
-```sql
--- 특정 사용자를 관리자로 설정
-UPDATE users
-SET is_admin = true
-WHERE email = 'your-email@example.com';
+```bash
+npx tsx server/scripts/create-admin.ts
 ```
 
-### 7. TypeScript 타입 오류
+### 6. 스키마 변경 후 적용
 
-**증상**: `Property does not exist on type 'Request'`
+```bash
+# 타입 체크
+npm run check
 
-**원인**:
+# DB 반영
+npm run db:push
+```
 
-- Express 타입 확장이 적용되지 않음
+---
 
-**해결**:
+## 스크립트 명령어
 
-- `server/auth.ts`에서 타입 확장이 있는지 확인
-- VSCode를 재시작
+```bash
+# 개발 서버 실행
+npm run dev
+
+# 프로덕션 빌드
+npm run build
+
+# 프로덕션 서버 실행
+npm start
+
+# TypeScript 타입 체크
+npm run check
+
+# 데이터베이스 스키마 푸시
+npm run db:push
+```
+
+---
+
+## 변경 이력
+
+### 2025-12-17 (최신)
+
+**이메일 인증 기능 추가**
+
+- 회원가입 시 이메일 인증코드 발송 필수
+- Resend 이메일 서비스 연동
+- `server/services/email.service.ts` 추가
+- `emailVerifications` 테이블 추가
+- 인증 API 추가: `send-verification`, `verify-email`, `check-verification`
+
+**환경 변수 추가**
+
+- `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_FROM_NAME`
+
+### 2025-12-16
+
+**소셜 로그인 지원**
+
+- 네이버 OAuth 로그인 추가
+- `server/services/naver.service.ts` 추가
+- `server/routes/oauth.routes.ts` 추가
+- users 테이블에 `naverId`, `socialProvider` 필드 추가
+- `passwordHash` nullable로 변경 (소셜 로그인 사용자 지원)
+
+**환경 변수 추가**
+
+- `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`, `NAVER_CALLBACK_URL`
+- `FRONTEND_URL`, `CORS_ORIGINS`
+
+### 2025-12-15
+
+**orders 테이블 스키마 변경**
+
+- `shippingDetailAddress` 추가 (상세 주소)
+- `shippingRequestNote` 추가 (배송 요청사항)
+- 결제 필드 일반화 (PG사 통합 대응)
+  - `tossPaymentKey` → `paymentKey`
+  - `tossOrderId` → `externalOrderId`
+  - `paymentProvider` 추가
 
 ---
 
@@ -907,11 +826,10 @@ WHERE email = 'your-email@example.com';
 - [Express.js 문서](https://expressjs.com/)
 - [Drizzle ORM 문서](https://orm.drizzle.team/)
 - [Zod 문서](https://zod.dev/)
-- [bcryptjs 문서](https://github.com/dcodeIO/bcrypt.js)
-- [PostgreSQL 문서](https://www.postgresql.org/docs/)
+- [토스페이먼츠 API 문서](https://docs.tosspayments.com/)
+- [네이버 로그인 API 문서](https://developers.naver.com/docs/login/api/)
+- [Neon PostgreSQL 문서](https://neon.tech/docs/)
 
 ---
-
-## 라이선스
 
 MIT License

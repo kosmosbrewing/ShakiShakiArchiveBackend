@@ -20,6 +20,7 @@ declare global {
 declare module "express-session" {
   interface SessionData {
     userId: number;
+    oauthState?: string; // OAuth CSRF 방지용 상태 토큰
   }
 }
 

@@ -1,0 +1,142 @@
+// server/routes/oauth.routes.ts
+// OAuth 인증 관련 라우트 (/api/oauth/*)
+
+import { Router } from "express";
+import { config } from "../config";
+import { storage } from "../storage";
+import {
+  generateStateToken,
+  getAuthorizationUrl,
+  getAccessToken,
+  getUserProfile,
+  NaverOAuthError,
+} from "../services/naver.service";
+
+const router = Router();
+
+/**
+ * GET /api/oauth/naver
+ * 네이버 로그인 페이지로 리다이렉트
+ */
+router.get("/naver", (req, res) => {
+  // 네이버 OAuth가 비활성화된 경우
+  if (!config.naver.isEnabled) {
+    return res.status(503).json({
+      message: "네이버 로그인이 설정되지 않았습니다",
+    });
+  }
+
+  // CSRF 방지용 상태 토큰 생성 및 세션에 저장
+  const state = generateStateToken();
+  req.session.oauthState = state;
+
+  // 네이버 로그인 페이지로 리다이렉트
+  const authUrl = getAuthorizationUrl(state);
+  res.redirect(authUrl);
+});
+
+/**
+ * GET /api/oauth/naver/callback
+ * 네이버 인증 콜백 처리
+ */
+router.get("/naver/callback", async (req, res) => {
+  const { code, state, error, error_description } = req.query;
+  const frontendUrl = config.frontendUrl;
+
+  // 에러 응답 처리
+  if (error) {
+    console.error("네이버 OAuth 에러:", error, error_description);
+    return res.redirect(
+      `${frontendUrl}/oauth/callback?error=${encodeURIComponent(
+        (error_description as string) || "로그인 취소"
+      )}`
+    );
+  }
+
+  // 필수 파라미터 확인
+  if (!code || !state) {
+    return res.redirect(
+      `${frontendUrl}/oauth/callback?error=${encodeURIComponent(
+        "잘못된 요청입니다"
+      )}`
+    );
+  }
+
+  // CSRF 검증: 세션의 state와 비교
+  const savedState = req.session.oauthState;
+  if (!savedState || savedState !== state) {
+    return res.redirect(
+      `${frontendUrl}/oauth/callback?error=${encodeURIComponent(
+        "보안 검증에 실패했습니다"
+      )}`
+    );
+  }
+
+  // 사용한 state 삭제
+  delete req.session.oauthState;
+
+  try {
+    // 1. 인증 코드로 액세스 토큰 교환
+    const tokenData = await getAccessToken(code as string, state as string);
+
+    // 2. 액세스 토큰으로 사용자 프로필 조회
+    const profile = await getUserProfile(tokenData.access_token);
+
+    if (!profile.id) {
+      throw new NaverOAuthError("NO_ID", "네이버 ID를 가져올 수 없습니다");
+    }
+
+    // 3. naverId로 기존 사용자 검색
+    let user = await storage.getUserByNaverId(profile.id);
+
+    if (user) {
+      // 기존 네이버 연동 사용자 → 바로 로그인
+      req.session.userId = user.id;
+      return res.redirect(`${frontendUrl}/oauth/callback?success=true`);
+    }
+
+    // 4. 이메일로 기존 사용자 검색 (이메일 기준 자동 연동)
+    if (profile.email) {
+      user = await storage.getUserByEmail(profile.email);
+
+      if (user) {
+        // 기존 이메일 사용자에 네이버 계정 연동
+        await storage.updateUser(user.id, {
+          naverId: profile.id,
+          socialProvider: "naver",
+          profileImageUrl: profile.profile_image || user.profileImageUrl,
+        });
+
+        req.session.userId = user.id;
+        return res.redirect(`${frontendUrl}/oauth/callback?success=true`);
+      }
+    }
+
+    // 5. 신규 사용자 생성
+    const newUser = await storage.createUser({
+      email: profile.email || `naver_${profile.id}@naver.placeholder`, // 이메일 미제공 시 임시 이메일
+      passwordHash: null, // 소셜 로그인 사용자는 비밀번호 없음
+      userName: profile.name || profile.nickname || "네이버 사용자",
+      naverId: profile.id,
+      socialProvider: "naver",
+      profileImageUrl: profile.profile_image,
+      phone: profile.mobile,
+    });
+
+    req.session.userId = newUser.id;
+    return res.redirect(`${frontendUrl}/oauth/callback?success=true`);
+  } catch (error) {
+    console.error("네이버 로그인 처리 에러:", error);
+
+    const errorMessage =
+      error instanceof NaverOAuthError
+        ? error.message
+        : "로그인 처리 중 오류가 발생했습니다";
+
+    return res.redirect(
+      `${frontendUrl}/oauth/callback?error=${encodeURIComponent(errorMessage)}`
+    );
+  }
+});
+
+export default router;

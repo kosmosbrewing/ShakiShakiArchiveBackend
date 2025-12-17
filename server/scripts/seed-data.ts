@@ -16,26 +16,31 @@ async function seedData() {
     console.log("\n1. 카테고리 생성...");
     const categoriesData = [
       {
+        id: 1,
         name: "전자제품",
         slug: "electronics",
         description: "최신 전자기기 및 액세서리",
       },
       {
+        id: 2,
         name: "의류",
         slug: "clothing",
         description: "패션 의류 및 액세서리",
       },
       {
+        id: 3,
         name: "도서",
         slug: "books",
         description: "다양한 장르의 도서",
       },
       {
+        id: 4,
         name: "식품",
         slug: "food",
         description: "신선한 식품 및 간식",
       },
       {
+        id: 5,
         name: "가전제품",
         slug: "appliances",
         description: "생활 가전제품",

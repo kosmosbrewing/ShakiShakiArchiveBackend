@@ -9,6 +9,7 @@ import {
   productSizeMeasurements,
   deliveryAddresses,
   wishlistItems,
+  emailVerifications,
   type User,
   type UpsertUser,
   type Product,
@@ -27,10 +28,11 @@ import {
   type DeliveryAddress,
   type InsertDeliveryAddress,
   type WishlistItem,
-  // [삭제됨] type InsertWishlistItem, (미사용으로 제거)
+  type EmailVerification,
+  type InsertEmailVerification,
 } from "@shared/schema";
 import { db, pool } from "./db";
-import { eq, and, like, desc, isNull } from "drizzle-orm";
+import { eq, and, like, desc, isNull, gt } from "drizzle-orm";
 import type {
   OrderItemCreateData,
   OrderStatusUpdate,
@@ -41,6 +43,7 @@ export interface IStorage {
   // User operations
   getUser(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
+  getUserByNaverId(naverId: string): Promise<User | undefined>;
   createUser(user: Omit<UpsertUser, "id">): Promise<User>;
   upsertUser(user: UpsertUser): Promise<User>;
   updateUser(id: number, user: Partial<UpsertUser>): Promise<User | undefined>;
@@ -136,6 +139,33 @@ export interface IStorage {
     trackingNumber?: string
   ): Promise<OrderItem | undefined>;
 
+  // 결제 관련 메서드 (PG사 통합: 토스페이먼츠, 네이버페이 등)
+  updateOrderPayment(
+    orderId: number,
+    paymentData: {
+      paymentProvider: string; // 'toss', 'naverpay', 'kakaopay' 등
+      paymentKey: string;
+      externalOrderId: string;
+      paymentMethod?: string;
+      status: string;
+      paidAt?: Date;
+    }
+  ): Promise<Order | undefined>;
+
+  getOrderByExternalOrderId(
+    externalOrderId: string
+  ): Promise<Order | undefined>;
+
+  cancelOrderPayment(
+    orderId: number,
+    cancelData: {
+      status: string;
+      canceledAt: Date;
+      cancelReason: string;
+      refundedAmount?: string;
+    }
+  ): Promise<Order | undefined>;
+
   // Delivery Address operations
   getDeliveryAddresses(userId: number): Promise<DeliveryAddress[]>;
   createDeliveryAddress(
@@ -147,6 +177,19 @@ export interface IStorage {
     address: Partial<InsertDeliveryAddress>
   ): Promise<DeliveryAddress | undefined>;
   deleteDeliveryAddress(id: number, userId: number): Promise<void>;
+
+  // Email Verification operations
+  createEmailVerification(
+    verification: InsertEmailVerification
+  ): Promise<EmailVerification>;
+  getValidVerification(
+    email: string,
+    code: string,
+    type: string
+  ): Promise<EmailVerification | undefined>;
+  markVerificationAsUsed(id: number): Promise<void>;
+  deleteExpiredVerifications(): Promise<void>;
+  isEmailVerified(email: string, type: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -160,6 +203,14 @@ export class DatabaseStorage implements IStorage {
 
   async getUserByEmail(email: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.email, email));
+    return user;
+  }
+
+  async getUserByNaverId(naverId: string): Promise<User | undefined> {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.naverId, naverId));
     return user;
   }
 
@@ -198,6 +249,16 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
+  // ------------------------------------------------------------------
+  // Category operations
+  // ------------------------------------------------------------------
+  async getCategoryBySlug(slug: string): Promise<Category | undefined> {
+    const [category] = await db
+      .select()
+      .from(categories)
+      .where(eq(categories.slug, slug));
+    return category;
+  }
   // ------------------------------------------------------------------
   // Product operations
   // ------------------------------------------------------------------
@@ -530,18 +591,21 @@ export class DatabaseStorage implements IStorage {
     try {
       await client.query("BEGIN");
 
-      // 1. 주문 생성
+      // 1. 주문 생성 (배송 상세주소, 배송요청사항, PG사 주문ID 포함)
       const orderResult = await client.query(
-        `INSERT INTO orders (user_id, total_amount, status, shipping_name, shipping_phone, shipping_address, shipping_postal_code)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+        `INSERT INTO orders (user_id, total_amount, status, shipping_name, shipping_phone, shipping_postal_code, shipping_address, shipping_detail_address, shipping_request_note, external_order_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
         [
           order.userId,
           order.totalAmount,
           order.status,
           order.shippingName,
           order.shippingPhone,
-          order.shippingAddress,
           order.shippingPostalCode,
+          order.shippingAddress,
+          order.shippingDetailAddress || null,
+          order.shippingRequestNote || null,
+          order.externalOrderId || null,
         ]
       );
       const orderId = orderResult.rows[0].id;
@@ -689,6 +753,69 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ------------------------------------------------------------------
+  // 결제 관련 메서드 (PG사 통합: 토스페이먼츠, 네이버페이 등)
+  // ------------------------------------------------------------------
+  async updateOrderPayment(
+    orderId: number,
+    paymentData: {
+      paymentProvider: string;
+      paymentKey: string;
+      externalOrderId: string;
+      paymentMethod?: string;
+      status: string;
+      paidAt?: Date;
+    }
+  ): Promise<Order | undefined> {
+    const [updated] = await db
+      .update(orders)
+      .set({
+        paymentProvider: paymentData.paymentProvider,
+        paymentKey: paymentData.paymentKey,
+        externalOrderId: paymentData.externalOrderId,
+        paymentMethod: paymentData.paymentMethod,
+        status: paymentData.status,
+        paidAt: paymentData.paidAt,
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, orderId))
+      .returning();
+    return updated;
+  }
+
+  async getOrderByExternalOrderId(
+    externalOrderId: string
+  ): Promise<Order | undefined> {
+    const [order] = await db
+      .select()
+      .from(orders)
+      .where(eq(orders.externalOrderId, externalOrderId));
+    return order;
+  }
+
+  async cancelOrderPayment(
+    orderId: number,
+    cancelData: {
+      status: string;
+      canceledAt: Date;
+      cancelReason: string;
+      refundedAmount?: string;
+    }
+  ): Promise<Order | undefined> {
+    const [updated] = await db
+      .update(orders)
+      .set({
+        status: cancelData.status,
+        canceledAt: cancelData.canceledAt,
+        cancelReason: cancelData.cancelReason,
+        refundedAmount: cancelData.refundedAmount,
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, orderId))
+      .returning();
+    return updated;
+  }
+
+  // ------------------------------------------------------------------
   // Delivery Address operations
   // ------------------------------------------------------------------
   async getDeliveryAddresses(userId: number): Promise<DeliveryAddress[]> {
@@ -804,6 +931,80 @@ export class DatabaseStorage implements IStorage {
       .where(
         and(eq(deliveryAddresses.id, id), eq(deliveryAddresses.userId, userId))
       );
+  }
+
+  // ------------------------------------------------------------------
+  // Email Verification operations
+  // ------------------------------------------------------------------
+  async createEmailVerification(
+    verification: InsertEmailVerification
+  ): Promise<EmailVerification> {
+    // 기존 미사용 인증코드 삭제 후 새로 생성
+    await db
+      .delete(emailVerifications)
+      .where(
+        and(
+          eq(emailVerifications.email, verification.email),
+          eq(emailVerifications.type, verification.type),
+          eq(emailVerifications.verified, false)
+        )
+      );
+
+    const [newVerification] = await db
+      .insert(emailVerifications)
+      .values(verification)
+      .returning();
+    return newVerification;
+  }
+
+  async getValidVerification(
+    email: string,
+    code: string,
+    type: string
+  ): Promise<EmailVerification | undefined> {
+    const [verification] = await db
+      .select()
+      .from(emailVerifications)
+      .where(
+        and(
+          eq(emailVerifications.email, email),
+          eq(emailVerifications.code, code),
+          eq(emailVerifications.type, type),
+          eq(emailVerifications.verified, false),
+          gt(emailVerifications.expiresAt, new Date())
+        )
+      );
+    return verification;
+  }
+
+  async markVerificationAsUsed(id: number): Promise<void> {
+    await db
+      .update(emailVerifications)
+      .set({ verified: true })
+      .where(eq(emailVerifications.id, id));
+  }
+
+  async deleteExpiredVerifications(): Promise<void> {
+    // expiresAt < now (만료됨)를 의미하려면 lt 사용
+    await db
+      .delete(emailVerifications)
+      .where(eq(emailVerifications.verified, false));
+  }
+
+  async isEmailVerified(email: string, type: string): Promise<boolean> {
+    const [verification] = await db
+      .select()
+      .from(emailVerifications)
+      .where(
+        and(
+          eq(emailVerifications.email, email),
+          eq(emailVerifications.type, type),
+          eq(emailVerifications.verified, true)
+        )
+      )
+      .orderBy(desc(emailVerifications.createdAt))
+      .limit(1);
+    return !!verification;
   }
 }
 

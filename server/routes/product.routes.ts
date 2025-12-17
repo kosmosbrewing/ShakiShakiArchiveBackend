@@ -11,12 +11,35 @@ router.get("/", async (req, res) => {
   try {
     const search = req.query.search as string | undefined;
     const categoryIdParam = req.query.categoryId as string | undefined;
-    const categoryId = categoryIdParam ? Number(categoryIdParam) : undefined;
-    const products = await storage.getProducts({ search, categoryId });
+    const categorySlugParam = req.query.category as string | undefined;
+
+    let targetCategoryId: number | undefined = undefined;
+
+    // Case 1: 숫자로 된 ID가 직접 들어온 경우 (기존 호환)
+    if (categoryIdParam && !isNaN(Number(categoryIdParam))) {
+      targetCategoryId = Number(categoryIdParam);
+    }
+    // Case 2: Slug(문자열)가 들어온 경우 (신규 기능)
+    else if (categorySlugParam && categorySlugParam !== "all") {
+      // Slug로 카테고리 정보 조회
+      const category = await storage.getCategoryBySlug(categorySlugParam);
+
+      if (category) {
+        targetCategoryId = category.id; // 찾은 카테고리의 ID(숫자)를 사용
+      } else {
+        // 잘못된 슬러그면 빈 배열 반환 (또는 404)
+        return res.json([]);
+      }
+    }
+    const products = await storage.getProducts({
+      search,
+      categoryId: targetCategoryId,
+    });
     res.json(products);
   } catch (error: unknown) {
     console.error("Error fetching products:", error);
-    const message = error instanceof Error ? error.message : "Failed to fetch products";
+    const message =
+      error instanceof Error ? error.message : "Failed to fetch products";
     res.status(500).json({ message });
   }
 });
