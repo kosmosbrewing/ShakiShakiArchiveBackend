@@ -12,6 +12,7 @@ import {
   index,
   serial,
   bigint,
+  uuid,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -27,9 +28,9 @@ export const sessions = pgTable(
   (table) => [index("IDX_session_expire").on(table.expire)]
 );
 
-// [수정] Users table
+// [수정] Users table - UUID PK 사용
 export const users = pgTable("users", {
-  id: serial("id").primaryKey(),
+  id: uuid("id").primaryKey().defaultRandom(), // UUID 자동 생성
   email: varchar("email").unique().notNull(),
   // [수정] nullable로 변경 - 소셜 로그인 사용자는 비밀번호 없음
   passwordHash: varchar("password_hash", { length: 255 }),
@@ -96,9 +97,9 @@ export const insertCategorySchema = createInsertSchema(categories).omit({
 });
 export type InsertCategory = z.infer<typeof insertCategorySchema>;
 
-// Products table
+// Products table - UUID PK 사용
 export const products = pgTable("products", {
-  id: serial("id").primaryKey(),
+  id: uuid("id").primaryKey().defaultRandom(), // UUID 자동 생성
   name: varchar("name", { length: 255 }).notNull(),
   slug: varchar("slug", { length: 255 }).unique().notNull(),
   description: text("description"),
@@ -150,13 +151,13 @@ export const insertProductSchema = createInsertSchema(products).omit({
 });
 export type InsertProduct = z.infer<typeof insertProductSchema>;
 
-// Shopping cart items
+// Shopping cart items - UUID PK 사용
 export const cartItems = pgTable("cart_items", {
-  id: serial("id").primaryKey(),
-  userId: bigint("user_id", { mode: "number" })
+  id: uuid("id").primaryKey().defaultRandom(), // UUID 자동 생성
+  userId: uuid("user_id")
     .references(() => users.id, { onDelete: "cascade" })
     .notNull(),
-  productId: bigint("product_id", { mode: "number" })
+  productId: uuid("product_id")
     .references(() => products.id, { onDelete: "cascade" })
     .notNull(),
   variantId: bigint("variant_id", { mode: "number" }).references(
@@ -204,10 +205,10 @@ export const orderStatusEnum = [
 
 export type OrderStatus = (typeof orderStatusEnum)[number];
 
-// Orders table
+// Orders table - UUID PK 사용
 export const orders = pgTable("orders", {
-  id: serial("id").primaryKey(),
-  userId: bigint("user_id", { mode: "number" })
+  id: uuid("id").primaryKey().defaultRandom(), // UUID 자동 생성
+  userId: uuid("user_id")
     .references(() => users.id)
     .notNull(),
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
@@ -257,10 +258,10 @@ export type InsertOrder = z.infer<typeof insertOrderSchema>;
 // Order items table
 export const orderItems = pgTable("order_items", {
   id: serial("id").primaryKey(),
-  orderId: bigint("order_id", { mode: "number" })
+  orderId: uuid("order_id")
     .references(() => orders.id, { onDelete: "cascade" })
     .notNull(),
-  productId: bigint("product_id", { mode: "number" })
+  productId: uuid("product_id")
     .references(() => products.id)
     .notNull(),
   productName: varchar("product_name", { length: 255 }).notNull(),
@@ -298,7 +299,7 @@ export type InsertOrderItem = z.infer<typeof insertOrderItemSchema>;
 // Product variants/sizes table
 export const productVariants = pgTable("product_variants", {
   id: serial("id").primaryKey(),
-  productId: bigint("product_id", { mode: "number" })
+  productId: uuid("product_id")
     .references(() => products.id, { onDelete: "cascade" })
     .notNull(),
   size: varchar("size", { length: 50 }).notNull(),
@@ -370,10 +371,10 @@ export type InsertProductSizeMeasurement = z.infer<
   typeof insertProductSizeMeasurementSchema
 >;
 
-// [신규] 배송지 관리 테이블
+// [신규] 배송지 관리 테이블 - UUID PK 사용
 export const deliveryAddresses = pgTable("delivery_addresses", {
-  id: serial("id").primaryKey(),
-  userId: bigint("user_id", { mode: "number" })
+  id: uuid("id").primaryKey().defaultRandom(), // UUID 자동 생성
+  userId: uuid("user_id")
     .references(() => users.id, { onDelete: "cascade" })
     .notNull(),
   recipient: varchar("recipient", { length: 100 }).notNull(), // 받는 사람 이름
@@ -397,14 +398,14 @@ export const insertDeliveryAddressSchema = createInsertSchema(
 export type InsertDeliveryAddress = z.infer<typeof insertDeliveryAddressSchema>;
 
 // ------------------------------------------------------------------
-// [신규] 7. 위시리스트 (Wishlist Items)
+// [신규] 7. 위시리스트 (Wishlist Items) - UUID PK 사용
 // ------------------------------------------------------------------
 export const wishlistItems = pgTable("wishlist_items", {
-  id: serial("id").primaryKey(),
-  userId: bigint("user_id", { mode: "number" })
+  id: uuid("id").primaryKey().defaultRandom(), // UUID 자동 생성
+  userId: uuid("user_id")
     .references(() => users.id, { onDelete: "cascade" })
     .notNull(),
-  productId: bigint("product_id", { mode: "number" })
+  productId: uuid("product_id")
     .references(() => products.id, { onDelete: "cascade" })
     .notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),

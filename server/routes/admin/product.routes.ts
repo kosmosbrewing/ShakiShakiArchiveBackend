@@ -31,11 +31,11 @@ router.post("/", isAuthenticated, isAdmin, async (req, res) => {
   }
 });
 
-// 상품 수정
+// 상품 수정 (UUID 기반)
 router.patch("/:id", isAuthenticated, isAdmin, async (req, res) => {
   try {
     const product = await storage.updateProduct(
-      Number(req.params.id),
+      req.params.id, // UUID 문자열
       req.body
     );
     if (!product) {
@@ -48,10 +48,10 @@ router.patch("/:id", isAuthenticated, isAdmin, async (req, res) => {
   }
 });
 
-// 상품 삭제
+// 상품 삭제 (UUID 기반)
 router.delete("/:id", isAuthenticated, isAdmin, async (req, res) => {
   try {
-    await storage.deleteProduct(Number(req.params.id));
+    await storage.deleteProduct(req.params.id); // UUID 문자열
     res.json({ message: "Product deleted" });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "상품 삭제 실패";

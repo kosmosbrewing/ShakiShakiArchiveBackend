@@ -46,6 +46,21 @@ export const config = {
     isEnabled: !!process.env.NAVER_CLIENT_ID,
   },
 
+  // 네이버페이 결제 설정
+  naverpay: {
+    clientId: process.env.NAVERPAY_CLIENT_ID || "",
+    clientSecret: process.env.NAVERPAY_CLIENT_SECRET || "",
+    chainId: process.env.NAVERPAY_CHAIN_ID || "",
+    merchantId: process.env.NAVERPAY_MERCHANT_ID || "",
+    // 개발 환경에서는 dev, 운영 환경에서는 prod
+    mode: (process.env.NAVERPAY_MODE || "dev") as "dev" | "prod",
+    isEnabled: !!process.env.NAVERPAY_CLIENT_ID,
+    // 결제 완료 후 리다이렉트 URL
+    returnUrl:
+      process.env.NAVERPAY_RETURN_URL ||
+      "http://localhost:5000/api/payments/naverpay/callback",
+  },
+
   // 프론트엔드 URL (OAuth 콜백 리다이렉트용)
   frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
 
@@ -56,5 +71,17 @@ export const config = {
     fromName: process.env.EMAIL_FROM_NAME || "ShakiShaki",
     isEnabled: !!process.env.RESEND_API_KEY,
     verificationCodeExpiry: 10, // 인증코드 만료 시간 (분)
+  },
+
+  // Cloudinary 이미지 업로드 설정
+  cloudinary: {
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME || "",
+    apiKey: process.env.CLOUDINARY_API_KEY || "",
+    apiSecret: process.env.CLOUDINARY_API_SECRET || "",
+    isEnabled: !!(
+      process.env.CLOUDINARY_CLOUD_NAME &&
+      process.env.CLOUDINARY_API_KEY &&
+      process.env.CLOUDINARY_API_SECRET
+    ),
   },
 };

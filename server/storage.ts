@@ -40,29 +40,29 @@ import type {
 } from "./types";
 
 export interface IStorage {
-  // User operations
-  getUser(id: number): Promise<User | undefined>;
+  // User operations (UUID 기반)
+  getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   getUserByNaverId(naverId: string): Promise<User | undefined>;
   createUser(user: Omit<UpsertUser, "id">): Promise<User>;
   upsertUser(user: UpsertUser): Promise<User>;
-  updateUser(id: number, user: Partial<UpsertUser>): Promise<User | undefined>;
+  updateUser(id: string, user: Partial<UpsertUser>): Promise<User | undefined>;
 
-  // Product operations
+  // Product operations (UUID 기반)
   getProducts(filters?: {
     search?: string;
     categoryId?: number;
   }): Promise<Product[]>;
-  getProduct(id: number): Promise<Product | undefined>;
+  getProduct(id: string): Promise<Product | undefined>;
   createProduct(product: InsertProduct): Promise<Product>;
   updateProduct(
-    id: number,
+    id: string,
     product: Partial<InsertProduct>
   ): Promise<Product | undefined>;
-  deleteProduct(id: number): Promise<void>;
+  deleteProduct(id: string): Promise<void>;
 
-  // Product variant operations
-  getProductVariants(productId: number): Promise<ProductVariant[]>;
+  // Product variant operations (productId는 UUID, variant id는 serial)
+  getProductVariants(productId: string): Promise<ProductVariant[]>;
   getProductVariant(id: number): Promise<ProductVariant | undefined>;
   createProductVariant(variant: InsertProductVariant): Promise<ProductVariant>;
   updateProductVariant(
@@ -97,28 +97,28 @@ export interface IStorage {
   ): Promise<Category | undefined>;
   deleteCategory(id: number): Promise<void>;
 
-  // Cart operations
-  getCartItems(userId: number): Promise<(CartItem & { product: Product })[]>;
+  // Cart operations (UUID 기반)
+  getCartItems(userId: string): Promise<(CartItem & { product: Product })[]>;
   addCartItem(item: InsertCartItem): Promise<CartItem>;
-  updateCartItem(id: number, quantity: number): Promise<CartItem | undefined>;
-  deleteCartItem(id: number): Promise<void>;
-  clearCart(userId: number): Promise<void>;
+  updateCartItem(id: string, quantity: number): Promise<CartItem | undefined>;
+  deleteCartItem(id: string): Promise<void>;
+  clearCart(userId: string): Promise<void>;
 
-  // Wishlist operations
+  // Wishlist operations (UUID 기반)
   getWishlistItems(
-    userId: number
+    userId: string
   ): Promise<(WishlistItem & { product: Product })[]>;
-  addWishlistItem(userId: number, productId: number): Promise<WishlistItem>;
-  deleteWishlistItem(userId: number, productId: number): Promise<void>;
+  addWishlistItem(userId: string, productId: string): Promise<WishlistItem>;
+  deleteWishlistItem(userId: string, productId: string): Promise<void>;
 
-  // Order operations
+  // Order operations (UUID 기반)
   createOrder(
     order: InsertOrder,
     items: OrderItemCreateData[]
-  ): Promise<number>;
-  getOrders(userId: number): Promise<Order[]>;
+  ): Promise<string>; // UUID 반환
+  getOrders(userId: string): Promise<Order[]>;
   getOrder(
-    orderId: number
+    orderId: string
   ): Promise<
     (Order & { orderItems: (OrderItem & { product: Product })[] }) | undefined
   >;
@@ -128,20 +128,20 @@ export interface IStorage {
   >;
 
   updateOrderStatus(
-    orderId: number,
+    orderId: string, // UUID
     status: string,
     trackingNumber?: string
   ): Promise<Order | undefined>;
 
   updateOrderItemStatus(
-    itemId: number,
+    itemId: number, // serial
     status: string,
     trackingNumber?: string
   ): Promise<OrderItem | undefined>;
 
   // 결제 관련 메서드 (PG사 통합: 토스페이먼츠, 네이버페이 등)
   updateOrderPayment(
-    orderId: number,
+    orderId: string, // UUID
     paymentData: {
       paymentProvider: string; // 'toss', 'naverpay', 'kakaopay' 등
       paymentKey: string;
@@ -157,7 +157,7 @@ export interface IStorage {
   ): Promise<Order | undefined>;
 
   cancelOrderPayment(
-    orderId: number,
+    orderId: string, // UUID
     cancelData: {
       status: string;
       canceledAt: Date;
@@ -166,17 +166,17 @@ export interface IStorage {
     }
   ): Promise<Order | undefined>;
 
-  // Delivery Address operations
-  getDeliveryAddresses(userId: number): Promise<DeliveryAddress[]>;
+  // Delivery Address operations (UUID 기반)
+  getDeliveryAddresses(userId: string): Promise<DeliveryAddress[]>;
   createDeliveryAddress(
     address: InsertDeliveryAddress
   ): Promise<DeliveryAddress>;
   updateDeliveryAddress(
-    id: number,
-    userId: number,
+    id: string, // UUID
+    userId: string,
     address: Partial<InsertDeliveryAddress>
   ): Promise<DeliveryAddress | undefined>;
-  deleteDeliveryAddress(id: number, userId: number): Promise<void>;
+  deleteDeliveryAddress(id: string, userId: string): Promise<void>;
 
   // Email Verification operations
   createEmailVerification(
@@ -194,9 +194,9 @@ export interface IStorage {
 
 export class DatabaseStorage implements IStorage {
   // ------------------------------------------------------------------
-  // User operations
+  // User operations (UUID 기반)
   // ------------------------------------------------------------------
-  async getUser(id: number): Promise<User | undefined> {
+  async getUser(id: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user;
   }
@@ -235,7 +235,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateUser(
-    id: number,
+    id: string, // UUID
     userData: Partial<UpsertUser>
   ): Promise<User | undefined> {
     const [updated] = await db
@@ -285,7 +285,7 @@ export class DatabaseStorage implements IStorage {
     return results;
   }
 
-  async getProduct(id: number): Promise<Product | undefined> {
+  async getProduct(id: string): Promise<Product | undefined> {
     const [product] = await db
       .select()
       .from(products)
@@ -299,7 +299,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateProduct(
-    id: number,
+    id: string, // UUID
     product: Partial<InsertProduct>
   ): Promise<Product | undefined> {
     const [updated] = await db
@@ -310,14 +310,14 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async deleteProduct(id: number): Promise<void> {
+  async deleteProduct(id: string): Promise<void> {
     await db.delete(products).where(eq(products.id, id));
   }
 
   // ------------------------------------------------------------------
-  // Product variant operations
+  // Product variant operations (productId는 UUID, variant id는 serial)
   // ------------------------------------------------------------------
-  async getProductVariants(productId: number): Promise<ProductVariant[]> {
+  async getProductVariants(productId: string): Promise<ProductVariant[]> {
     return await db
       .select()
       .from(productVariants)
@@ -449,10 +449,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ------------------------------------------------------------------
-  // Cart operations
+  // Cart operations (UUID 기반)
   // ------------------------------------------------------------------
   async getCartItems(
-    userId: number
+    userId: string // UUID
   ): Promise<(CartItem & { product: Product; variant?: ProductVariant })[]> {
     const items = await db
       .select()
@@ -503,7 +503,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateCartItem(
-    id: number,
+    id: string, // UUID
     quantity: number
   ): Promise<CartItem | undefined> {
     const [updated] = await db
@@ -514,19 +514,19 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async deleteCartItem(id: number): Promise<void> {
+  async deleteCartItem(id: string): Promise<void> {
     await db.delete(cartItems).where(eq(cartItems.id, id));
   }
 
-  async clearCart(userId: number): Promise<void> {
+  async clearCart(userId: string): Promise<void> {
     await db.delete(cartItems).where(eq(cartItems.userId, userId));
   }
 
   // ------------------------------------------------------------------
-  // Wishlist operations
+  // Wishlist operations (UUID 기반)
   // ------------------------------------------------------------------
   async getWishlistItems(
-    userId: number
+    userId: string // UUID
   ): Promise<(WishlistItem & { product: Product })[]> {
     const items = await db
       .select()
@@ -542,8 +542,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async addWishlistItem(
-    userId: number,
-    productId: number
+    userId: string, // UUID
+    productId: string // UUID
   ): Promise<WishlistItem> {
     // 중복 확인
     const existing = await db
@@ -567,7 +567,7 @@ export class DatabaseStorage implements IStorage {
     return newItem;
   }
 
-  async deleteWishlistItem(userId: number, productId: number): Promise<void> {
+  async deleteWishlistItem(userId: string, productId: string): Promise<void> {
     await db
       .delete(wishlistItems)
       .where(
@@ -579,12 +579,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ------------------------------------------------------------------
-  // Order operations (트랜잭션 적용)
+  // Order operations (트랜잭션 적용, UUID 기반)
   // ------------------------------------------------------------------
   async createOrder(
     order: InsertOrder,
     items: OrderItemCreateData[]
-  ): Promise<number> {
+  ): Promise<string> { // UUID 반환
     // 트랜잭션으로 주문과 주문 아이템을 원자적으로 생성
     const client = await pool.connect();
 
@@ -637,7 +637,7 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
-  async getOrders(userId: number): Promise<Order[]> {
+  async getOrders(userId: string): Promise<Order[]> {
     return await db
       .select()
       .from(orders)
@@ -646,7 +646,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getOrder(
-    orderId: number
+    orderId: string // UUID
   ): Promise<
     (Order & { orderItems: (OrderItem & { product: Product })[] }) | undefined
   > {
@@ -687,9 +687,9 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(products, eq(orderItems.productId, products.id))
       .orderBy(desc(orders.createdAt));
 
-    // 결과를 주문별로 그룹화
+    // 결과를 주문별로 그룹화 (UUID 기반)
     const orderMap = new Map<
-      number,
+      string, // UUID
       Order & { orderItems: (OrderItem & { product: Product | null })[] }
     >();
 
@@ -715,7 +715,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateOrderStatus(
-    orderId: number,
+    orderId: string, // UUID
     status: string,
     trackingNumber?: string
   ): Promise<Order | undefined> {
@@ -753,10 +753,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ------------------------------------------------------------------
-  // 결제 관련 메서드 (PG사 통합: 토스페이먼츠, 네이버페이 등)
+  // 결제 관련 메서드 (PG사 통합: 토스페이먼츠, 네이버페이 등, UUID 기반)
   // ------------------------------------------------------------------
   async updateOrderPayment(
-    orderId: number,
+    orderId: string, // UUID
     paymentData: {
       paymentProvider: string;
       paymentKey: string;
@@ -793,7 +793,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async cancelOrderPayment(
-    orderId: number,
+    orderId: string, // UUID
     cancelData: {
       status: string;
       canceledAt: Date;
@@ -816,9 +816,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ------------------------------------------------------------------
-  // Delivery Address operations
+  // Delivery Address operations (UUID 기반)
   // ------------------------------------------------------------------
-  async getDeliveryAddresses(userId: number): Promise<DeliveryAddress[]> {
+  async getDeliveryAddresses(userId: string): Promise<DeliveryAddress[]> {
     return await db
       .select()
       .from(deliveryAddresses)
@@ -879,8 +879,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateDeliveryAddress(
-    id: number,
-    userId: number,
+    id: string, // UUID
+    userId: string,
     addressData: Partial<InsertDeliveryAddress>
   ): Promise<DeliveryAddress | undefined> {
     // 기본 배송지 변경이 아니면 트랜잭션 불필요
@@ -925,7 +925,7 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
-  async deleteDeliveryAddress(id: number, userId: number): Promise<void> {
+  async deleteDeliveryAddress(id: string, userId: string): Promise<void> {
     await db
       .delete(deliveryAddresses)
       .where(

@@ -135,7 +135,7 @@ router.post("/confirm", isAuthenticated, async (req, res) => {
  */
 router.post("/:orderId/cancel", isAuthenticated, async (req, res) => {
   try {
-    const orderId = Number(req.params.orderId);
+    const orderId = req.params.orderId; // UUID 문자열
     const userId = req.session.userId!;
 
     // 1. 요청 데이터 검증
@@ -150,7 +150,7 @@ router.post("/:orderId/cancel", isAuthenticated, async (req, res) => {
     const { cancelReason, cancelAmount, refundReceiveAccount } =
       validationResult.data;
 
-    // 2. 주문 조회
+    // 2. 주문 조회 (UUID 기반)
     const order = await storage.getOrder(orderId);
     if (!order) {
       return res.status(404).json({ message: "주문을 찾을 수 없습니다" });
@@ -226,10 +226,10 @@ router.post("/:orderId/cancel", isAuthenticated, async (req, res) => {
  */
 router.get("/:orderId/status", isAuthenticated, async (req, res) => {
   try {
-    const orderId = Number(req.params.orderId);
+    const orderId = req.params.orderId; // UUID 문자열
     const userId = req.session.userId!;
 
-    // 주문 조회
+    // 주문 조회 (UUID 기반)
     const order = await storage.getOrder(orderId);
     if (!order) {
       return res.status(404).json({ message: "주문을 찾을 수 없습니다" });

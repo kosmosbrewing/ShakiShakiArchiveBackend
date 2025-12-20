@@ -36,11 +36,11 @@ router.post("/", isAuthenticated, async (req, res) => {
   }
 });
 
-// 배송지 수정
+// 배송지 수정 (UUID 기반)
 router.patch("/:id", isAuthenticated, async (req, res) => {
   try {
     const userId = req.session.userId!;
-    const addressId = Number(req.params.id);
+    const addressId = req.params.id; // UUID 문자열
 
     const updated = await storage.updateDeliveryAddress(
       addressId,
@@ -57,11 +57,11 @@ router.patch("/:id", isAuthenticated, async (req, res) => {
   }
 });
 
-// 배송지 삭제
+// 배송지 삭제 (UUID 기반)
 router.delete("/:id", isAuthenticated, async (req, res) => {
   try {
     const userId = req.session.userId!;
-    const addressId = Number(req.params.id);
+    const addressId = req.params.id; // UUID 문자열
 
     await storage.deleteDeliveryAddress(addressId, userId);
     res.json({ message: "Address deleted" });

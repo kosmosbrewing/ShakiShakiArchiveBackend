@@ -44,10 +44,10 @@ router.get("/", async (req, res) => {
   }
 });
 
-// 상품 상세 조회
+// 상품 상세 조회 (UUID 기반)
 router.get("/:id", async (req, res) => {
   try {
-    const product = await storage.getProduct(Number(req.params.id));
+    const product = await storage.getProduct(req.params.id); // UUID 문자열
     if (!product) {
       return res.status(404).json({ message: "Product not found" });
     }
@@ -58,10 +58,10 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// 상품 옵션(variants) 조회
+// 상품 옵션(variants) 조회 (UUID 기반)
 router.get("/:id/variants", async (req, res) => {
   try {
-    const variants = await storage.getProductVariants(Number(req.params.id));
+    const variants = await storage.getProductVariants(req.params.id); // UUID 문자열
     res.json(variants);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "옵션 조회 실패";

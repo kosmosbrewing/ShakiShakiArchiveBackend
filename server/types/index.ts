@@ -8,7 +8,7 @@ declare global {
   namespace Express {
     interface Request {
       user?: {
-        id: number;
+        id: string; // UUID
         email: string;
         isAdmin: boolean;
       };
@@ -19,14 +19,14 @@ declare global {
 // express-session 확장
 declare module "express-session" {
   interface SessionData {
-    userId: number;
+    userId: string; // UUID
     oauthState?: string; // OAuth CSRF 방지용 상태 토큰
   }
 }
 
 // 주문 아이템 생성 데이터 타입
 export interface OrderItemCreateData {
-  productId: number;
+  productId: string; // UUID
   productName: string;
   productPrice: string;
   quantity: number;
@@ -48,7 +48,7 @@ export interface OrderItemStatusUpdate {
 
 // 사용자 캐시 데이터 타입
 export interface CachedUser {
-  id: number;
+  id: string; // UUID
   email: string;
   isAdmin: boolean;
 }

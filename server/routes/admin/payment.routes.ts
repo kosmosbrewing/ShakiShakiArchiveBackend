@@ -18,7 +18,7 @@ const router = Router();
  */
 router.get("/:orderId", isAuthenticated, isAdmin, async (req, res) => {
   try {
-    const order = await storage.getOrder(Number(req.params.orderId));
+    const order = await storage.getOrder(req.params.orderId); // UUID 문자열
     if (!order) {
       return res.status(404).json({ message: "주문을 찾을 수 없습니다" });
     }
@@ -52,7 +52,7 @@ router.get("/:orderId", isAuthenticated, isAdmin, async (req, res) => {
 router.post("/:orderId/cancel", isAuthenticated, isAdmin, async (req, res) => {
   try {
     const { cancelReason, cancelAmount, refundReceiveAccount } = req.body;
-    const order = await storage.getOrder(Number(req.params.orderId));
+    const order = await storage.getOrder(req.params.orderId); // UUID 문자열
 
     if (!order) {
       return res.status(404).json({ message: "주문을 찾을 수 없습니다" });

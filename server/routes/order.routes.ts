@@ -101,10 +101,10 @@ router.get("/", isAuthenticated, async (req, res) => {
   }
 });
 
-// 주문 상세 조회
+// 주문 상세 조회 (UUID 기반)
 router.get("/:id", isAuthenticated, async (req, res) => {
   try {
-    const order = await storage.getOrder(Number(req.params.id));
+    const order = await storage.getOrder(req.params.id); // UUID 문자열
     if (!order) {
       return res.status(404).json({ message: "Order not found" });
     }
@@ -133,7 +133,7 @@ router.get("/:id", isAuthenticated, async (req, res) => {
  */
 router.post("/:id/cancel", isAuthenticated, async (req, res) => {
   try {
-    const orderId = Number(req.params.id);
+    const orderId = req.params.id; // UUID 문자열
     const userId = req.session.userId!;
 
     // 1. 주문 조회

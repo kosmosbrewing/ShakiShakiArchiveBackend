@@ -18,12 +18,12 @@ router.get("/orders", isAuthenticated, isAdmin, async (req, res) => {
   }
 });
 
-// 주문 상태 수정 (관리자)
+// 주문 상태 수정 (관리자, UUID 기반)
 router.patch("/orders/:id", isAuthenticated, isAdmin, async (req, res) => {
   try {
     const { status, trackingNumber } = req.body;
     const order = await storage.updateOrderStatus(
-      Number(req.params.id),
+      req.params.id, // UUID 문자열
       status,
       trackingNumber
     );

@@ -19,7 +19,7 @@ router.get("/", isAuthenticated, async (req, res) => {
   }
 });
 
-// 위시리스트 추가
+// 위시리스트 추가 (UUID 기반)
 router.post("/", isAuthenticated, async (req, res) => {
   try {
     const userId = req.session.userId!;
@@ -29,7 +29,7 @@ router.post("/", isAuthenticated, async (req, res) => {
       return res.status(400).json({ message: "Product ID is required" });
     }
 
-    const item = await storage.addWishlistItem(userId, Number(productId));
+    const item = await storage.addWishlistItem(userId, productId); // UUID 문자열
     res.status(201).json(item);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "위시리스트 추가 실패";
@@ -37,11 +37,11 @@ router.post("/", isAuthenticated, async (req, res) => {
   }
 });
 
-// 위시리스트 삭제
+// 위시리스트 삭제 (UUID 기반)
 router.delete("/:productId", isAuthenticated, async (req, res) => {
   try {
     const userId = req.session.userId!;
-    const productId = Number(req.params.productId);
+    const productId = req.params.productId; // UUID 문자열
 
     await storage.deleteWishlistItem(userId, productId);
     res.json({ message: "Removed from wishlist" });

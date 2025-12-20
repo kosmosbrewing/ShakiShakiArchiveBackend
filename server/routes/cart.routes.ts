@@ -36,7 +36,7 @@ router.post("/", isAuthenticated, async (req, res) => {
   }
 });
 
-// 장바구니 수량 변경
+// 장바구니 수량 변경 (UUID 기반)
 router.patch("/:id", isAuthenticated, async (req, res) => {
   try {
     const { quantity } = req.body;
@@ -44,7 +44,7 @@ router.patch("/:id", isAuthenticated, async (req, res) => {
       return res.status(400).json({ message: "Invalid quantity" });
     }
     const cartItem = await storage.updateCartItem(
-      Number(req.params.id),
+      req.params.id, // UUID 문자열
       quantity
     );
     if (!cartItem) {
@@ -57,10 +57,10 @@ router.patch("/:id", isAuthenticated, async (req, res) => {
   }
 });
 
-// 장바구니 아이템 삭제
+// 장바구니 아이템 삭제 (UUID 기반)
 router.delete("/:id", isAuthenticated, async (req, res) => {
   try {
-    await storage.deleteCartItem(Number(req.params.id));
+    await storage.deleteCartItem(req.params.id); // UUID 문자열
     res.json({ message: "Cart item deleted" });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "삭제 실패";

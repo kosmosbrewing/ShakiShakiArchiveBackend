@@ -5,14 +5,14 @@ import type { Request, Response, NextFunction } from "express";
 import { storage } from "../storage";
 import type { CachedUser } from "../types";
 
-// 메모리 캐시 (TTL: 5분)
-const userCache = new Map<number, { user: CachedUser; timestamp: number }>();
+// 메모리 캐시 (TTL: 5분, UUID 기반)
+const userCache = new Map<string, { user: CachedUser; timestamp: number }>();
 const CACHE_TTL = 5 * 60 * 1000; // 5분
 
 /**
- * 캐시에서 사용자 조회
+ * 캐시에서 사용자 조회 (UUID 기반)
  */
-function getCachedUser(userId: number): CachedUser | null {
+function getCachedUser(userId: string): CachedUser | null {
   const cached = userCache.get(userId);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
     return cached.user;
@@ -25,16 +25,16 @@ function getCachedUser(userId: number): CachedUser | null {
 }
 
 /**
- * 캐시에 사용자 저장
+ * 캐시에 사용자 저장 (UUID 기반)
  */
-function setCachedUser(userId: number, user: CachedUser): void {
+function setCachedUser(userId: string, user: CachedUser): void {
   userCache.set(userId, { user, timestamp: Date.now() });
 }
 
 /**
- * 캐시 무효화 (로그아웃, 사용자 정보 변경 시 호출)
+ * 캐시 무효화 (로그아웃, 사용자 정보 변경 시 호출, UUID 기반)
  */
-export function invalidateUserCache(userId: number): void {
+export function invalidateUserCache(userId: string): void {
   userCache.delete(userId);
 }
 

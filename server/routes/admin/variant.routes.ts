@@ -13,7 +13,7 @@ const router = Router();
 
 // === 상품 옵션(variants) 관리 ===
 
-// 상품별 옵션 조회
+// 상품별 옵션 조회 (UUID 기반)
 router.get(
   "/products/:productId/variants",
   isAuthenticated,
@@ -21,7 +21,7 @@ router.get(
   async (req, res) => {
     try {
       const variants = await storage.getProductVariants(
-        Number(req.params.productId)
+        req.params.productId // UUID 문자열
       );
       res.json(variants);
     } catch (error: unknown) {
@@ -31,7 +31,7 @@ router.get(
   }
 );
 
-// 상품 옵션 생성
+// 상품 옵션 생성 (UUID 기반)
 router.post(
   "/products/:productId/variants",
   isAuthenticated,
@@ -40,7 +40,7 @@ router.post(
     try {
       const validatedData = insertProductVariantSchema.parse({
         ...req.body,
-        productId: Number(req.params.productId),
+        productId: req.params.productId, // UUID 문자열
       });
       const variant = await storage.createProductVariant(validatedData);
       res.json(variant);

@@ -7,6 +7,7 @@ import orderRoutes from "./order.routes";
 import categoryRoutes from "./category.routes";
 import variantRoutes from "./variant.routes";
 import paymentRoutes from "./payment.routes";
+import imageRoutes from "./image.routes";
 
 const router = Router();
 
@@ -24,5 +25,8 @@ router.use("/categories", categoryRoutes);
 
 // 옵션/실측 관리 (variants, measurements)
 router.use("/", variantRoutes);
+
+// 이미지 업로드 관리
+router.use("/images", imageRoutes);
 
 export default router;
