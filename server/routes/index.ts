@@ -14,6 +14,7 @@ import wishlistRoutes from "./wishlist.routes";
 import addressRoutes from "./address.routes";
 import variantRoutes from "./variant.routes";
 import searchRoutes from "./search.routes";
+import siteImageRoutes from "./siteImage.routes";
 import adminRoutes from "./admin";
 
 const router = Router();
@@ -25,6 +26,7 @@ router.use("/products", productRoutes);
 router.use("/categories", categoryRoutes);
 router.use("/variants", variantRoutes);
 router.use("/search", searchRoutes); // 주소 검색 API
+router.use("/site-images", siteImageRoutes); // Hero, Marquee 이미지 조회
 
 // 인증 필요 라우트
 router.use("/cart", cartRoutes);

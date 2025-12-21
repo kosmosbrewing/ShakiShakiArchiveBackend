@@ -497,3 +497,46 @@ export const verifyEmailCodeSchema = z.object({
   type: z.enum(["signup", "password_reset"]).default("signup"),
 });
 export type VerifyEmailCodeInput = z.infer<typeof verifyEmailCodeSchema>;
+
+// ------------------------------------------------------------------
+// 사이트 이미지 테이블 (Hero, Marquee 이미지 관리)
+// ------------------------------------------------------------------
+export const siteImageTypeEnum = ["hero", "marquee"] as const;
+export type SiteImageType = (typeof siteImageTypeEnum)[number];
+
+export const siteImages = pgTable("site_images", {
+  id: serial("id").primaryKey(),
+  type: varchar("type", { length: 20 }).notNull(), // 'hero' | 'marquee'
+  imageUrl: varchar("image_url", { length: 500 }).notNull(),
+  linkUrl: varchar("link_url", { length: 500 }), // 클릭 시 이동할 URL (선택)
+  displayOrder: integer("display_order").default(0).notNull(), // 표시 순서
+  isActive: boolean("is_active").default(true).notNull(), // 활성화 여부
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type SiteImage = typeof siteImages.$inferSelect;
+export const insertSiteImageSchema = createInsertSchema(siteImages).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertSiteImage = z.infer<typeof insertSiteImageSchema>;
+
+// Hero/Marquee 이미지 생성/수정 요청 스키마
+export const createSiteImageSchema = z.object({
+  type: z.enum(siteImageTypeEnum),
+  imageUrl: z.string().url("유효한 이미지 URL을 입력해주세요"),
+  linkUrl: z.string().url("유효한 링크 URL을 입력해주세요").optional(),
+  displayOrder: z.number().int().min(0).optional(),
+  isActive: z.boolean().optional(),
+});
+export type CreateSiteImageInput = z.infer<typeof createSiteImageSchema>;
+
+export const updateSiteImageSchema = z.object({
+  imageUrl: z.string().url("유효한 이미지 URL을 입력해주세요").optional(),
+  linkUrl: z.string().url("유효한 링크 URL을 입력해주세요").nullable().optional(),
+  displayOrder: z.number().int().min(0).optional(),
+  isActive: z.boolean().optional(),
+});
+export type UpdateSiteImageInput = z.infer<typeof updateSiteImageSchema>;

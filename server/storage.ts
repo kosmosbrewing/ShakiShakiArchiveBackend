@@ -10,6 +10,7 @@ import {
   deliveryAddresses,
   wishlistItems,
   emailVerifications,
+  siteImages,
   type User,
   type UpsertUser,
   type Product,
@@ -30,6 +31,9 @@ import {
   type WishlistItem,
   type EmailVerification,
   type InsertEmailVerification,
+  type SiteImage,
+  type InsertSiteImage,
+  type SiteImageType,
 } from "@shared/schema";
 import { db, pool } from "./db";
 import { eq, and, like, desc, isNull, gt } from "drizzle-orm";
@@ -190,6 +194,17 @@ export interface IStorage {
   markVerificationAsUsed(id: number): Promise<void>;
   deleteExpiredVerifications(): Promise<void>;
   isEmailVerified(email: string, type: string): Promise<boolean>;
+
+  // Site Image operations (Hero, Marquee)
+  getSiteImages(type?: SiteImageType): Promise<SiteImage[]>;
+  getSiteImage(id: number): Promise<SiteImage | undefined>;
+  createSiteImage(image: InsertSiteImage): Promise<SiteImage>;
+  updateSiteImage(
+    id: number,
+    image: Partial<InsertSiteImage>
+  ): Promise<SiteImage | undefined>;
+  deleteSiteImage(id: number): Promise<void>;
+  countSiteImagesByType(type: SiteImageType): Promise<number>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1005,6 +1020,60 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(emailVerifications.createdAt))
       .limit(1);
     return !!verification;
+  }
+
+  // ------------------------------------------------------------------
+  // Site Image operations (Hero, Marquee)
+  // ------------------------------------------------------------------
+  async getSiteImages(type?: SiteImageType): Promise<SiteImage[]> {
+    if (type) {
+      return await db
+        .select()
+        .from(siteImages)
+        .where(eq(siteImages.type, type))
+        .orderBy(siteImages.displayOrder);
+    }
+    return await db
+      .select()
+      .from(siteImages)
+      .orderBy(siteImages.type, siteImages.displayOrder);
+  }
+
+  async getSiteImage(id: number): Promise<SiteImage | undefined> {
+    const [image] = await db
+      .select()
+      .from(siteImages)
+      .where(eq(siteImages.id, id));
+    return image;
+  }
+
+  async createSiteImage(image: InsertSiteImage): Promise<SiteImage> {
+    const [newImage] = await db.insert(siteImages).values(image).returning();
+    return newImage;
+  }
+
+  async updateSiteImage(
+    id: number,
+    image: Partial<InsertSiteImage>
+  ): Promise<SiteImage | undefined> {
+    const [updated] = await db
+      .update(siteImages)
+      .set({ ...image, updatedAt: new Date() })
+      .where(eq(siteImages.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteSiteImage(id: number): Promise<void> {
+    await db.delete(siteImages).where(eq(siteImages.id, id));
+  }
+
+  async countSiteImagesByType(type: SiteImageType): Promise<number> {
+    const result = await db
+      .select()
+      .from(siteImages)
+      .where(eq(siteImages.type, type));
+    return result.length;
   }
 }
 

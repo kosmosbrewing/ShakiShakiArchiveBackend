@@ -8,6 +8,7 @@ import categoryRoutes from "./category.routes";
 import variantRoutes from "./variant.routes";
 import paymentRoutes from "./payment.routes";
 import imageRoutes from "./image.routes";
+import siteImageRoutes from "./siteImage.routes";
 
 const router = Router();
 
@@ -28,5 +29,8 @@ router.use("/", variantRoutes);
 
 // 이미지 업로드 관리
 router.use("/images", imageRoutes);
+
+// 사이트 이미지 관리 (Hero, Marquee)
+router.use("/site-images", siteImageRoutes);
 
 export default router;

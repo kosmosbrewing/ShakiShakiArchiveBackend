@@ -15,10 +15,10 @@ import {
 const router = Router();
 
 /**
- * GET /api/oauth/naver
+ * GET /api/oauth/naver 또는 /api/oauth/naver/login
  * 네이버 로그인 페이지로 리다이렉트
  */
-router.get("/naver", (req, res) => {
+router.get(["/naver", "/naver/login"], (req, res) => {
   // 네이버 OAuth가 비활성화된 경우
   if (!config.naver.isEnabled) {
     return res.status(503).json({
@@ -42,6 +42,8 @@ router.get("/naver", (req, res) => {
 router.get("/naver/callback", async (req, res) => {
   const { code, state, error, error_description } = req.query;
   const frontendUrl = config.frontendUrl;
+
+  console.log("OAuth 콜백 - frontendUrl:", frontendUrl);
 
   // 에러 응답 처리
   if (error) {

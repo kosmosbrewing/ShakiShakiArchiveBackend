@@ -47,6 +47,7 @@ server/
 │   ├── variant.routes.ts       # 상품 옵션 API (/api/variants/*)
 │   ├── search.routes.ts        # 주소/키워드 검색 API (/api/search/*)
 │   ├── naverpay.routes.ts      # 네이버페이 결제 API (/api/payments/naverpay/*)
+│   ├── siteImage.routes.ts     # 사이트 이미지 공개 API (/api/site-images/*)
 │   └── admin/
 │       ├── index.ts            # 관리자 라우트 통합
 │       ├── product.routes.ts   # 관리자 상품 관리
@@ -54,7 +55,8 @@ server/
 │       ├── order.routes.ts     # 관리자 주문 관리
 │       ├── variant.routes.ts   # 관리자 상품 옵션 관리
 │       ├── payment.routes.ts   # 관리자 결제 관리
-│       └── image.routes.ts     # 관리자 이미지 업로드
+│       ├── image.routes.ts     # 관리자 이미지 업로드
+│       └── siteImage.routes.ts # 관리자 사이트 이미지 관리 (Hero, Marquee)
 ├── services/
 │   ├── toss.service.ts         # 토스페이먼츠 API 클라이언트
 │   ├── naverpay.service.ts     # 네이버페이 결제 API 클라이언트
@@ -301,7 +303,23 @@ emailVerifications (이메일 인증코드)
 ├── verified (default: false)
 ├── expiresAt (만료 시간)
 └── createdAt
+
+siteImages (사이트 이미지 - Hero, Marquee)
+├── id (PK, serial)
+├── type ('hero', 'marquee')
+├── imageUrl (required)
+├── linkUrl (선택, 클릭 시 이동할 URL)
+├── displayOrder (표시 순서, default: 0)
+├── isActive (활성화 여부, default: true)
+└── createdAt, updatedAt
 ```
+
+**사이트 이미지 제한:**
+
+| 타입      | 최대 개수 |
+| --------- | --------- |
+| `hero`    | 3개       |
+| `marquee` | 6개       |
 
 ### 주문 상태 (OrderStatus)
 
@@ -396,6 +414,9 @@ POST /api/auth/verify-email
 | GET    | `/api/variants`              | 상품 옵션 전체 목록             |
 | GET    | `/api/search/address`        | 카카오 주소 검색                |
 | GET    | `/api/search/keyword`        | 카카오 키워드(장소) 검색        |
+| GET    | `/api/site-images`           | 활성화된 사이트 이미지 조회     |
+| GET    | `/api/site-images/hero`      | Hero 이미지만 조회              |
+| GET    | `/api/site-images/marquee`   | Marquee 이미지만 조회           |
 
 #### 주소 검색 API
 
@@ -602,6 +623,65 @@ POST /api/orders/:id/cancel
 | POST   | `/api/admin/images/product-details` | 상품 상세 이미지 업로드 (최대 10개) |
 | DELETE | `/api/admin/images`                 | 단일 이미지 삭제                    |
 | DELETE | `/api/admin/images/bulk`            | 여러 이미지 삭제                    |
+
+#### 사이트 이미지 관리 (Hero, Marquee)
+
+| 메서드 | 경로                               | 설명                      |
+| ------ | ---------------------------------- | ------------------------- |
+| GET    | `/api/admin/site-images`           | 전체 이미지 목록 조회     |
+| GET    | `/api/admin/site-images/:id`       | 이미지 상세 조회          |
+| POST   | `/api/admin/site-images`           | 이미지 추가               |
+| PUT    | `/api/admin/site-images/:id`       | 이미지 수정               |
+| DELETE | `/api/admin/site-images/:id`       | 이미지 삭제               |
+| PATCH  | `/api/admin/site-images/reorder`   | 이미지 순서 변경          |
+
+**제한 사항:**
+- Hero 이미지: 최대 3개
+- Marquee 이미지: 최대 6개
+
+**이미지 추가 요청 예시:**
+
+```typescript
+POST /api/admin/site-images
+{
+  "type": "hero",                              // 'hero' | 'marquee'
+  "imageUrl": "https://example.com/image.jpg", // 필수
+  "linkUrl": "https://example.com/product/1",  // 선택
+  "displayOrder": 0,                           // 선택 (기본값: 현재 개수)
+  "isActive": true                             // 선택 (기본값: true)
+}
+
+// 응답
+{
+  "message": "이미지가 추가되었습니다.",
+  "image": {
+    "id": 1,
+    "type": "hero",
+    "imageUrl": "https://example.com/image.jpg",
+    "linkUrl": "https://example.com/product/1",
+    "displayOrder": 0,
+    "isActive": true,
+    "createdAt": "2025-12-21T...",
+    "updatedAt": "2025-12-21T..."
+  }
+}
+```
+
+**이미지 순서 변경 요청 예시:**
+
+```typescript
+PATCH /api/admin/site-images/reorder
+{
+  "type": "hero",
+  "imageIds": [3, 1, 2]  // 원하는 순서대로 ID 배열
+}
+
+// 응답
+{
+  "message": "이미지 순서가 변경되었습니다.",
+  "images": [ ... ]
+}
+```
 
 ---
 
@@ -862,6 +942,14 @@ interface IStorage {
   getValidVerification(email: string, code: string, type: string): Promise<EmailVerification | undefined>;
   markVerificationAsUsed(id: number): Promise<void>;
   isEmailVerified(email: string, type: string): Promise<boolean>;
+
+  // 사이트 이미지 (Hero, Marquee)
+  getSiteImages(type?: SiteImageType): Promise<SiteImage[]>;
+  getSiteImage(id: number): Promise<SiteImage | undefined>;
+  createSiteImage(image: InsertSiteImage): Promise<SiteImage>;
+  updateSiteImage(id: number, image: Partial<InsertSiteImage>): Promise<SiteImage | undefined>;
+  deleteSiteImage(id: number): Promise<void>;
+  countSiteImagesByType(type: SiteImageType): Promise<number>;
 }
 ```
 
@@ -1075,7 +1163,35 @@ npm run db:push
 
 ## 변경 이력
 
-### 2025-12-20 (최신)
+### 2025-12-21 (최신)
+
+**사이트 이미지 관리 기능 추가 (Hero, Marquee)**
+
+- `shared/schema.ts`에 `siteImages` 테이블 스키마 추가
+- `server/storage.ts`에 사이트 이미지 관련 메서드 추가
+- `server/routes/siteImage.routes.ts` 추가 - 공개 이미지 조회 API
+- `server/routes/admin/siteImage.routes.ts` 추가 - 관리자 이미지 관리 API
+
+**기능:**
+- Hero 이미지 관리 (최대 3개)
+- Marquee 이미지 관리 (최대 6개)
+- 이미지 순서 변경 (reorder)
+- 활성화/비활성화 토글
+- 클릭 시 이동할 링크 URL 설정
+
+**공개 API:**
+- `GET /api/site-images` - 활성화된 전체 이미지 조회
+- `GET /api/site-images/hero` - Hero 이미지만 조회
+- `GET /api/site-images/marquee` - Marquee 이미지만 조회
+
+**관리자 API:**
+- `GET /api/admin/site-images` - 전체 이미지 목록 (관리용)
+- `POST /api/admin/site-images` - 이미지 추가
+- `PUT /api/admin/site-images/:id` - 이미지 수정
+- `DELETE /api/admin/site-images/:id` - 이미지 삭제
+- `PATCH /api/admin/site-images/reorder` - 이미지 순서 변경
+
+### 2025-12-20
 
 **Cloudinary 이미지 업로드 기능 추가**
 
