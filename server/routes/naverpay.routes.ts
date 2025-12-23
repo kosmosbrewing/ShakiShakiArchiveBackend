@@ -5,6 +5,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
 import { isAuthenticated } from "../middleware/auth.middleware";
+import { paymentRateLimiter } from "../config/security";
 import { config } from "../config";
 import {
   reservePayment,
@@ -64,6 +65,7 @@ router.get("/client-info", checkNaverPayEnabled, (_req, res) => {
  */
 router.post(
   "/reserve",
+  paymentRateLimiter,
   checkNaverPayEnabled,
   isAuthenticated,
   async (req, res) => {
@@ -300,6 +302,7 @@ router.get(
  */
 router.post(
   "/:orderId/cancel",
+  paymentRateLimiter,
   checkNaverPayEnabled,
   isAuthenticated,
   async (req, res) => {

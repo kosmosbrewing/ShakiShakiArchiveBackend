@@ -6,6 +6,7 @@ import { createServer } from "http";
 import { config } from "./config";
 import { corsMiddleware } from "./config/cors";
 import { createSessionMiddleware } from "./config/session";
+import { helmetMiddleware, globalRateLimiter } from "./config/security";
 import {
   errorHandler,
   loggerMiddleware,
@@ -23,6 +24,12 @@ declare module "http" {
     rawBody: unknown;
   }
 }
+
+// 보안 헤더 (Helmet) - 가장 먼저 적용
+app.use(helmetMiddleware);
+
+// 전역 Rate Limiting
+app.use(globalRateLimiter);
 
 // Body 파싱
 app.use(

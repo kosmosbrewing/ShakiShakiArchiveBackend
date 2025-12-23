@@ -8,6 +8,7 @@ import {
   isAuthenticated,
   invalidateUserCache,
 } from "../middleware/auth.middleware";
+import { authRateLimiter } from "../config/security";
 import {
   signupSchema,
   loginSchema,
@@ -23,8 +24,10 @@ import {
 
 const router = Router();
 
+// 인증 관련 엔드포인트에 Rate Limiting 적용 (Brute Force 방지)
+
 // 회원가입
-router.post("/signup", async (req, res) => {
+router.post("/signup", authRateLimiter, async (req, res) => {
   try {
     const validatedData = signupSchema.parse(req.body);
 
@@ -69,7 +72,7 @@ router.post("/signup", async (req, res) => {
 });
 
 // 로그인
-router.post("/login", async (req, res) => {
+router.post("/login", authRateLimiter, async (req, res) => {
   try {
     const validatedData = loginSchema.parse(req.body);
 
@@ -176,7 +179,7 @@ router.patch("/user", isAuthenticated, async (req, res) => {
 });
 
 // 비밀번호 변경
-router.put("/password", isAuthenticated, async (req, res) => {
+router.put("/password", authRateLimiter, isAuthenticated, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
     const userId = req.session.userId!;
@@ -218,7 +221,7 @@ router.put("/password", isAuthenticated, async (req, res) => {
  * 이메일 인증코드 발송
  * POST /api/auth/send-verification
  */
-router.post("/send-verification", async (req, res) => {
+router.post("/send-verification", authRateLimiter, async (req, res) => {
   try {
     const validatedData = sendVerificationCodeSchema.parse(req.body);
     const { email, type } = validatedData;
@@ -281,7 +284,7 @@ router.post("/send-verification", async (req, res) => {
  * 이메일 인증코드 확인
  * POST /api/auth/verify-email
  */
-router.post("/verify-email", async (req, res) => {
+router.post("/verify-email", authRateLimiter, async (req, res) => {
   try {
     const validatedData = verifyEmailCodeSchema.parse(req.body);
     const { email, code, type } = validatedData;

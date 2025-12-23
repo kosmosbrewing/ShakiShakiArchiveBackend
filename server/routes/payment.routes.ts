@@ -4,6 +4,7 @@
 import { Router } from "express";
 import { storage } from "../storage";
 import { isAuthenticated } from "../middleware/auth.middleware";
+import { paymentRateLimiter } from "../config/security";
 import { config } from "../config";
 import {
   confirmPayment,
@@ -38,7 +39,7 @@ router.get("/client-key", (_req, res) => {
  * - 토스페이먼츠 결제 승인 API 호출
  * - 주문 상태 업데이트
  */
-router.post("/confirm", isAuthenticated, async (req, res) => {
+router.post("/confirm", paymentRateLimiter, isAuthenticated, async (req, res) => {
   try {
     // 1. 요청 데이터 검증
     const validationResult = confirmPaymentSchema.safeParse(req.body);
@@ -133,7 +134,7 @@ router.post("/confirm", isAuthenticated, async (req, res) => {
  * 결제 취소/환불
  * POST /api/payments/:orderId/cancel
  */
-router.post("/:orderId/cancel", isAuthenticated, async (req, res) => {
+router.post("/:orderId/cancel", paymentRateLimiter, isAuthenticated, async (req, res) => {
   try {
     const orderId = req.params.orderId; // UUID 문자열
     const userId = req.session.userId!;
