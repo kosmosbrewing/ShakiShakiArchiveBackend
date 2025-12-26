@@ -63,13 +63,16 @@ app.use(errorHandler);
 // 서버 시작
 const httpServer = createServer(app);
 
+// Docker/App Runner에서는 0.0.0.0으로 바인딩 필요
+const host = config.isProd ? "0.0.0.0" : "localhost";
+
 httpServer.listen(
   {
     port: config.port,
-    host: "localhost",
+    host,
   },
   () => {
-    log(`API Server serving on port ${config.port}`);
+    log(`API Server serving on ${host}:${config.port}`);
     log(`Environment: ${config.nodeEnv}`);
   }
 );

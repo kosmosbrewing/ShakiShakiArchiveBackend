@@ -5,4 +5,10 @@ server/public
 vite.config.ts.*
 *.tar.gz
 .env
+.env.production
+deploy-ecr.sh
 dev.sh
+
+# SSL 인증서 (민감 정보)
+certs/
+*.pem

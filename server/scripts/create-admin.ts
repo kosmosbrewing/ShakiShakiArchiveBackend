@@ -13,9 +13,9 @@ import bcrypt from "bcryptjs";
 async function createAdmin() {
   try {
     // 여기에서 이메일과 비밀번호를 변경하세요
-    const email = "admin@shakishaki.com";
+    const email = "admin@shakishakiArchive.com";
     const password = "knb@5800";
-    const userName = "이규빈";
+    const userName = "손유진";
 
     console.log("관리자 계정 생성 중...");
 

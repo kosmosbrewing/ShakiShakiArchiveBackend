@@ -62,7 +62,7 @@ export const config = {
   },
 
   // 프론트엔드 URL (OAuth 콜백 리다이렉트용)
-  frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
+  frontendUrl: process.env.FRONTEND_URL || "http://localhost:5000",
 
   // Resend 이메일 설정
   email: {

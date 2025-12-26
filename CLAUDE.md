@@ -104,6 +104,8 @@ shared/
 - **OWASP Compliance:** SQL Injection, XSS, CSRF 취약점 원천 차단.
 - **Validation:** 모든 사용자 입력값(Input)은 검증 및 살균(Sanitization) 필수.
 - **Sensitive Data:** API Key, DB 접속 정보 등은 절대 하드코딩 금지 (`.env` 사용).
+- **AI Context Isolation**: Claude는 프로젝트를 분석할 때 반드시 `.claudeignore` 파일을 최우선으로 참고해야 합니다. 해당 파일에 명시된 모든 경로는 읽기, 분석, 전송 대상에서 즉각 제외합니다.
+- **Ignore List Update**: 새로운 민감한 설정 파일이나 보안 자산이 추가될 경우, 즉시 `.claudeignore`에 반영할 것을 개발자에게 제안해야 합니다.
 
 #### 2. Stability & Performance (안정성 및 성능)
 

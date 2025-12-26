@@ -1,0 +1,110 @@
+# GitHub Actions: ECR에 Docker 이미지 빌드 및 푸시
+# 트리거: main 브랜치에 push 또는 수동 실행
+
+name: Build and Push to ECR
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '*.md'
+      - '.gitignore'
+      - '.claudeignore'
+  workflow_dispatch:  # 수동 실행 허용
+    inputs:
+      environment:
+        description: '배포 환경'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+
+env:
+  AWS_REGION: ap-northeast-2  # 서울 리전 (필요시 변경)
+  ECR_REPOSITORY: shakishaki-backend  # ECR 리포지토리 이름
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write  # OIDC 토큰 발급을 위한 권한
+
+    steps:
+      # 1. 소스 코드 체크아웃
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. AWS 자격증명 구성 (OIDC 사용 권장)
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # OIDC 방식 (권장) - IAM Role 사용
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          # Access Key 방식 (대안) - 아래 주석 해제하여 사용
+          # aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          # aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      # 3. Amazon ECR 로그인
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # 4. Docker 메타데이터 설정 (태그, 라벨)
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
+          tags: |
+            # latest 태그 (main 브랜치)
+            type=raw,value=latest,enable={{is_default_branch}}
+            # Git SHA (short)
+            type=sha,prefix=,format=short
+            # 날짜 기반 태그
+            type=raw,value={{date 'YYYYMMDD-HHmmss'}}
+
+      # 5. Docker Buildx 설정 (멀티플랫폼 빌드 지원)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 6. Docker 이미지 빌드 및 ECR 푸시
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # 빌드 플랫폼 (ARM64 추가 시 linux/arm64 추가)
+          platforms: linux/amd64
+
+      # 7. 빌드 결과 출력
+      - name: Output image info
+        run: |
+          echo "### 🐳 Docker Image Pushed Successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Registry:** ${{ steps.login-ecr.outputs.registry }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Repository:** ${{ env.ECR_REPOSITORY }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      # 8. (선택) App Runner 서비스 업데이트 트리거
+      # App Runner 자동 배포 설정 시 ECR 푸시만으로 자동 배포됨
+      # 수동 트리거가 필요한 경우 아래 주석 해제
+      # - name: Trigger App Runner deployment
+      #   run: |
+      #     aws apprunner start-deployment \
+      #       --service-arn ${{ secrets.APP_RUNNER_SERVICE_ARN }}

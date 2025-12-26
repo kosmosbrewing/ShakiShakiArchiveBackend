@@ -11,6 +11,8 @@ import {
   wishlistItems,
   emailVerifications,
   siteImages,
+  inquiries,
+  inquiryReplies,
   type User,
   type UpsertUser,
   type Product,
@@ -34,6 +36,11 @@ import {
   type SiteImage,
   type InsertSiteImage,
   type SiteImageType,
+  type Inquiry,
+  type InsertInquiry,
+  type InquiryReply,
+  type InsertInquiryReply,
+  type InquiryType,
 } from "@shared/schema";
 import { db, pool } from "./db";
 import { eq, and, like, desc, isNull, gt } from "drizzle-orm";
@@ -205,6 +212,34 @@ export interface IStorage {
   ): Promise<SiteImage | undefined>;
   deleteSiteImage(id: number): Promise<void>;
   countSiteImagesByType(type: SiteImageType): Promise<number>;
+
+  // Inquiry (Q&A) operations
+  getInquiries(filters?: {
+    userId?: string;
+    productId?: string;
+    type?: InquiryType;
+    status?: string;
+  }): Promise<(Inquiry & { user: User; product?: Product | null })[]>;
+  getInquiry(
+    id: string
+  ): Promise<
+    | (Inquiry & {
+        user: User;
+        product?: Product | null;
+        replies: (InquiryReply & { user: User })[];
+      })
+    | undefined
+  >;
+  createInquiry(inquiry: InsertInquiry): Promise<Inquiry>;
+  updateInquiryStatus(
+    id: string,
+    status: string
+  ): Promise<Inquiry | undefined>;
+  deleteInquiry(id: string): Promise<void>;
+
+  // Inquiry Reply operations
+  createInquiryReply(reply: InsertInquiryReply): Promise<InquiryReply>;
+  deleteInquiryReply(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1074,6 +1109,135 @@ export class DatabaseStorage implements IStorage {
       .from(siteImages)
       .where(eq(siteImages.type, type));
     return result.length;
+  }
+
+  // ------------------------------------------------------------------
+  // Inquiry (Q&A) operations
+  // ------------------------------------------------------------------
+  async getInquiries(filters?: {
+    userId?: string;
+    productId?: string;
+    type?: InquiryType;
+    status?: string;
+  }): Promise<(Inquiry & { user: User; product?: Product | null })[]> {
+    const conditions = [];
+
+    if (filters?.userId) {
+      conditions.push(eq(inquiries.userId, filters.userId));
+    }
+    if (filters?.productId) {
+      conditions.push(eq(inquiries.productId, filters.productId));
+    }
+    if (filters?.type) {
+      conditions.push(eq(inquiries.type, filters.type));
+    }
+    if (filters?.status) {
+      conditions.push(eq(inquiries.status, filters.status));
+    }
+
+    let query = db
+      .select()
+      .from(inquiries)
+      .innerJoin(users, eq(inquiries.userId, users.id))
+      .leftJoin(products, eq(inquiries.productId, products.id));
+
+    if (conditions.length > 0) {
+      // @ts-ignore: Drizzle query builder type complexity
+      query = query.where(and(...conditions));
+    }
+
+    const result = await query.orderBy(desc(inquiries.createdAt));
+
+    return result.map((row) => ({
+      ...row.inquiries,
+      user: row.users,
+      product: row.products || null,
+    }));
+  }
+
+  async getInquiry(
+    id: string
+  ): Promise<
+    | (Inquiry & {
+        user: User;
+        product?: Product | null;
+        replies: (InquiryReply & { user: User })[];
+      })
+    | undefined
+  > {
+    const result = await db
+      .select()
+      .from(inquiries)
+      .innerJoin(users, eq(inquiries.userId, users.id))
+      .leftJoin(products, eq(inquiries.productId, products.id))
+      .where(eq(inquiries.id, id));
+
+    if (result.length === 0) return undefined;
+
+    const row = result[0];
+
+    // 답변 조회
+    const repliesResult = await db
+      .select()
+      .from(inquiryReplies)
+      .innerJoin(users, eq(inquiryReplies.userId, users.id))
+      .where(eq(inquiryReplies.inquiryId, id))
+      .orderBy(inquiryReplies.createdAt);
+
+    const replies = repliesResult.map((r) => ({
+      ...r.inquiry_replies,
+      user: r.users,
+    }));
+
+    return {
+      ...row.inquiries,
+      user: row.users,
+      product: row.products || null,
+      replies,
+    };
+  }
+
+  async createInquiry(inquiry: InsertInquiry): Promise<Inquiry> {
+    const [newInquiry] = await db.insert(inquiries).values(inquiry).returning();
+    return newInquiry;
+  }
+
+  async updateInquiryStatus(
+    id: string,
+    status: string
+  ): Promise<Inquiry | undefined> {
+    const [updated] = await db
+      .update(inquiries)
+      .set({ status, updatedAt: new Date() })
+      .where(eq(inquiries.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteInquiry(id: string): Promise<void> {
+    await db.delete(inquiries).where(eq(inquiries.id, id));
+  }
+
+  // ------------------------------------------------------------------
+  // Inquiry Reply operations
+  // ------------------------------------------------------------------
+  async createInquiryReply(reply: InsertInquiryReply): Promise<InquiryReply> {
+    const [newReply] = await db
+      .insert(inquiryReplies)
+      .values(reply)
+      .returning();
+
+    // 문의 상태를 'answered'로 업데이트
+    await db
+      .update(inquiries)
+      .set({ status: "answered", updatedAt: new Date() })
+      .where(eq(inquiries.id, reply.inquiryId));
+
+    return newReply;
+  }
+
+  async deleteInquiryReply(id: number): Promise<void> {
+    await db.delete(inquiryReplies).where(eq(inquiryReplies.id, id));
   }
 }
 

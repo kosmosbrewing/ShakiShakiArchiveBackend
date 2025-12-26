@@ -15,6 +15,22 @@ import {
 const router = Router();
 
 /**
+ * returnUrl 검증 함수 (Open Redirect 방지)
+ * 상대 경로만 허용하고, 프로토콜 상대 URL은 차단
+ */
+function validateReturnUrl(returnUrl: string | undefined): string {
+  // returnUrl이 없거나 상대 경로가 아닌 경우 기본값 반환
+  if (!returnUrl || typeof returnUrl !== "string" || !returnUrl.startsWith("/")) {
+    return "/";
+  }
+  // 프로토콜 상대 URL 차단 (예: //evil.com)
+  if (returnUrl.startsWith("//")) {
+    return "/";
+  }
+  return returnUrl;
+}
+
+/**
  * GET /api/oauth/naver 또는 /api/oauth/naver/login
  * 네이버 로그인 페이지로 리다이렉트
  */
@@ -25,6 +41,10 @@ router.get(["/naver", "/naver/login"], (req, res) => {
       message: "네이버 로그인이 설정되지 않았습니다",
     });
   }
+
+  // returnUrl을 검증 후 세션에 저장
+  const returnUrl = validateReturnUrl(req.query.returnUrl as string);
+  req.session.oauthReturnUrl = returnUrl;
 
   // CSRF 방지용 상태 토큰 생성 및 세션에 저장
   const state = generateStateToken();
@@ -74,8 +94,10 @@ router.get("/naver/callback", async (req, res) => {
     );
   }
 
-  // 사용한 state 삭제
+  // 사용한 state 삭제 및 returnUrl 복원
   delete req.session.oauthState;
+  const returnUrl = req.session.oauthReturnUrl || "/";
+  delete req.session.oauthReturnUrl;
 
   try {
     // 1. 인증 코드로 액세스 토큰 교환
@@ -94,7 +116,10 @@ router.get("/naver/callback", async (req, res) => {
     if (user) {
       // 기존 네이버 연동 사용자 → 바로 로그인
       req.session.userId = user.id;
-      return res.redirect(`${frontendUrl}/oauth/callback?success=true`);
+      const callbackUrl = new URL(`${frontendUrl}/oauth/callback`);
+      callbackUrl.searchParams.set("success", "true");
+      callbackUrl.searchParams.set("returnUrl", returnUrl);
+      return res.redirect(callbackUrl.toString());
     }
 
     // 4. 이메일로 기존 사용자 검색 (이메일 기준 자동 연동)
@@ -110,7 +135,10 @@ router.get("/naver/callback", async (req, res) => {
         });
 
         req.session.userId = user.id;
-        return res.redirect(`${frontendUrl}/oauth/callback?success=true`);
+        const callbackUrl = new URL(`${frontendUrl}/oauth/callback`);
+        callbackUrl.searchParams.set("success", "true");
+        callbackUrl.searchParams.set("returnUrl", returnUrl);
+        return res.redirect(callbackUrl.toString());
       }
     }
 
@@ -126,7 +154,10 @@ router.get("/naver/callback", async (req, res) => {
     });
 
     req.session.userId = newUser.id;
-    return res.redirect(`${frontendUrl}/oauth/callback?success=true`);
+    const callbackUrl = new URL(`${frontendUrl}/oauth/callback`);
+    callbackUrl.searchParams.set("success", "true");
+    callbackUrl.searchParams.set("returnUrl", returnUrl);
+    return res.redirect(callbackUrl.toString());
   } catch (error) {
     console.error("네이버 로그인 처리 에러:", error);
 

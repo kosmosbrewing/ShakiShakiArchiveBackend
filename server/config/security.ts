@@ -71,10 +71,7 @@ export const globalRateLimiter = rateLimit({
   },
   standardHeaders: true, // RateLimit-* 헤더 포함
   legacyHeaders: false, // X-RateLimit-* 헤더 비활성화
-  // 요청자 식별 (IP 기반)
-  keyGenerator: (req) => {
-    return req.ip || req.socket.remoteAddress || "unknown";
-  },
+  // 기본 keyGenerator 사용 (IPv6 자동 처리)
   // 제한 초과 시 로깅
   handler: (req, res, next, options) => {
     console.warn(
@@ -103,9 +100,7 @@ export const authRateLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => {
-    return req.ip || req.socket.remoteAddress || "unknown";
-  },
+  // 기본 keyGenerator 사용 (IPv6 자동 처리)
   handler: (req, res, next, options) => {
     console.warn(
       `[Auth Rate Limit] IP ${req.ip} exceeded auth rate limit for ${req.originalUrl}`
@@ -130,14 +125,15 @@ export const apiRateLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  // 인증된 사용자는 userId 기반, 그 외는 IP 기반
   keyGenerator: (req) => {
-    // 인증된 사용자는 userId 기반, 그 외는 IP 기반
     const userId = (req as any).user?.id;
     if (userId) {
       return `user_${userId}`;
     }
-    return req.ip || req.socket.remoteAddress || "unknown";
+    return req.ip || "unknown";
   },
+  validate: { xForwardedForHeader: false, keyGeneratorIpFallback: false },
   // 개발 환경에서는 스킵
   skip: () => config.isDev && !config.rateLimit?.enableInDev,
 });
@@ -161,8 +157,9 @@ export const paymentRateLimiter = rateLimit({
     if (userId) {
       return `payment_user_${userId}`;
     }
-    return `payment_ip_${req.ip || req.socket.remoteAddress || "unknown"}`;
+    return `payment_ip_${req.ip || "unknown"}`;
   },
+  validate: { xForwardedForHeader: false, keyGeneratorIpFallback: false },
   handler: (req, res, next, options) => {
     console.warn(
       `[Payment Rate Limit] User/IP exceeded payment rate limit for ${req.originalUrl}`

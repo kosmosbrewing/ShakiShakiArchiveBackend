@@ -540,3 +540,108 @@ export const updateSiteImageSchema = z.object({
   isActive: z.boolean().optional(),
 });
 export type UpdateSiteImageInput = z.infer<typeof updateSiteImageSchema>;
+
+// ------------------------------------------------------------------
+// Q&A 문의하기 테이블
+// ------------------------------------------------------------------
+export const inquiryTypeEnum = [
+  "product", // 상품 문의
+  "shipping", // 배송 문의
+  "exchange", // 교환/반품
+  "other", // 기타
+] as const;
+export type InquiryType = (typeof inquiryTypeEnum)[number];
+
+export const inquiryStatusEnum = [
+  "pending", // 답변 대기
+  "answered", // 답변 완료
+  "closed", // 종료
+] as const;
+export type InquiryStatus = (typeof inquiryStatusEnum)[number];
+
+export const inquiries = pgTable("inquiries", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .references(() => users.id, { onDelete: "cascade" })
+    .notNull(),
+  productId: uuid("product_id").references(() => products.id, {
+    onDelete: "set null",
+  }), // 상품 문의인 경우 (선택)
+  type: varchar("type", { length: 20 }).notNull(), // 'product', 'shipping', 'exchange', 'other'
+  title: varchar("title", { length: 200 }).notNull(),
+  content: text("content").notNull(),
+  isPrivate: boolean("is_private").default(false).notNull(), // 비밀글 여부
+  status: varchar("status", { length: 20 }).default("pending").notNull(), // 'pending', 'answered', 'closed'
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const inquiriesRelations = relations(inquiries, ({ one, many }) => ({
+  user: one(users, {
+    fields: [inquiries.userId],
+    references: [users.id],
+  }),
+  product: one(products, {
+    fields: [inquiries.productId],
+    references: [products.id],
+  }),
+  replies: many(inquiryReplies),
+}));
+
+export type Inquiry = typeof inquiries.$inferSelect;
+export const insertInquirySchema = createInsertSchema(inquiries).omit({
+  id: true,
+  status: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertInquiry = z.infer<typeof insertInquirySchema>;
+
+// 문의 생성 요청 스키마
+export const createInquirySchema = z.object({
+  productId: z.string().uuid().optional(), // 상품 문의인 경우
+  type: z.enum(inquiryTypeEnum),
+  title: z.string().min(1, "제목을 입력해주세요").max(200, "제목은 최대 200자입니다"),
+  content: z.string().min(1, "내용을 입력해주세요"),
+  isPrivate: z.boolean().optional(),
+});
+export type CreateInquiryInput = z.infer<typeof createInquirySchema>;
+
+// ------------------------------------------------------------------
+// Q&A 답변 테이블
+// ------------------------------------------------------------------
+export const inquiryReplies = pgTable("inquiry_replies", {
+  id: serial("id").primaryKey(),
+  inquiryId: uuid("inquiry_id")
+    .references(() => inquiries.id, { onDelete: "cascade" })
+    .notNull(),
+  userId: uuid("user_id")
+    .references(() => users.id, { onDelete: "cascade" })
+    .notNull(), // 답변 작성자 (관리자)
+  content: text("content").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const inquiryRepliesRelations = relations(inquiryReplies, ({ one }) => ({
+  inquiry: one(inquiries, {
+    fields: [inquiryReplies.inquiryId],
+    references: [inquiries.id],
+  }),
+  user: one(users, {
+    fields: [inquiryReplies.userId],
+    references: [users.id],
+  }),
+}));
+
+export type InquiryReply = typeof inquiryReplies.$inferSelect;
+export const insertInquiryReplySchema = createInsertSchema(inquiryReplies).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertInquiryReply = z.infer<typeof insertInquiryReplySchema>;
+
+// 답변 생성 요청 스키마
+export const createInquiryReplySchema = z.object({
+  content: z.string().min(1, "답변 내용을 입력해주세요"),
+});
+export type CreateInquiryReplyInput = z.infer<typeof createInquiryReplySchema>;

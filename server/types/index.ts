@@ -21,6 +21,7 @@ declare module "express-session" {
   interface SessionData {
     userId: string; // UUID
     oauthState?: string; // OAuth CSRF 방지용 상태 토큰
+    oauthReturnUrl?: string; // OAuth 완료 후 리다이렉트할 URL
   }
 }
 
