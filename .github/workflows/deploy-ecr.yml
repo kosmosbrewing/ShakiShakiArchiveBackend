@@ -57,17 +57,16 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       # 4. Docker 메타데이터 설정 (태그, 라벨)
+      # ECR 태그 immutability가 활성화되어 있으므로 고유한 태그만 사용
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
           tags: |
-            # latest 태그 (main 브랜치)
-            type=raw,value=latest,enable={{is_default_branch}}
-            # Git SHA (short)
+            # Git SHA (short) - 커밋별 고유 태그
             type=sha,prefix=,format=short
-            # 날짜 기반 태그
+            # 날짜 기반 태그 - 빌드 시점 고유 태그
             type=raw,value={{date 'YYYYMMDD-HHmmss'}}
 
       # 5. Docker Buildx 설정 (멀티플랫폼 빌드 지원)
