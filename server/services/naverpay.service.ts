@@ -3,6 +3,10 @@
 
 import { config } from "../config";
 import crypto from "crypto";
+import { promisify } from "util";
+
+// crypto.randomBytes 비동기 버전 (Event Loop 블로킹 방지)
+const randomBytesAsync = promisify(crypto.randomBytes);
 
 // 네이버페이 API 기본 URL (환경에 따라 동적 결정)
 function getApiBaseUrl(): string {
@@ -125,10 +129,11 @@ export class NaverPayPaymentError extends Error {
 }
 
 /**
- * Idempotency Key 생성 (멱등성 보장용)
+ * Idempotency Key 생성 (멱등성 보장용, 비동기)
  */
-function generateIdempotencyKey(): string {
-  return `${Date.now()}-${crypto.randomBytes(8).toString("hex")}`;
+async function generateIdempotencyKey(): Promise<string> {
+  const bytes = await randomBytesAsync(8);
+  return `${Date.now()}-${bytes.toString("hex")}`;
 }
 
 /**
@@ -156,7 +161,7 @@ function getHeaders(idempotencyKey?: string): Record<string, string> {
 export async function reservePayment(
   request: NaverPayReserveRequest
 ): Promise<NaverPayReserveResponse> {
-  const idempotencyKey = generateIdempotencyKey();
+  const idempotencyKey = await generateIdempotencyKey();
 
   const response = await fetch(
     `${getApiBaseUrl()}/naverpay-partner/naverpay/payments/v2.2/reserve`,
@@ -190,7 +195,7 @@ export async function reservePayment(
 export async function applyPayment(
   paymentId: string
 ): Promise<NaverPayApplyResponse> {
-  const idempotencyKey = generateIdempotencyKey();
+  const idempotencyKey = await generateIdempotencyKey();
 
   const response = await fetch(
     `${getApiBaseUrl()}/naverpay-partner/naverpay/payments/v2.2/apply`,
@@ -252,7 +257,7 @@ export async function cancelPayment(
   cancelReason: string,
   cancelRequester: "1" | "2" = "1" // 1: 구매자, 2: 가맹점 관리자
 ): Promise<NaverPayCancelResponse> {
-  const idempotencyKey = generateIdempotencyKey();
+  const idempotencyKey = await generateIdempotencyKey();
 
   const response = await fetch(
     `${getApiBaseUrl()}/naverpay-partner/naverpay/payments/v1/cancel`,

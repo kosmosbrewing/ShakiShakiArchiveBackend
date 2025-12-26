@@ -3,6 +3,10 @@
 
 import { config } from "../config";
 import crypto from "crypto";
+import { promisify } from "util";
+
+// crypto.randomBytes 비동기 버전 (Event Loop 블로킹 방지)
+const randomBytesAsync = promisify(crypto.randomBytes);
 
 // 네이버 OAuth API 기본 URL
 const NAVER_AUTH_URL = "https://nid.naver.com/oauth2.0";
@@ -50,10 +54,11 @@ export class NaverOAuthError extends Error {
 }
 
 /**
- * CSRF 방지용 상태 토큰 생성
+ * CSRF 방지용 상태 토큰 생성 (비동기)
  */
-export function generateStateToken(): string {
-  return crypto.randomBytes(16).toString("hex");
+export async function generateStateToken(): Promise<string> {
+  const bytes = await randomBytesAsync(16);
+  return bytes.toString("hex");
 }
 
 /**

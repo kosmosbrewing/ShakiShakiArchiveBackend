@@ -34,7 +34,7 @@ function validateReturnUrl(returnUrl: string | undefined): string {
  * GET /api/oauth/naver 또는 /api/oauth/naver/login
  * 네이버 로그인 페이지로 리다이렉트
  */
-router.get(["/naver", "/naver/login"], (req, res) => {
+router.get(["/naver", "/naver/login"], async (req, res) => {
   // 네이버 OAuth가 비활성화된 경우
   if (!config.naver.isEnabled) {
     return res.status(503).json({
@@ -46,8 +46,8 @@ router.get(["/naver", "/naver/login"], (req, res) => {
   const returnUrl = validateReturnUrl(req.query.returnUrl as string);
   req.session.oauthReturnUrl = returnUrl;
 
-  // CSRF 방지용 상태 토큰 생성 및 세션에 저장
-  const state = generateStateToken();
+  // CSRF 방지용 상태 토큰 생성 및 세션에 저장 (비동기)
+  const state = await generateStateToken();
   req.session.oauthState = state;
 
   // 네이버 로그인 페이지로 리다이렉트
