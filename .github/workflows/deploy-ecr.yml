@@ -8,23 +8,23 @@ on:
     branches:
       - main
     paths-ignore:
-      - '*.md'
-      - '.gitignore'
-      - '.claudeignore'
-  workflow_dispatch:  # 수동 실행 허용
+      - "*.md"
+      - ".gitignore"
+      - ".claudeignore"
+  workflow_dispatch: # 수동 실행 허용
     inputs:
       environment:
-        description: '배포 환경'
+        description: "배포 환경"
         required: true
-        default: 'production'
+        default: "production"
         type: choice
         options:
           - production
           - staging
 
 env:
-  AWS_REGION: ap-northeast-2  # 서울 리전 (필요시 변경)
-  ECR_REPOSITORY: shakishaki-backend  # ECR 리포지토리 이름
+  AWS_REGION: ap-northeast-2 # 서울 리전 (필요시 변경)
+  ECR_REPOSITORY: backend-shakishaki-archive # ECR 리포지토리 이름
 
 jobs:
   build-and-push:
@@ -33,7 +33,7 @@ jobs:
 
     permissions:
       contents: read
-      id-token: write  # OIDC 토큰 발급을 위한 권한
+      id-token: write # OIDC 토큰 발급을 위한 권한
 
     steps:
       # 1. 소스 코드 체크아웃
