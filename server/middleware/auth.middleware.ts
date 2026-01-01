@@ -4,6 +4,9 @@
 import type { Request, Response, NextFunction } from "express";
 import { storage } from "../storage";
 import type { CachedUser } from "../types";
+import { createLogger } from "../utils/logger";
+
+const logger = createLogger("Auth");
 
 // 메모리 캐시 (TTL: 5분, UUID 기반)
 const userCache = new Map<string, { user: CachedUser; timestamp: number }>();
@@ -91,7 +94,7 @@ export async function isAdmin(
     req.user = cachedUser;
     next();
   } catch (error) {
-    console.error("[isAdmin Error]", error);
+    logger.error("관리자 권한 확인 실패", { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: "서버 오류가 발생했습니다" });
   }
 }
@@ -129,8 +132,12 @@ export async function populateUser(
       }
     }
     next();
-  } catch {
-    // 에러 발생 시에도 요청 계속 처리
+  } catch (error) {
+    // 에러 발생 시에도 요청 계속 처리하되, 로깅은 수행
+    logger.error("사용자 정보 주입 실패", {
+      userId: req.session?.userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
     next();
   }
 }

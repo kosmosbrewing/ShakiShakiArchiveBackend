@@ -1,7 +1,5 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project Overview
 
 ShakiShaki Archive Backend - 한국어 전자상거래 플랫폼의 API 전용 백엔드 서버. Express.js + TypeScript + Drizzle ORM + PostgreSQL 기반.

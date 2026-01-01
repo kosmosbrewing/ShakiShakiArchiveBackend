@@ -626,16 +626,17 @@ POST /api/orders/:id/cancel
 
 #### 사이트 이미지 관리 (Hero, Marquee)
 
-| 메서드 | 경로                               | 설명                      |
-| ------ | ---------------------------------- | ------------------------- |
-| GET    | `/api/admin/site-images`           | 전체 이미지 목록 조회     |
-| GET    | `/api/admin/site-images/:id`       | 이미지 상세 조회          |
-| POST   | `/api/admin/site-images`           | 이미지 추가               |
-| PUT    | `/api/admin/site-images/:id`       | 이미지 수정               |
-| DELETE | `/api/admin/site-images/:id`       | 이미지 삭제               |
-| PATCH  | `/api/admin/site-images/reorder`   | 이미지 순서 변경          |
+| 메서드 | 경로                             | 설명                  |
+| ------ | -------------------------------- | --------------------- |
+| GET    | `/api/admin/site-images`         | 전체 이미지 목록 조회 |
+| GET    | `/api/admin/site-images/:id`     | 이미지 상세 조회      |
+| POST   | `/api/admin/site-images`         | 이미지 추가           |
+| PUT    | `/api/admin/site-images/:id`     | 이미지 수정           |
+| DELETE | `/api/admin/site-images/:id`     | 이미지 삭제           |
+| PATCH  | `/api/admin/site-images/reorder` | 이미지 순서 변경      |
 
 **제한 사항:**
+
 - Hero 이미지: 최대 3개
 - Marquee 이미지: 최대 6개
 
@@ -797,7 +798,7 @@ Cloudinary를 사용한 이미지 업로드 시스템입니다. 관리자만 이
 #### 단일 이미지 업로드
 
 ```bash
-curl -X POST http://localhost:5000/api/admin/images/product \
+curl -X POST http://localhost:8080/api/admin/images/product \
   -H "Cookie: connect.sid=..." \
   -F "image=@/path/to/image.jpg"
 ```
@@ -818,7 +819,7 @@ curl -X POST http://localhost:5000/api/admin/images/product \
 #### 여러 이미지 업로드
 
 ```bash
-curl -X POST http://localhost:5000/api/admin/images/products \
+curl -X POST http://localhost:8080/api/admin/images/products \
   -H "Cookie: connect.sid=..." \
   -F "images=@/path/to/image1.jpg" \
   -F "images=@/path/to/image2.jpg"
@@ -1173,6 +1174,7 @@ npm run db:push
 - `server/routes/admin/siteImage.routes.ts` 추가 - 관리자 이미지 관리 API
 
 **기능:**
+
 - Hero 이미지 관리 (최대 3개)
 - Marquee 이미지 관리 (최대 6개)
 - 이미지 순서 변경 (reorder)
@@ -1180,11 +1182,13 @@ npm run db:push
 - 클릭 시 이동할 링크 URL 설정
 
 **공개 API:**
+
 - `GET /api/site-images` - 활성화된 전체 이미지 조회
 - `GET /api/site-images/hero` - Hero 이미지만 조회
 - `GET /api/site-images/marquee` - Marquee 이미지만 조회
 
 **관리자 API:**
+
 - `GET /api/admin/site-images` - 전체 이미지 목록 (관리용)
 - `POST /api/admin/site-images` - 이미지 추가
 - `PUT /api/admin/site-images/:id` - 이미지 수정

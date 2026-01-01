@@ -3,6 +3,9 @@
 
 import { Resend } from "resend";
 import { config } from "../config";
+import { createLogger } from "../utils/logger";
+
+const logger = createLogger("Email");
 
 // Resend 클라이언트 초기화
 const resend = config.email.isEnabled
@@ -41,10 +44,10 @@ export async function sendVerificationEmail(
   code: string
 ): Promise<EmailResult> {
   if (!resend) {
-    console.warn("[Email] Resend가 설정되지 않았습니다. 이메일 발송을 건너뜁니다.");
+    logger.warn("Resend가 설정되지 않았습니다. 이메일 발송을 건너뜁니다.");
     // 개발 환경에서는 콘솔에 코드 출력
     if (config.isDev) {
-      console.log(`[Email] 인증코드: ${code} (이메일: ${email})`);
+      logger.debug("인증코드 (개발모드)", { code, email });
     }
     return { success: true, messageId: "dev-mode" };
   }
@@ -77,14 +80,14 @@ export async function sendVerificationEmail(
     });
 
     if (error) {
-      console.error("[Email] 발송 실패:", error);
+      logger.error("발송 실패", { error: error.message });
       return { success: false, error: error.message };
     }
 
-    console.log(`[Email] 인증코드 발송 완료: ${email}, messageId: ${data?.id}`);
+    logger.info("인증코드 발송 완료", { email, messageId: data?.id });
     return { success: true, messageId: data?.id };
   } catch (error) {
-    console.error("[Email] 발송 중 오류:", error);
+    logger.error("발송 중 오류", { error: error instanceof Error ? error.message : String(error) });
     const message = error instanceof Error ? error.message : "이메일 발송 실패";
     return { success: false, error: message };
   }
@@ -98,9 +101,9 @@ export async function sendPasswordResetEmail(
   code: string
 ): Promise<EmailResult> {
   if (!resend) {
-    console.warn("[Email] Resend가 설정되지 않았습니다. 이메일 발송을 건너뜁니다.");
+    logger.warn("Resend가 설정되지 않았습니다. 이메일 발송을 건너뜁니다.");
     if (config.isDev) {
-      console.log(`[Email] 비밀번호 재설정 코드: ${code} (이메일: ${email})`);
+      logger.debug("비밀번호 재설정 코드 (개발모드)", { code, email });
     }
     return { success: true, messageId: "dev-mode" };
   }
@@ -133,14 +136,14 @@ export async function sendPasswordResetEmail(
     });
 
     if (error) {
-      console.error("[Email] 발송 실패:", error);
+      logger.error("발송 실패", { error: error.message });
       return { success: false, error: error.message };
     }
 
-    console.log(`[Email] 비밀번호 재설정 코드 발송 완료: ${email}`);
+    logger.info("비밀번호 재설정 코드 발송 완료", { email });
     return { success: true, messageId: data?.id };
   } catch (error) {
-    console.error("[Email] 발송 중 오류:", error);
+    logger.error("발송 중 오류", { error: error instanceof Error ? error.message : String(error) });
     const message = error instanceof Error ? error.message : "이메일 발송 실패";
     return { success: false, error: message };
   }

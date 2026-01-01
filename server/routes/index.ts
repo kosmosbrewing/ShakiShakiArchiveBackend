@@ -14,8 +14,10 @@ import wishlistRoutes from "./wishlist.routes";
 import addressRoutes from "./address.routes";
 import variantRoutes from "./variant.routes";
 import searchRoutes from "./search.routes";
+import productSearchRoutes from "./productSearch.routes";
 import siteImageRoutes from "./siteImage.routes";
 import inquiryRoutes from "./inquiry.routes";
+import seoRoutes from "./seo.routes";
 import adminRoutes from "./admin";
 
 const router = Router();
@@ -35,8 +37,10 @@ router.use("/products", productRoutes);
 router.use("/categories", categoryRoutes);
 router.use("/variants", variantRoutes);
 router.use("/search", searchRoutes); // 주소 검색 API
+router.use("/search/products", productSearchRoutes); // 상품 검색 (Meilisearch)
 router.use("/site-images", siteImageRoutes); // Hero, Marquee 이미지 조회
 router.use("/inquiries", inquiryRoutes); // Q&A 문의하기
+router.use("/seo", seoRoutes); // SEO 메타데이터 (JSON-LD, OpenGraph)
 
 // 인증 필요 라우트
 router.use("/cart", cartRoutes);

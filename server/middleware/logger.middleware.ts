@@ -37,7 +37,8 @@ function formatTime(): string {
  * 로그 출력 (하위 호환성)
  */
 export function log(message: string, source = "express"): void {
-  console.log(`${formatTime()} [${source}] ${message}`);
+  const sourceLogger = createLogger(source);
+  sourceLogger.info(message);
 }
 
 /**

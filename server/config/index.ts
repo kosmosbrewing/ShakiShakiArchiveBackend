@@ -1,26 +1,66 @@
 // server/config/index.ts
 // 환경 변수 중앙 관리
 
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL must be set");
+/**
+ * 필수 환경 변수 목록
+ * 앱 시작 시 반드시 설정되어 있어야 하는 환경 변수들
+ */
+const REQUIRED_ENV_VARS = [
+  {
+    name: "DATABASE_URL",
+    description: "PostgreSQL 데이터베이스 연결 문자열",
+  },
+  {
+    name: "SESSION_SECRET",
+    description: "세션 암호화에 사용되는 비밀 키 (최소 32자 권장)",
+  },
+] as const;
+
+/**
+ * 필수 환경 변수 검증
+ * 누락된 환경 변수가 있으면 명확한 에러 메시지와 함께 앱 실행을 중단
+ */
+function validateRequiredEnvVars(): void {
+  const missingVars = REQUIRED_ENV_VARS.filter((env) => !process.env[env.name]);
+
+  if (missingVars.length > 0) {
+    const errorMessages = missingVars
+      .map((env) => `  - ${env.name}: ${env.description}`)
+      .join("\n");
+
+    throw new Error(
+      `\n` +
+        `========================================\n` +
+        `❌ 필수 환경 변수가 설정되지 않았습니다!\n` +
+        `========================================\n` +
+        `\n` +
+        `누락된 환경 변수:\n` +
+        `${errorMessages}\n` +
+        `\n` +
+        `.env 파일을 확인하거나 환경 변수를 설정해주세요.\n` +
+        `예시:\n` +
+        `  DATABASE_URL=postgresql://user:password@localhost:5432/dbname\n` +
+        `  SESSION_SECRET=your-secure-secret-key-here\n` +
+        `========================================\n`
+    );
+  }
 }
 
-if (!process.env.SESSION_SECRET) {
-  throw new Error("SESSION_SECRET must be set");
-}
+// 앱 시작 시 필수 환경 변수 검증 실행
+validateRequiredEnvVars();
 
 export const config = {
   // 서버 설정
-  port: parseInt(process.env.PORT || "5000", 10),
+  port: parseInt(process.env.PORT || "8080", 10),
   nodeEnv: process.env.NODE_ENV || "development",
   isDev: process.env.NODE_ENV !== "production",
   isProd: process.env.NODE_ENV === "production",
 
-  // 데이터베이스
-  databaseUrl: process.env.DATABASE_URL,
+  // 데이터베이스 (필수 환경 변수, 검증 완료)
+  databaseUrl: process.env.DATABASE_URL as string,
 
-  // 세션
-  sessionSecret: process.env.SESSION_SECRET,
+  // 세션 (필수 환경 변수, 검증 완료)
+  sessionSecret: process.env.SESSION_SECRET as string,
   secureCookie: process.env.SECURE_COOKIE !== "false",
 
   // CORS (쉼표로 구분된 origin 목록)
@@ -42,7 +82,7 @@ export const config = {
     clientSecret: process.env.NAVER_CLIENT_SECRET || "",
     callbackUrl:
       process.env.NAVER_CALLBACK_URL ||
-      "http://localhost:5000/api/oauth/naver/callback",
+      "http://localhost:8080/api/oauth/naver/callback",
     isEnabled: !!process.env.NAVER_CLIENT_ID,
   },
 
@@ -58,11 +98,11 @@ export const config = {
     // 결제 완료 후 리다이렉트 URL
     returnUrl:
       process.env.NAVERPAY_RETURN_URL ||
-      "http://localhost:5000/api/payments/naverpay/callback",
+      "http://localhost:8080/api/payments/naverpay/callback",
   },
 
   // 프론트엔드 URL (OAuth 콜백 리다이렉트용)
-  frontendUrl: process.env.FRONTEND_URL || "http://localhost:5000",
+  frontendUrl: process.env.FRONTEND_URL || "http://localhost:8080",
 
   // Resend 이메일 설정
   email: {
@@ -83,6 +123,17 @@ export const config = {
       process.env.CLOUDINARY_API_KEY &&
       process.env.CLOUDINARY_API_SECRET
     ),
+  },
+
+  // Meilisearch 검색 엔진 설정
+  meilisearch: {
+    host: process.env.MEILISEARCH_HOST || "http://localhost:7700",
+    apiKey: process.env.MEILISEARCH_API_KEY || "",
+    isEnabled: !!process.env.MEILISEARCH_HOST,
+    // 인덱스 설정
+    indexes: {
+      products: process.env.MEILISEARCH_PRODUCTS_INDEX || "products",
+    },
   },
 
   // Rate Limiting 설정

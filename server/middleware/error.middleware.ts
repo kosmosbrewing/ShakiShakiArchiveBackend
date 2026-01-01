@@ -97,9 +97,7 @@ export function errorHandler(
 
   // 500 에러인 경우 전체 스택 트레이스도 출력
   if (statusCode >= 500 && err.stack) {
-    console.error("\n--- Full Stack Trace ---");
-    console.error(err.stack);
-    console.error("------------------------\n");
+    logger.error("Full Stack Trace", { stack: err.stack });
   }
 
   // 응답

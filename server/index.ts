@@ -11,9 +11,13 @@ import {
   errorHandler,
   loggerMiddleware,
   populateUser,
-  log,
 } from "./middleware";
 import routes from "./routes";
+import { meilisearchService } from "./services/meilisearch.service";
+import { testConnection } from "./db";
+import { createLogger, getCurrentLogLevel } from "./utils/logger";
+
+const logger = createLogger("Server");
 
 // Express 앱 초기화
 const app = express();
@@ -71,8 +75,27 @@ httpServer.listen(
     port: config.port,
     host,
   },
-  () => {
-    log(`API Server serving on ${host}:${config.port}`);
-    log(`Environment: ${config.nodeEnv}`);
+  async () => {
+    logger.info("서버 시작", {
+      host,
+      port: config.port,
+      env: config.nodeEnv,
+      logLevel: getCurrentLogLevel(),
+    });
+
+    // DB 연결 테스트
+    const dbConnected = await testConnection();
+    if (!dbConnected) {
+      logger.error("DB 연결 실패 - 서버가 정상 작동하지 않을 수 있습니다");
+    }
+
+    // Meilisearch 초기화 (비동기, 실패해도 서버는 계속 실행)
+    try {
+      await meilisearchService.initialize();
+    } catch (error) {
+      logger.error("Meilisearch 초기화 중 오류 발생", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 );

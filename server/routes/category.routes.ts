@@ -3,19 +3,16 @@
 
 import { Router } from "express";
 import { storage } from "../storage";
+import { asyncHandler } from "../middleware/error.middleware";
+import { createLogger } from "../utils/logger";
 
 const router = Router();
+const logger = createLogger("Category");
 
 // 카테고리 목록 조회
-router.get("/", async (req, res) => {
-  try {
-    const categories = await storage.getCategories();
-    res.json(categories);
-  } catch (error: unknown) {
-    console.error("Error fetching categories:", error);
-    const message = error instanceof Error ? error.message : "Failed to fetch categories";
-    res.status(500).json({ message });
-  }
-});
+router.get("/", asyncHandler(async (req, res) => {
+  const categories = await storage.getCategories();
+  res.json(categories);
+}));
 
 export default router;

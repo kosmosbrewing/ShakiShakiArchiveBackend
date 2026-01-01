@@ -43,7 +43,7 @@ import {
   type InquiryType,
 } from "@shared/schema";
 import { db, pool } from "./db";
-import { eq, and, like, desc, isNull, gt } from "drizzle-orm";
+import { eq, and, like, desc, isNull, gt, lt, count } from "drizzle-orm";
 import type {
   OrderItemCreateData,
   OrderStatusUpdate,
@@ -65,6 +65,7 @@ export interface IStorage {
     categoryId?: number;
   }): Promise<Product[]>;
   getProduct(id: string): Promise<Product | undefined>;
+  getProductBySlug(slug: string): Promise<Product | undefined>;
   createProduct(product: InsertProduct): Promise<Product>;
   updateProduct(
     id: string,
@@ -72,31 +73,31 @@ export interface IStorage {
   ): Promise<Product | undefined>;
   deleteProduct(id: string): Promise<void>;
 
-  // Product variant operations (productId는 UUID, variant id는 serial)
+  // Product variant operations (모두 UUID 기반)
   getProductVariants(productId: string): Promise<ProductVariant[]>;
-  getProductVariant(id: number): Promise<ProductVariant | undefined>;
+  getProductVariant(id: string): Promise<ProductVariant | undefined>;
   createProductVariant(variant: InsertProductVariant): Promise<ProductVariant>;
   updateProductVariant(
-    id: number,
+    id: string,
     variant: Partial<InsertProductVariant>
   ): Promise<ProductVariant | undefined>;
-  deleteProductVariant(id: number): Promise<void>;
+  deleteProductVariant(id: string): Promise<void>;
 
-  // Product size measurements operations
+  // Product size measurements operations (모두 UUID 기반)
   getProductSizeMeasurements(
-    productVariantId: number
+    productVariantId: string
   ): Promise<ProductSizeMeasurement[]>;
   getProductSizeMeasurement(
-    id: number
+    id: string
   ): Promise<ProductSizeMeasurement | undefined>;
   createProductSizeMeasurement(
     measurement: InsertProductSizeMeasurement
   ): Promise<ProductSizeMeasurement>;
   updateProductSizeMeasurement(
-    id: number,
+    id: string,
     measurement: Partial<InsertProductSizeMeasurement>
   ): Promise<ProductSizeMeasurement | undefined>;
-  deleteProductSizeMeasurement(id: number): Promise<void>;
+  deleteProductSizeMeasurement(id: string): Promise<void>;
 
   // Category operations
   getCategories(): Promise<Category[]>;
@@ -343,6 +344,14 @@ export class DatabaseStorage implements IStorage {
     return product;
   }
 
+  async getProductBySlug(slug: string): Promise<Product | undefined> {
+    const [product] = await db
+      .select()
+      .from(products)
+      .where(eq(products.slug, slug));
+    return product;
+  }
+
   async createProduct(product: InsertProduct): Promise<Product> {
     const [newProduct] = await db.insert(products).values(product).returning();
     return newProduct;
@@ -365,7 +374,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ------------------------------------------------------------------
-  // Product variant operations (productId는 UUID, variant id는 serial)
+  // Product variant operations (모두 UUID 기반)
   // ------------------------------------------------------------------
   async getProductVariants(productId: string): Promise<ProductVariant[]> {
     return await db
@@ -375,7 +384,7 @@ export class DatabaseStorage implements IStorage {
       .orderBy(productVariants.size);
   }
 
-  async getProductVariant(id: number): Promise<ProductVariant | undefined> {
+  async getProductVariant(id: string): Promise<ProductVariant | undefined> {
     const [variant] = await db
       .select()
       .from(productVariants)
@@ -394,7 +403,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateProductVariant(
-    id: number,
+    id: string,
     variant: Partial<InsertProductVariant>
   ): Promise<ProductVariant | undefined> {
     const [updated] = await db
@@ -405,15 +414,15 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async deleteProductVariant(id: number): Promise<void> {
+  async deleteProductVariant(id: string): Promise<void> {
     await db.delete(productVariants).where(eq(productVariants.id, id));
   }
 
   // ------------------------------------------------------------------
-  // Product size measurements operations
+  // Product size measurements operations (모두 UUID 기반)
   // ------------------------------------------------------------------
   async getProductSizeMeasurements(
-    productVariantId: number
+    productVariantId: string
   ): Promise<ProductSizeMeasurement[]> {
     return await db
       .select()
@@ -422,7 +431,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getProductSizeMeasurement(
-    id: number
+    id: string
   ): Promise<ProductSizeMeasurement | undefined> {
     const [measurement] = await db
       .select()
@@ -442,7 +451,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateProductSizeMeasurement(
-    id: number,
+    id: string,
     measurement: Partial<InsertProductSizeMeasurement>
   ): Promise<ProductSizeMeasurement | undefined> {
     const [updated] = await db
@@ -453,7 +462,7 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async deleteProductSizeMeasurement(id: number): Promise<void> {
+  async deleteProductSizeMeasurement(id: string): Promise<void> {
     await db
       .delete(productSizeMeasurements)
       .where(eq(productSizeMeasurements.id, id));
@@ -700,25 +709,30 @@ export class DatabaseStorage implements IStorage {
   ): Promise<
     (Order & { orderItems: (OrderItem & { product: Product })[] }) | undefined
   > {
-    const [order] = await db
+    // N+1 문제 해결: 단일 JOIN 쿼리로 주문과 주문 상품을 함께 조회
+    const result = await db
       .select()
       .from(orders)
+      .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
+      .leftJoin(products, eq(orderItems.productId, products.id))
       .where(eq(orders.id, orderId));
 
-    if (!order) return undefined;
+    if (result.length === 0) return undefined;
 
-    const items = await db
-      .select()
-      .from(orderItems)
-      .innerJoin(products, eq(orderItems.productId, products.id))
-      .where(eq(orderItems.orderId, orderId));
+    // 첫 번째 행에서 주문 정보 추출
+    const order = result[0].orders;
+
+    // 주문 상품 목록 구성 (orderItems가 null일 수 있음)
+    const orderItemsList = result
+      .filter((row) => row.order_items !== null)
+      .map((row) => ({
+        ...row.order_items!,
+        product: row.products!,
+      }));
 
     return {
       ...order,
-      orderItems: items.map((item) => ({
-        ...item.order_items,
-        product: item.products,
-      })),
+      orderItems: orderItemsList,
     };
   }
 
@@ -1035,10 +1049,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteExpiredVerifications(): Promise<void> {
-    // expiresAt < now (만료됨)를 의미하려면 lt 사용
+    // 버그 수정: 만료된 인증코드만 삭제 (expiresAt < now AND verified = false)
     await db
       .delete(emailVerifications)
-      .where(eq(emailVerifications.verified, false));
+      .where(
+        and(
+          eq(emailVerifications.verified, false),
+          lt(emailVerifications.expiresAt, new Date())
+        )
+      );
   }
 
   async isEmailVerified(email: string, type: string): Promise<boolean> {
@@ -1104,11 +1123,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async countSiteImagesByType(type: SiteImageType): Promise<number> {
-    const result = await db
-      .select()
+    // 성능 개선: 전체 레코드 조회 대신 COUNT 쿼리 사용
+    const [result] = await db
+      .select({ count: count() })
       .from(siteImages)
       .where(eq(siteImages.type, type));
-    return result.length;
+    return result?.count ?? 0;
   }
 
   // ------------------------------------------------------------------
@@ -1165,25 +1185,28 @@ export class DatabaseStorage implements IStorage {
       })
     | undefined
   > {
-    const result = await db
-      .select()
-      .from(inquiries)
-      .innerJoin(users, eq(inquiries.userId, users.id))
-      .leftJoin(products, eq(inquiries.productId, products.id))
-      .where(eq(inquiries.id, id));
+    // N+1 문제 해결: 문의와 답변을 단일 쿼리로 조회
+    // 문의 작성자와 답변 작성자가 다를 수 있으므로 별도 alias 필요
+    // Drizzle에서 같은 테이블을 여러 번 조인하려면 별도 처리 필요
+    // 여기서는 2개의 병렬 쿼리로 최적화 (Promise.all)
+    const [inquiryResult, repliesResult] = await Promise.all([
+      db
+        .select()
+        .from(inquiries)
+        .innerJoin(users, eq(inquiries.userId, users.id))
+        .leftJoin(products, eq(inquiries.productId, products.id))
+        .where(eq(inquiries.id, id)),
+      db
+        .select()
+        .from(inquiryReplies)
+        .innerJoin(users, eq(inquiryReplies.userId, users.id))
+        .where(eq(inquiryReplies.inquiryId, id))
+        .orderBy(inquiryReplies.createdAt),
+    ]);
 
-    if (result.length === 0) return undefined;
+    if (inquiryResult.length === 0) return undefined;
 
-    const row = result[0];
-
-    // 답변 조회
-    const repliesResult = await db
-      .select()
-      .from(inquiryReplies)
-      .innerJoin(users, eq(inquiryReplies.userId, users.id))
-      .where(eq(inquiryReplies.inquiryId, id))
-      .orderBy(inquiryReplies.createdAt);
-
+    const row = inquiryResult[0];
     const replies = repliesResult.map((r) => ({
       ...r.inquiry_replies,
       user: r.users,

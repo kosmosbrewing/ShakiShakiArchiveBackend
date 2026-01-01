@@ -4,6 +4,7 @@
 import { Router } from "express";
 import { config } from "../config";
 import { storage } from "../storage";
+import { asyncHandler } from "../middleware/error.middleware";
 import {
   generateStateToken,
   getAuthorizationUrl,
@@ -11,8 +12,10 @@ import {
   getUserProfile,
   NaverOAuthError,
 } from "../services/naver.service";
+import { createLogger } from "../utils/logger";
 
 const router = Router();
+const logger = createLogger("OAuth");
 
 /**
  * returnUrl 검증 함수 (Open Redirect 방지)
@@ -34,7 +37,7 @@ function validateReturnUrl(returnUrl: string | undefined): string {
  * GET /api/oauth/naver 또는 /api/oauth/naver/login
  * 네이버 로그인 페이지로 리다이렉트
  */
-router.get(["/naver", "/naver/login"], async (req, res) => {
+router.get(["/naver", "/naver/login"], asyncHandler(async (req, res) => {
   // 네이버 OAuth가 비활성화된 경우
   if (!config.naver.isEnabled) {
     return res.status(503).json({
@@ -53,21 +56,21 @@ router.get(["/naver", "/naver/login"], async (req, res) => {
   // 네이버 로그인 페이지로 리다이렉트
   const authUrl = getAuthorizationUrl(state);
   res.redirect(authUrl);
-});
+}));
 
 /**
  * GET /api/oauth/naver/callback
  * 네이버 인증 콜백 처리
  */
-router.get("/naver/callback", async (req, res) => {
+router.get("/naver/callback", asyncHandler(async (req, res) => {
   const { code, state, error, error_description } = req.query;
   const frontendUrl = config.frontendUrl;
 
-  console.log("OAuth 콜백 - frontendUrl:", frontendUrl);
+  logger.debug("OAuth 콜백", { frontendUrl });
 
   // 에러 응답 처리
   if (error) {
-    console.error("네이버 OAuth 에러:", error, error_description);
+    logger.error("네이버 OAuth 에러", { error, errorDescription: error_description });
     return res.redirect(
       `${frontendUrl}/oauth/callback?error=${encodeURIComponent(
         (error_description as string) || "로그인 취소"
@@ -159,7 +162,7 @@ router.get("/naver/callback", async (req, res) => {
     callbackUrl.searchParams.set("returnUrl", returnUrl);
     return res.redirect(callbackUrl.toString());
   } catch (error) {
-    console.error("네이버 로그인 처리 에러:", error);
+    logger.error("네이버 로그인 처리 에러", { error: error instanceof Error ? error.message : String(error) });
 
     const errorMessage =
       error instanceof NaverOAuthError
@@ -170,6 +173,6 @@ router.get("/naver/callback", async (req, res) => {
       `${frontendUrl}/oauth/callback?error=${encodeURIComponent(errorMessage)}`
     );
   }
-});
+}));
 
 export default router;

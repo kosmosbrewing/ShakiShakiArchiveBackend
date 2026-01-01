@@ -6,14 +6,12 @@ import pg from "pg";
 import * as schema from "@shared/schema";
 import fs from "fs";
 import path from "path";
+// config import 시 필수 환경 변수 검증이 자동 실행됨
+import { config } from "./config";
+import { createLogger } from "./utils/logger";
 
 const { Pool } = pg;
-
-if (!process.env.DATABASE_URL) {
-  throw new Error(
-    "DATABASE_URL must be set. Did you forget to provision a database?"
-  );
-}
+const logger = createLogger("DB");
 
 // SSL 설정: DB_SSL 환경변수로 명시적 제어
 // - DB_SSL=true: SSL 활성화 (기본값)
@@ -34,7 +32,7 @@ const needsSsl = getSslEnabled();
 // SSL 인증서 설정 함수
 function getSslConfig(): pg.PoolConfig["ssl"] {
   if (!needsSsl) {
-    console.log("[DB] SSL 비활성화 (DB_SSL=false)");
+    logger.info("SSL 비활성화 (DB_SSL=false)");
     return false;
   }
 
@@ -43,9 +41,7 @@ function getSslConfig(): pg.PoolConfig["ssl"] {
   // 2. RDS_CA_BUNDLE (Docker 환경, Dockerfile에서 설정)
   // 3. certs/rds-ca-bundle.pem (로컬 기본 경로)
   const caCertPath =
-    process.env.DB_SSL_CA ||
-    process.env.RDS_CA_BUNDLE ||
-    null;
+    process.env.DB_SSL_CA || process.env.RDS_CA_BUNDLE || null;
 
   if (caCertPath) {
     // 절대 경로 또는 상대 경로 처리
@@ -54,22 +50,20 @@ function getSslConfig(): pg.PoolConfig["ssl"] {
       : path.resolve(process.cwd(), caCertPath);
 
     if (fs.existsSync(resolvedPath)) {
-      console.log(`[DB] SSL 활성화 - CA 인증서: ${resolvedPath}`);
+      logger.info("SSL 활성화 - CA 인증서 사용", { certPath: resolvedPath });
       return {
         rejectUnauthorized: true, // 인증서 검증 활성화
         ca: fs.readFileSync(resolvedPath, "utf-8"),
       };
     } else {
-      console.warn(
-        `[DB] 경고: 인증서 경로를 찾을 수 없음: ${resolvedPath}`
-      );
+      logger.warn("인증서 경로를 찾을 수 없음", { certPath: resolvedPath });
     }
   }
 
   // 기본 인증서 경로 확인 (로컬 개발용)
   const defaultCaPath = path.resolve(process.cwd(), "certs/rds-ca-bundle.pem");
   if (fs.existsSync(defaultCaPath)) {
-    console.log(`[DB] SSL 활성화 - CA 인증서 (기본): ${defaultCaPath}`);
+    logger.info("SSL 활성화 - 기본 CA 인증서 사용", { certPath: defaultCaPath });
     return {
       rejectUnauthorized: true,
       ca: fs.readFileSync(defaultCaPath, "utf-8"),
@@ -77,9 +71,7 @@ function getSslConfig(): pg.PoolConfig["ssl"] {
   }
 
   // 인증서가 없으면 검증 없이 SSL 연결 (개발 환경용)
-  console.warn(
-    "[DB] SSL 활성화 - 인증서 없음 (rejectUnauthorized: false)"
-  );
+  logger.warn("SSL 활성화 - 인증서 없음 (rejectUnauthorized: false)");
   return {
     rejectUnauthorized: false,
     checkServerIdentity: () => undefined,
@@ -93,14 +85,131 @@ if (needsSsl && typeof sslConfig === "object") {
   pg.defaults.ssl = sslConfig;
 }
 
-// DATABASE_URL에서 sslmode 파라미터 처리
-// URL에 sslmode가 있으면 Node.js의 SSL 설정과 충돌할 수 있음
-let connectionString = process.env.DATABASE_URL;
+// config에서 검증된 DATABASE_URL 사용
+const connectionString = config.databaseUrl;
 
-// PostgreSQL 연결 풀 (트랜잭션용으로 export)
-export const pool = new Pool({
+// 환경별 Pool 설정
+const isProduction = process.env.NODE_ENV === "production";
+
+// Pool 옵션 설정
+const poolConfig: pg.PoolConfig = {
   connectionString,
   ssl: sslConfig,
+
+  // 연결 수 설정
+  max: parseInt(process.env.DB_POOL_MAX || (isProduction ? "20" : "10"), 10),
+  min: parseInt(process.env.DB_POOL_MIN || "2", 10),
+
+  // 타임아웃 설정 (밀리초)
+  idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT || "30000", 10), // 유휴 연결 30초 후 해제
+  connectionTimeoutMillis: parseInt(
+    process.env.DB_CONNECTION_TIMEOUT || "10000",
+    10
+  ), // 연결 시도 10초 타임아웃
+
+  // 유휴 상태에서 프로세스 종료 허용 (graceful shutdown 지원)
+  allowExitOnIdle: false,
+};
+
+logger.info("Pool 설정 완료", {
+  max: poolConfig.max,
+  min: poolConfig.min,
+  idleTimeoutMillis: poolConfig.idleTimeoutMillis,
+  connectionTimeoutMillis: poolConfig.connectionTimeoutMillis,
+});
+
+// PostgreSQL 연결 풀 (트랜잭션용으로 export)
+export const pool = new Pool(poolConfig);
+
+// Pool 이벤트 리스너
+pool.on("connect", () => {
+  logger.debug("새 연결 생성", {
+    totalCount: pool.totalCount,
+    idleCount: pool.idleCount,
+    waitingCount: pool.waitingCount,
+  });
+});
+
+pool.on("acquire", () => {
+  logger.debug("연결 획득", {
+    totalCount: pool.totalCount,
+    idleCount: pool.idleCount,
+    waitingCount: pool.waitingCount,
+  });
+});
+
+pool.on("release", () => {
+  logger.debug("연결 반환", {
+    totalCount: pool.totalCount,
+    idleCount: pool.idleCount,
+    waitingCount: pool.waitingCount,
+  });
+});
+
+pool.on("remove", () => {
+  logger.info("연결 제거됨", {
+    totalCount: pool.totalCount,
+    idleCount: pool.idleCount,
+  });
+});
+
+pool.on("error", (err) => {
+  logger.error("Pool 에러 발생", { error: err.message, stack: err.stack });
+});
+
+// Pool 상태 모니터링 함수
+export function getPoolStatus() {
+  return {
+    totalCount: pool.totalCount, // 총 연결 수
+    idleCount: pool.idleCount, // 유휴 연결 수
+    waitingCount: pool.waitingCount, // 대기 중인 쿼리 수
+  };
+}
+
+// Pool 연결 테스트 함수
+export async function testConnection(): Promise<boolean> {
+  try {
+    const client = await pool.connect();
+    await client.query("SELECT 1");
+    client.release();
+    logger.info("연결 테스트 성공");
+    return true;
+  } catch (error) {
+    logger.error("연결 테스트 실패", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    return false;
+  }
+}
+
+// Graceful Shutdown 핸들러
+let isShuttingDown = false;
+
+export async function closePool(): Promise<void> {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  logger.info("Pool 종료 시작");
+  try {
+    await pool.end();
+    logger.info("Pool 종료 완료");
+  } catch (error) {
+    logger.error("Pool 종료 중 에러", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+// 프로세스 종료 시그널 핸들러
+process.on("SIGTERM", async () => {
+  logger.info("SIGTERM 수신 - Graceful shutdown 시작");
+  await closePool();
+});
+
+process.on("SIGINT", async () => {
+  logger.info("SIGINT 수신 - Graceful shutdown 시작");
+  await closePool();
 });
 
 // Drizzle ORM 인스턴스

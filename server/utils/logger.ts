@@ -1,5 +1,6 @@
 // server/utils/logger.ts
-// 디버깅을 위한 로그 유틸리티
+// 프로덕션: JSON 형식 + ERROR 레벨 기본
+// 개발: 컬러 텍스트 + DEBUG 레벨 기본
 
 import { config } from "../config";
 
@@ -11,30 +12,25 @@ export enum LogLevel {
   ERROR = 3,
 }
 
-// 환경별 기본 로그 레벨
-const DEFAULT_LOG_LEVEL = config.isProd ? LogLevel.INFO : LogLevel.DEBUG;
-
-// 컬러 코드 (터미널 출력용)
-const colors = {
-  reset: "\x1b[0m",
-  bright: "\x1b[1m",
-  dim: "\x1b[2m",
-  red: "\x1b[31m",
-  green: "\x1b[32m",
-  yellow: "\x1b[33m",
-  blue: "\x1b[34m",
-  magenta: "\x1b[35m",
-  cyan: "\x1b[36m",
-  gray: "\x1b[90m",
+// 로그 레벨 문자열 매핑
+const levelFromString: Record<string, LogLevel> = {
+  debug: LogLevel.DEBUG,
+  info: LogLevel.INFO,
+  warn: LogLevel.WARN,
+  error: LogLevel.ERROR,
 };
 
-// 로그 레벨별 색상
-const levelColors: Record<LogLevel, string> = {
-  [LogLevel.DEBUG]: colors.gray,
-  [LogLevel.INFO]: colors.cyan,
-  [LogLevel.WARN]: colors.yellow,
-  [LogLevel.ERROR]: colors.red,
-};
+// 환경변수에서 로그 레벨 파싱
+function getLogLevel(): LogLevel {
+  const envLevel = process.env.LOG_LEVEL?.toLowerCase();
+  if (envLevel && envLevel in levelFromString) {
+    return levelFromString[envLevel];
+  }
+  // 프로덕션: ERROR만, 개발: DEBUG부터
+  return config.isProd ? LogLevel.ERROR : LogLevel.DEBUG;
+}
+
+const CURRENT_LOG_LEVEL = getLogLevel();
 
 // 로그 레벨 이름
 const levelNames: Record<LogLevel, string> = {
@@ -44,8 +40,35 @@ const levelNames: Record<LogLevel, string> = {
   [LogLevel.ERROR]: "ERROR",
 };
 
+// 컬러 코드 (개발 환경 터미널용)
+const colors = {
+  reset: "\x1b[0m",
+  bright: "\x1b[1m",
+  dim: "\x1b[2m",
+  red: "\x1b[31m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  blue: "\x1b[34m",
+  cyan: "\x1b[36m",
+  gray: "\x1b[90m",
+};
+
+const levelColors: Record<LogLevel, string> = {
+  [LogLevel.DEBUG]: colors.gray,
+  [LogLevel.INFO]: colors.cyan,
+  [LogLevel.WARN]: colors.yellow,
+  [LogLevel.ERROR]: colors.red,
+};
+
 /**
- * 로컬 시간 포맷팅
+ * ISO 타임스탬프 생성
+ */
+function getTimestamp(): string {
+  return new Date().toISOString();
+}
+
+/**
+ * 로컬 시간 포맷 (개발용)
  */
 function getLocalTime(): string {
   return new Date().toLocaleTimeString("ko-KR", {
@@ -57,17 +80,75 @@ function getLocalTime(): string {
 }
 
 /**
- * 객체를 안전하게 JSON 문자열로 변환
+ * 객체를 안전하게 직렬화
  */
-function safeStringify(obj: unknown, maxLength = 1000): string {
+function safeStringify(obj: unknown): string {
   try {
-    const str = JSON.stringify(obj, null, 2);
-    if (str.length > maxLength) {
-      return str.slice(0, maxLength) + "... (truncated)";
-    }
-    return str;
+    return JSON.stringify(obj);
   } catch {
-    return "[Circular or non-serializable object]";
+    return "[Circular]";
+  }
+}
+
+/**
+ * JSON 로그 출력 (프로덕션용)
+ */
+function outputJson(
+  level: LogLevel,
+  context: string | undefined,
+  message: string,
+  meta?: Record<string, unknown>
+): void {
+  const logEntry: Record<string, unknown> = {
+    timestamp: getTimestamp(),
+    level: levelNames[level],
+    message,
+  };
+
+  if (context) {
+    logEntry.context = context;
+  }
+
+  if (meta && Object.keys(meta).length > 0) {
+    // 메타 정보를 펼쳐서 최상위에 추가
+    Object.assign(logEntry, meta);
+  }
+
+  const output = safeStringify(logEntry);
+
+  // ERROR는 stderr, 나머지는 stdout
+  if (level >= LogLevel.ERROR) {
+    console.error(output);
+  } else {
+    console.log(output);
+  }
+}
+
+/**
+ * 컬러 로그 출력 (개발용)
+ */
+function outputColored(
+  level: LogLevel,
+  context: string | undefined,
+  message: string,
+  meta?: Record<string, unknown>
+): void {
+  const timestamp = getLocalTime();
+  const color = levelColors[level];
+  const levelName = levelNames[level];
+  const contextStr = context ? `[${context}]` : "";
+
+  const logLine = `${colors.dim}${timestamp}${colors.reset} ${color}${levelName}${colors.reset} ${colors.bright}${contextStr}${colors.reset} ${message}`;
+
+  if (level >= LogLevel.ERROR) {
+    console.error(logLine);
+  } else {
+    console.log(logLine);
+  }
+
+  // 메타데이터 출력
+  if (meta && Object.keys(meta).length > 0) {
+    console.log(`${colors.dim}${JSON.stringify(meta, null, 2)}${colors.reset}`);
   }
 }
 
@@ -75,43 +156,24 @@ function safeStringify(obj: unknown, maxLength = 1000): string {
  * 메인 로거 클래스
  */
 class Logger {
-  private level: LogLevel = DEFAULT_LOG_LEVEL;
   private context?: string;
 
   constructor(context?: string) {
     this.context = context;
   }
 
-  /**
-   * 로그 레벨 설정
-   */
-  setLevel(level: LogLevel): void {
-    this.level = level;
-  }
-
-  /**
-   * 로그 출력
-   */
   private log(
     level: LogLevel,
     message: string,
     meta?: Record<string, unknown>
   ): void {
-    if (level < this.level) return;
+    // 로그 레벨 필터링
+    if (level < CURRENT_LOG_LEVEL) return;
 
-    const timestamp = getLocalTime();
-    const color = levelColors[level];
-    const levelName = levelNames[level];
-    const contextStr = this.context ? `[${this.context}]` : "";
-
-    // 컬러 로그 출력
-    let logLine = `${colors.dim}${timestamp}${colors.reset} ${color}${levelName}${colors.reset} ${colors.bright}${contextStr}${colors.reset} ${message}`;
-
-    console.log(logLine);
-
-    // 메타데이터가 있으면 상세 출력
-    if (meta && Object.keys(meta).length > 0) {
-      console.log(`${colors.dim}${safeStringify(meta)}${colors.reset}`);
+    if (config.isProd) {
+      outputJson(level, this.context, message, meta);
+    } else {
+      outputColored(level, this.context, message, meta);
     }
   }
 
@@ -132,11 +194,11 @@ class Logger {
   }
 
   /**
-   * 에러 객체 상세 로깅
+   * Error 객체 로깅
    */
   logError(error: Error, context?: Record<string, unknown>): void {
     this.error(error.message, {
-      name: error.name,
+      errorName: error.name,
       stack: error.stack,
       ...context,
     });
@@ -152,30 +214,21 @@ class Logger {
     duration: number,
     meta?: Record<string, unknown>
   ): void {
-    const statusColor =
-      statusCode >= 500
-        ? colors.red
-        : statusCode >= 400
-          ? colors.yellow
-          : statusCode >= 300
-            ? colors.cyan
-            : colors.green;
+    const message = `${method} ${path} ${statusCode} ${duration}ms`;
+    const requestMeta = { method, path, statusCode, duration, ...meta };
 
-    const message = `${colors.bright}${method}${colors.reset} ${path} ${statusColor}${statusCode}${colors.reset} ${colors.dim}${duration}ms${colors.reset}`;
-
-    // 상태 코드에 따라 로그 레벨 결정
     if (statusCode >= 500) {
-      this.log(LogLevel.ERROR, message, meta);
+      this.error(message, requestMeta);
     } else if (statusCode >= 400) {
-      this.log(LogLevel.WARN, message, meta);
+      this.warn(message, requestMeta);
     } else {
-      this.log(LogLevel.INFO, message, meta);
+      this.info(message, requestMeta);
     }
   }
 }
 
 /**
- * 요청 ID 생성 (추적용)
+ * 요청 ID 생성
  */
 export function generateRequestId(): string {
   return `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -210,12 +263,17 @@ export function maskSensitiveData(
   return masked;
 }
 
-// 기본 로거 인스턴스
+// 기본 로거
 export const logger = new Logger();
 
-// 컨텍스트별 로거 생성 함수
+// 컨텍스트별 로거 생성
 export function createLogger(context: string): Logger {
   return new Logger(context);
+}
+
+// 현재 로그 레벨 확인용
+export function getCurrentLogLevel(): string {
+  return levelNames[CURRENT_LOG_LEVEL];
 }
 
 export default logger;

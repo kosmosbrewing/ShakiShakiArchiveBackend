@@ -4,6 +4,7 @@
 
 import { Router, Request, Response } from "express";
 import { storage } from "../storage";
+import { asyncHandler } from "../middleware/error.middleware";
 import { siteImageTypeEnum, type SiteImageType } from "@shared/schema";
 
 const router = Router();
@@ -12,72 +13,54 @@ const router = Router();
 // GET /api/site-images
 // 활성화된 이미지 목록 조회 (type 쿼리로 필터링 가능)
 // ------------------------------------------------------------------
-router.get("/", async (req: Request, res: Response) => {
-  try {
-    const typeQuery = req.query.type as string | undefined;
+router.get("/", asyncHandler(async (req: Request, res: Response) => {
+  const typeQuery = req.query.type as string | undefined;
 
-    // type 파라미터 검증
-    let type: SiteImageType | undefined;
-    if (typeQuery) {
-      if (!siteImageTypeEnum.includes(typeQuery as SiteImageType)) {
-        return res.status(400).json({
-          message: "유효하지 않은 이미지 타입입니다. (hero 또는 marquee)",
-        });
-      }
-      type = typeQuery as SiteImageType;
+  // type 파라미터 검증
+  let type: SiteImageType | undefined;
+  if (typeQuery) {
+    if (!siteImageTypeEnum.includes(typeQuery as SiteImageType)) {
+      return res.status(400).json({
+        message: "유효하지 않은 이미지 타입입니다. (hero 또는 marquee)",
+      });
     }
-
-    const allImages = await storage.getSiteImages(type);
-
-    // 활성화된 이미지만 필터링
-    const activeImages = allImages.filter((img) => img.isActive);
-
-    res.json({
-      images: activeImages,
-    });
-  } catch (error: unknown) {
-    const message =
-      error instanceof Error ? error.message : "이미지 목록 조회 실패";
-    res.status(500).json({ message });
+    type = typeQuery as SiteImageType;
   }
-});
+
+  const allImages = await storage.getSiteImages(type);
+
+  // 활성화된 이미지만 필터링
+  const activeImages = allImages.filter((img) => img.isActive);
+
+  res.json({
+    images: activeImages,
+  });
+}));
 
 // ------------------------------------------------------------------
 // GET /api/site-images/hero
 // Hero 이미지만 조회 (활성화된 것만)
 // ------------------------------------------------------------------
-router.get("/hero", async (_req: Request, res: Response) => {
-  try {
-    const images = await storage.getSiteImages("hero");
-    const activeImages = images.filter((img) => img.isActive);
+router.get("/hero", asyncHandler(async (_req: Request, res: Response) => {
+  const images = await storage.getSiteImages("hero");
+  const activeImages = images.filter((img) => img.isActive);
 
-    res.json({
-      images: activeImages,
-    });
-  } catch (error: unknown) {
-    const message =
-      error instanceof Error ? error.message : "Hero 이미지 조회 실패";
-    res.status(500).json({ message });
-  }
-});
+  res.json({
+    images: activeImages,
+  });
+}));
 
 // ------------------------------------------------------------------
 // GET /api/site-images/marquee
 // Marquee 이미지만 조회 (활성화된 것만)
 // ------------------------------------------------------------------
-router.get("/marquee", async (_req: Request, res: Response) => {
-  try {
-    const images = await storage.getSiteImages("marquee");
-    const activeImages = images.filter((img) => img.isActive);
+router.get("/marquee", asyncHandler(async (_req: Request, res: Response) => {
+  const images = await storage.getSiteImages("marquee");
+  const activeImages = images.filter((img) => img.isActive);
 
-    res.json({
-      images: activeImages,
-    });
-  } catch (error: unknown) {
-    const message =
-      error instanceof Error ? error.message : "Marquee 이미지 조회 실패";
-    res.status(500).json({ message });
-  }
-});
+  res.json({
+    images: activeImages,
+  });
+}));
 
 export default router;

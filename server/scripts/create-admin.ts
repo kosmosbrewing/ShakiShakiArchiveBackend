@@ -2,6 +2,9 @@ import { db } from "../db";
 import { users } from "../../shared/schema";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
+import { createLogger } from "../utils/logger";
+
+const logger = createLogger("CreateAdmin");
 
 /**
  * 관리자 계정 생성 스크립트
@@ -17,7 +20,7 @@ async function createAdmin() {
     const password = "knb@5800";
     const userName = "손유진";
 
-    console.log("관리자 계정 생성 중...");
+    logger.info("관리자 계정 생성 중...");
 
     // 이미 존재하는지 확인
     const existingUser = await db.query.users.findFirst({
@@ -31,12 +34,12 @@ async function createAdmin() {
         .set({ isAdmin: true })
         .where(eq(users.email, email));
 
-      console.log(`✅ 기존 사용자 ${email}를 관리자로 업그레이드했습니다.`);
+      logger.info("기존 사용자를 관리자로 업그레이드", { email });
     } else {
       // 새 관리자 계정 생성
       const hashedPassword = await bcrypt.hash(password, 10);
 
-      const [newUser] = await db
+      await db
         .insert(users)
         .values({
           email,
@@ -46,15 +49,13 @@ async function createAdmin() {
         })
         .returning();
 
-      console.log(`✅ 관리자 계정이 생성되었습니다!`);
-      console.log(`이메일: ${email}`);
-      console.log(`비밀번호: ${password}`);
-      console.log(`\n⚠️  보안을 위해 첫 로그인 후 비밀번호를 변경하세요!`);
+      logger.info("관리자 계정 생성 완료", { email, userName });
+      logger.warn("보안을 위해 첫 로그인 후 비밀번호를 변경하세요!");
     }
 
     process.exit(0);
   } catch (error) {
-    console.error("❌ 관리자 계정 생성 실패:", error);
+    logger.error("관리자 계정 생성 실패", { error: error instanceof Error ? error.message : String(error) });
     process.exit(1);
   }
 }

@@ -4,6 +4,9 @@
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { config } from "./index";
+import { createLogger } from "../utils/logger";
+
+const logger = createLogger("RateLimit");
 
 /**
  * Helmet 보안 헤더 설정
@@ -74,9 +77,7 @@ export const globalRateLimiter = rateLimit({
   // 기본 keyGenerator 사용 (IPv6 자동 처리)
   // 제한 초과 시 로깅
   handler: (req, res, next, options) => {
-    console.warn(
-      `[Rate Limit] IP ${req.ip} exceeded rate limit for ${req.originalUrl}`
-    );
+    logger.warn("Rate limit 초과", { ip: req.ip, url: req.originalUrl });
     res.status(429).json(options.message);
   },
   // 성공한 요청만 카운트 (4xx, 5xx 제외)
@@ -102,9 +103,7 @@ export const authRateLimiter = rateLimit({
   legacyHeaders: false,
   // 기본 keyGenerator 사용 (IPv6 자동 처리)
   handler: (req, res, next, options) => {
-    console.warn(
-      `[Auth Rate Limit] IP ${req.ip} exceeded auth rate limit for ${req.originalUrl}`
-    );
+    logger.warn("Auth rate limit 초과", { ip: req.ip, url: req.originalUrl });
     res.status(429).json(options.message);
   },
   // 개발 환경에서는 스킵
@@ -161,9 +160,7 @@ export const paymentRateLimiter = rateLimit({
   },
   validate: { xForwardedForHeader: false, keyGeneratorIpFallback: false },
   handler: (req, res, next, options) => {
-    console.warn(
-      `[Payment Rate Limit] User/IP exceeded payment rate limit for ${req.originalUrl}`
-    );
+    logger.warn("Payment rate limit 초과", { ip: req.ip, url: req.originalUrl, userId: (req as any).user?.id });
     res.status(429).json(options.message);
   },
   // 결제는 개발 환경에서도 제한 적용
