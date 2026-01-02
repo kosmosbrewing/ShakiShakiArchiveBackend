@@ -205,7 +205,12 @@ export const cartItemsRelations = relations(cartItems, ({ one }) => ({
 }));
 
 export type CartItem = typeof cartItems.$inferSelect;
-export const insertCartItemSchema = createInsertSchema(cartItems).omit({
+// drizzle-zod가 UUID 컬럼을 올바르게 처리하지 못하므로 명시적으로 오버라이드
+export const insertCartItemSchema = createInsertSchema(cartItems, {
+  userId: z.string().uuid(),
+  productId: z.string().uuid(),
+  variantId: z.string().uuid().optional().nullable(),
+}).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
@@ -276,7 +281,10 @@ export const ordersRelations = relations(orders, ({ one, many }) => ({
 }));
 
 export type Order = typeof orders.$inferSelect;
-export const insertOrderSchema = createInsertSchema(orders).omit({
+// drizzle-zod가 UUID 컬럼을 올바르게 처리하지 못하므로 명시적으로 오버라이드
+export const insertOrderSchema = createInsertSchema(orders, {
+  userId: z.string().uuid(),
+}).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
@@ -325,7 +333,11 @@ export const orderItemsRelations = relations(orderItems, ({ one }) => ({
 }));
 
 export type OrderItem = typeof orderItems.$inferSelect;
-export const insertOrderItemSchema = createInsertSchema(orderItems).omit({
+// drizzle-zod가 UUID 컬럼을 올바르게 처리하지 못하므로 명시적으로 오버라이드
+export const insertOrderItemSchema = createInsertSchema(orderItems, {
+  orderId: z.string().uuid(),
+  productId: z.string().uuid(),
+}).omit({
   id: true,
   createdAt: true,
 });
@@ -362,9 +374,10 @@ export const productVariantsRelations = relations(
 );
 
 export type ProductVariant = typeof productVariants.$inferSelect;
-export const insertProductVariantSchema = createInsertSchema(
-  productVariants
-).omit({
+// drizzle-zod가 UUID 컬럼을 올바르게 처리하지 못하므로 명시적으로 오버라이드
+export const insertProductVariantSchema = createInsertSchema(productVariants, {
+  productId: z.string().uuid(),
+}).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
@@ -406,8 +419,12 @@ export const productSizeMeasurementsRelations = relations(
 
 export type ProductSizeMeasurement =
   typeof productSizeMeasurements.$inferSelect;
+// drizzle-zod가 UUID 컬럼을 올바르게 처리하지 못하므로 명시적으로 오버라이드
 export const insertProductSizeMeasurementSchema = createInsertSchema(
-  productSizeMeasurements
+  productSizeMeasurements,
+  {
+    productVariantId: z.string().uuid(),
+  }
 ).omit({
   id: true,
   createdAt: true,
@@ -443,8 +460,12 @@ export const deliveryAddresses = pgTable(
 );
 
 export type DeliveryAddress = typeof deliveryAddresses.$inferSelect;
+// drizzle-zod가 UUID 컬럼을 올바르게 처리하지 못하므로 명시적으로 오버라이드
 export const insertDeliveryAddressSchema = createInsertSchema(
-  deliveryAddresses
+  deliveryAddresses,
+  {
+    userId: z.string().uuid(),
+  }
 ).omit({
   id: true,
   createdAt: true,
@@ -486,7 +507,11 @@ export const wishlistItemsRelations = relations(wishlistItems, ({ one }) => ({
 }));
 
 export type WishlistItem = typeof wishlistItems.$inferSelect;
-export const insertWishlistItemSchema = createInsertSchema(wishlistItems).omit({
+// drizzle-zod가 UUID 컬럼을 올바르게 처리하지 못하므로 명시적으로 오버라이드
+export const insertWishlistItemSchema = createInsertSchema(wishlistItems, {
+  userId: z.string().uuid(),
+  productId: z.string().uuid(),
+}).omit({
   id: true,
   createdAt: true,
 });
@@ -679,7 +704,11 @@ export const inquiriesRelations = relations(inquiries, ({ one, many }) => ({
 }));
 
 export type Inquiry = typeof inquiries.$inferSelect;
-export const insertInquirySchema = createInsertSchema(inquiries).omit({
+// drizzle-zod가 UUID 컬럼을 올바르게 처리하지 못하므로 명시적으로 오버라이드
+export const insertInquirySchema = createInsertSchema(inquiries, {
+  userId: z.string().uuid(),
+  productId: z.string().uuid().optional().nullable(),
+}).omit({
   id: true,
   status: true,
   createdAt: true,
@@ -728,7 +757,11 @@ export const inquiryRepliesRelations = relations(inquiryReplies, ({ one }) => ({
 }));
 
 export type InquiryReply = typeof inquiryReplies.$inferSelect;
-export const insertInquiryReplySchema = createInsertSchema(inquiryReplies).omit({
+// drizzle-zod가 UUID 컬럼을 올바르게 처리하지 못하므로 명시적으로 오버라이드
+export const insertInquiryReplySchema = createInsertSchema(inquiryReplies, {
+  inquiryId: z.string().uuid(),
+  userId: z.string().uuid(),
+}).omit({
   id: true,
   createdAt: true,
 });

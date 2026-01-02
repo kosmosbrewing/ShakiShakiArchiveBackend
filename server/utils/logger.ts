@@ -1,6 +1,6 @@
 // server/utils/logger.ts
-// 프로덕션: JSON 형식 + ERROR 레벨 기본
-// 개발: 컬러 텍스트 + DEBUG 레벨 기본
+// 프로덕션: JSON 형식 + ERROR 레벨 기본 + 색상 없음
+// 개발: 컬러 텍스트 + DEBUG 레벨 기본 + Pretty Print
 
 import { config } from "../config";
 
@@ -30,7 +30,26 @@ function getLogLevel(): LogLevel {
   return config.isProd ? LogLevel.ERROR : LogLevel.DEBUG;
 }
 
+// 로그 출력 형식 설정
+// LOG_COLOR: 색상 사용 여부 (기본: 개발=true, 운영=false)
+// LOG_PRETTY: Pretty Print 여부 (기본: 개발=true, 운영=false)
+function getLogColor(): boolean {
+  const envColor = process.env.LOG_COLOR?.toLowerCase();
+  if (envColor === "true") return true;
+  if (envColor === "false") return false;
+  return !config.isProd; // 기본값: 운영 환경에서는 색상 없음
+}
+
+function getLogPretty(): boolean {
+  const envPretty = process.env.LOG_PRETTY?.toLowerCase();
+  if (envPretty === "true") return true;
+  if (envPretty === "false") return false;
+  return !config.isProd; // 기본값: 운영 환경에서는 Pretty Print 없음
+}
+
 const CURRENT_LOG_LEVEL = getLogLevel();
+const USE_COLOR = getLogColor();
+const USE_PRETTY = getLogPretty();
 
 // 로그 레벨 이름
 const levelNames: Record<LogLevel, string> = {
@@ -125,20 +144,27 @@ function outputJson(
 }
 
 /**
- * 컬러 로그 출력 (개발용)
+ * Pretty Print 로그 출력 (색상 선택적)
  */
-function outputColored(
+function outputPretty(
   level: LogLevel,
   context: string | undefined,
   message: string,
   meta?: Record<string, unknown>
 ): void {
   const timestamp = getLocalTime();
-  const color = levelColors[level];
   const levelName = levelNames[level];
   const contextStr = context ? `[${context}]` : "";
 
-  const logLine = `${colors.dim}${timestamp}${colors.reset} ${color}${levelName}${colors.reset} ${colors.bright}${contextStr}${colors.reset} ${message}`;
+  let logLine: string;
+  if (USE_COLOR) {
+    // 색상 사용
+    const color = levelColors[level];
+    logLine = `${colors.dim}${timestamp}${colors.reset} ${color}${levelName}${colors.reset} ${colors.bright}${contextStr}${colors.reset} ${message}`;
+  } else {
+    // 색상 없음
+    logLine = `${timestamp} ${levelName} ${contextStr} ${message}`;
+  }
 
   if (level >= LogLevel.ERROR) {
     console.error(logLine);
@@ -148,7 +174,12 @@ function outputColored(
 
   // 메타데이터 출력
   if (meta && Object.keys(meta).length > 0) {
-    console.log(`${colors.dim}${JSON.stringify(meta, null, 2)}${colors.reset}`);
+    const metaStr = JSON.stringify(meta, null, 2);
+    if (USE_COLOR) {
+      console.log(`${colors.dim}${metaStr}${colors.reset}`);
+    } else {
+      console.log(metaStr);
+    }
   }
 }
 
@@ -170,10 +201,12 @@ class Logger {
     // 로그 레벨 필터링
     if (level < CURRENT_LOG_LEVEL) return;
 
-    if (config.isProd) {
-      outputJson(level, this.context, message, meta);
+    if (USE_PRETTY) {
+      // Pretty Print 형식 (색상은 USE_COLOR에 따라 결정)
+      outputPretty(level, this.context, message, meta);
     } else {
-      outputColored(level, this.context, message, meta);
+      // JSON 형식 (운영 환경 기본)
+      outputJson(level, this.context, message, meta);
     }
   }
 
