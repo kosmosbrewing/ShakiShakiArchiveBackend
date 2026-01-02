@@ -1,7 +1,7 @@
-# GitHub Actions: ECR에 Docker 이미지 빌드 및 푸시
+# GitHub Actions: ECR에 Docker 이미지 빌드 및 푸시 + ECS 배포
 # 트리거: main 브랜치에 push 또는 수동 실행
 
-name: Build and Push to ECR
+name: Build and Deploy to ECS
 
 on:
   push:
@@ -25,6 +25,8 @@ on:
 env:
   AWS_REGION: ap-northeast-2 # 서울 리전 (필요시 변경)
   ECR_REPOSITORY: backend-shakishaki-archive # ECR 리포지토리 이름
+  ECS_CLUSTER: ${{ secrets.ECS_CLUSTER_NAME }} # ECS 클러스터 이름 (Secrets에 설정)
+  ECS_SERVICE: ${{ secrets.ECS_SERVICE_NAME }} # ECS 서비스 이름 (Secrets에 설정)
 
 jobs:
   build-and-push:
@@ -57,17 +59,16 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       # 4. Docker 메타데이터 설정 (태그, 라벨)
-      # ECR 태그 immutability가 활성화되어 있으므로 고유한 태그만 사용
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
           tags: |
-            # Git SHA (short) - 커밋별 고유 태그
+            # latest 태그 - ECS 서비스가 참조하는 태그
+            type=raw,value=latest
+            # Git SHA (short) - 커밋별 고유 태그 (롤백용)
             type=sha,prefix=,format=short
-            # 날짜 기반 태그 - 빌드 시점 고유 태그
-            type=raw,value={{date 'YYYYMMDD-HHmmss'}}
 
       # 5. Docker Buildx 설정 (멀티플랫폼 빌드 지원)
       - name: Set up Docker Buildx
@@ -90,7 +91,7 @@ jobs:
       # 7. 빌드 결과 출력
       - name: Output image info
         run: |
-          echo "### 🐳 Docker Image Pushed Successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "### Docker Image Pushed Successfully!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Registry:** ${{ steps.login-ecr.outputs.registry }}" >> $GITHUB_STEP_SUMMARY
           echo "**Repository:** ${{ env.ECR_REPOSITORY }}" >> $GITHUB_STEP_SUMMARY
@@ -100,10 +101,25 @@ jobs:
           echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
-      # 8. (선택) App Runner 서비스 업데이트 트리거
-      # App Runner 자동 배포 설정 시 ECR 푸시만으로 자동 배포됨
-      # 수동 트리거가 필요한 경우 아래 주석 해제
-      # - name: Trigger App Runner deployment
-      #   run: |
-      #     aws apprunner start-deployment \
-      #       --service-arn ${{ secrets.APP_RUNNER_SERVICE_ARN }}
+      # 8. ECS 서비스 강제 재배포 (새 이미지 pull)
+      - name: Deploy to ECS
+        run: |
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_SERVICE }} \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+          echo "### ECS Deployment Triggered!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Cluster:** ${{ env.ECS_CLUSTER }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Service:** ${{ env.ECS_SERVICE }}" >> $GITHUB_STEP_SUMMARY
+
+      # 9. ECS 배포 완료 대기 (선택 - 배포 상태 확인)
+      - name: Wait for ECS deployment
+        run: |
+          echo "Waiting for ECS service to stabilize..."
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE }} \
+            --region ${{ env.AWS_REGION }}
+          echo "### ECS Service Stabilized!" >> $GITHUB_STEP_SUMMARY
