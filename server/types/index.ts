@@ -47,6 +47,28 @@ export interface OrderItemStatusUpdate {
   trackingNumber?: string;
 }
 
+// 소프트 락 결제 승인 결과 타입
+export interface StockLockResult {
+  success: boolean;
+  orderId: string;
+  error?: string;
+  insufficientStock?: {
+    productName: string;
+    variantSize?: string;
+    requested: number;
+    available: number;
+  }[];
+}
+
+// 소프트 락 결제 데이터 타입
+export interface ConfirmPaymentData {
+  paymentProvider: string;
+  paymentKey: string;
+  externalOrderId: string;
+  paymentMethod?: string;
+  paidAt?: Date;
+}
+
 // 사용자 캐시 데이터 타입
 export interface CachedUser {
   id: string; // UUID

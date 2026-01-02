@@ -150,7 +150,7 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
   // 4. 취소 사유 검증 (결제 완료 상태에서만 필수)
   const cancelReason = req.body.cancelReason || "고객 요청에 의한 취소";
 
-  // 5. 결제 대기 상태인 경우: 단순 상태 변경
+  // 5. 결제 대기 상태인 경우: 단순 상태 변경 (재고 차감 전이므로 복구 불필요)
   if (order.status === "pending_payment") {
     const updatedOrder = await storage.cancelOrderPayment(orderId, {
       status: "cancelled",
@@ -211,7 +211,18 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
     refundedAmount: cancelAmount?.toString() || order.totalAmount,
   });
 
-  // 10. 주문 아이템 상태도 취소로 변경 (Promise.all로 원자성 향상)
+  // 10. 재고 복구 (결제 완료된 주문만 재고가 차감되어 있음)
+  if (newStatus === "cancelled") {
+    try {
+      await storage.restoreStockOnCancel(orderId);
+      logger.info("재고 복구 완료", { orderId });
+    } catch (restoreError) {
+      // 재고 복구 실패 시 로그 남기고 계속 진행 (관리자 수동 처리 필요)
+      logger.error("재고 복구 실패", { orderId, error: restoreError });
+    }
+  }
+
+  // 11. 주문 아이템 상태도 취소로 변경 (Promise.all로 원자성 향상)
   await Promise.all(
     order.orderItems.map((item) =>
       storage.updateOrderItemStatus(item.id, "cancelled")

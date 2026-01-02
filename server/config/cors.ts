@@ -3,6 +3,9 @@
 
 import type { Request, Response, NextFunction } from "express";
 import { config } from "./index";
+import { createLogger } from "../utils/logger";
+
+const logger = createLogger("CORS");
 
 /**
  * CORS 미들웨어
@@ -22,6 +25,15 @@ export function corsMiddleware(
     !origin ||
     config.cors.allowedOrigins.includes("*") ||
     config.cors.allowedOrigins.includes(origin);
+
+  // 디버깅: CORS 검증 실패 시 로그 출력
+  if (!isAllowed && origin) {
+    logger.warn("CORS origin 거부됨", {
+      requestOrigin: origin,
+      allowedOrigins: config.cors.allowedOrigins,
+      isDev: config.isDev,
+    });
+  }
 
   if (isAllowed) {
     res.header("Access-Control-Allow-Origin", origin || "*");

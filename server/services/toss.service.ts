@@ -2,6 +2,7 @@
 // 토스페이먼츠 API 클라이언트
 
 import { config } from "../config";
+import { httpRequest } from "../utils/http-client";
 
 // 토스페이먼츠 결제 상태
 export type TossPaymentStatus =
@@ -94,7 +95,9 @@ export async function confirmPayment(
   orderId: string,
   amount: number
 ): Promise<TossPayment> {
-  const response = await fetch(`${config.toss.apiBaseUrl}/payments/confirm`, {
+  const url = `${config.toss.apiBaseUrl}/payments/confirm`;
+
+  const response = await httpRequest<TossPayment | TossError>(url, {
     method: "POST",
     headers: {
       Authorization: getAuthHeader(),
@@ -103,14 +106,12 @@ export async function confirmPayment(
     body: JSON.stringify({ paymentKey, orderId, amount }),
   });
 
-  const data = await response.json();
-
-  if (!response.ok) {
-    const error = data as TossError;
+  if (response.status >= 400) {
+    const error = response.data as TossError;
     throw new TossPaymentError(error.code, error.message, response.status);
   }
 
-  return data as TossPayment;
+  return response.data as TossPayment;
 }
 
 /**
@@ -118,24 +119,21 @@ export async function confirmPayment(
  * paymentKey로 결제 정보 조회
  */
 export async function getPayment(paymentKey: string): Promise<TossPayment> {
-  const response = await fetch(
-    `${config.toss.apiBaseUrl}/payments/${encodeURIComponent(paymentKey)}`,
-    {
-      method: "GET",
-      headers: {
-        Authorization: getAuthHeader(),
-      },
-    }
-  );
+  const url = `${config.toss.apiBaseUrl}/payments/${encodeURIComponent(paymentKey)}`;
 
-  const data = await response.json();
+  const response = await httpRequest<TossPayment | TossError>(url, {
+    method: "GET",
+    headers: {
+      Authorization: getAuthHeader(),
+    },
+  });
 
-  if (!response.ok) {
-    const error = data as TossError;
+  if (response.status >= 400) {
+    const error = response.data as TossError;
     throw new TossPaymentError(error.code, error.message, response.status);
   }
 
-  return data as TossPayment;
+  return response.data as TossPayment;
 }
 
 /**
@@ -162,24 +160,21 @@ export async function cancelPayment(
     body.refundReceiveAccount = refundReceiveAccount;
   }
 
-  const response = await fetch(
-    `${config.toss.apiBaseUrl}/payments/${encodeURIComponent(paymentKey)}/cancel`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: getAuthHeader(),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    }
-  );
+  const url = `${config.toss.apiBaseUrl}/payments/${encodeURIComponent(paymentKey)}/cancel`;
 
-  const data = await response.json();
+  const response = await httpRequest<TossPayment | TossError>(url, {
+    method: "POST",
+    headers: {
+      Authorization: getAuthHeader(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
 
-  if (!response.ok) {
-    const error = data as TossError;
+  if (response.status >= 400) {
+    const error = response.data as TossError;
     throw new TossPaymentError(error.code, error.message, response.status);
   }
 
-  return data as TossPayment;
+  return response.data as TossPayment;
 }

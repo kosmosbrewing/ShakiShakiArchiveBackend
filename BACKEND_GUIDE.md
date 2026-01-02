@@ -999,31 +999,55 @@ kakaopay: {
 
 ## 환경 변수
 
-### 필수
+### 🔴 필수 (Required)
 
-| 변수명           | 설명                   | 예시                                  |
-| ---------------- | ---------------------- | ------------------------------------- |
-| `DATABASE_URL`   | PostgreSQL 연결 문자열 | `postgresql://user:pass@host:5432/db` |
-| `SESSION_SECRET` | 세션 암호화 키         | 32자 이상 랜덤 문자열                 |
+| 변수명           | 설명                   | 예시                                                    |
+| ---------------- | ---------------------- | ------------------------------------------------------- |
+| `DATABASE_URL`   | PostgreSQL 연결 문자열 | `postgresql://user:pass@host:5432/db?sslmode=require`   |
+| `SESSION_SECRET` | 세션 암호화 키         | 32자 이상 랜덤 문자열                                   |
 
-### 선택
+### 🟡 서버 설정 (Server Configuration)
 
-| 변수명          | 설명                                | 기본값                  |
-| --------------- | ----------------------------------- | ----------------------- |
-| `NODE_ENV`      | 실행 환경                           | `development`           |
-| `PORT`          | 서버 포트                           | `5000`                  |
-| `SECURE_COOKIE` | HTTPS 쿠키 설정                     | `true` (프로덕션)       |
-| `CORS_ORIGINS`  | 허용된 CORS origin (쉼표 구분)      | `*`                     |
-| `FRONTEND_URL`  | 프론트엔드 URL (OAuth 리다이렉트용) | `http://localhost:3000` |
+| 변수명          | 설명                                | 기본값                   |
+| --------------- | ----------------------------------- | ------------------------ |
+| `NODE_ENV`      | 실행 환경                           | `development`            |
+| `PORT`          | 서버 포트                           | `8080`                   |
+| `SECURE_COOKIE` | HTTPS 쿠키 설정                     | `true` (프로덕션)        |
+| `CORS_ORIGINS`  | 허용된 CORS origin (쉼표 구분)      | `*`                      |
+| `FRONTEND_URL`  | 프론트엔드 URL (OAuth 리다이렉트용) | `http://localhost:8080`  |
+| `LOG_LEVEL`     | 로그 레벨 (`debug`, `info`, `warn`, `error`) | `info` (프로덕션), `debug` (개발) |
 
-### 토스페이먼츠
+### 🟡 데이터베이스 설정 (Database Configuration)
+
+| 변수명                  | 설명                                           | 기본값               |
+| ----------------------- | ---------------------------------------------- | -------------------- |
+| `DB_SSL`                | SSL 연결 활성화 (`true`/`false`)               | `true` (프로덕션)    |
+| `DB_SSL_CA`             | SSL CA 인증서 경로 (AWS RDS 연결 시)           | -                    |
+| `DB_POOL_MAX`           | 커넥션 풀 최대 연결 수                         | `20` (프로덕션), `10` (개발) |
+| `DB_POOL_MIN`           | 커넥션 풀 최소 연결 수                         | `2`                  |
+| `DB_IDLE_TIMEOUT`       | 유휴 연결 타임아웃 (ms)                        | `30000`              |
+| `DB_CONNECTION_TIMEOUT` | 연결 타임아웃 (ms)                             | `10000`              |
+
+### 🟡 Rate Limiting
+
+| 변수명                       | 설명                          | 기본값    |
+| ---------------------------- | ----------------------------- | --------- |
+| `RATE_LIMIT_WINDOW_MS`       | 일반 요청 윈도우 (ms)         | `900000` (15분)  |
+| `RATE_LIMIT_MAX_REQUESTS`    | 일반 요청 최대 횟수           | `100`     |
+| `RATE_LIMIT_AUTH_WINDOW_MS`  | 인증 요청 윈도우 (ms)         | `900000` (15분)  |
+| `RATE_LIMIT_AUTH_MAX_REQUESTS` | 인증 요청 최대 횟수         | `10`      |
+| `RATE_LIMIT_API_WINDOW_MS`   | API 요청 윈도우 (ms)          | `60000` (1분)    |
+| `RATE_LIMIT_API_MAX_REQUESTS`| API 요청 최대 횟수            | `60`      |
+| `RATE_LIMIT_ENABLE_IN_DEV`   | 개발 환경에서 Rate Limit 활성화 | `false` |
+
+### 🟢 토스페이먼츠 (Toss Payments)
 
 | 변수명            | 설명                       |
 | ----------------- | -------------------------- |
 | `TOSS_CLIENT_KEY` | 토스페이먼츠 클라이언트 키 |
 | `TOSS_SECRET_KEY` | 토스페이먼츠 시크릿 키     |
 
-### 네이버페이
+### 🟢 네이버페이 (Naver Pay)
 
 | 변수명                   | 설명                                         |
 | ------------------------ | -------------------------------------------- |
@@ -1034,7 +1058,7 @@ kakaopay: {
 | `NAVERPAY_MODE`          | 환경 모드 (`dev` 또는 `prod`, 기본값: `dev`) |
 | `NAVERPAY_RETURN_URL`    | 결제 완료 후 리다이렉트 URL                  |
 
-### 네이버 OAuth
+### 🟢 네이버 OAuth (Naver Login)
 
 | 변수명                | 설명                           |
 | --------------------- | ------------------------------ |
@@ -1042,13 +1066,13 @@ kakaopay: {
 | `NAVER_CLIENT_SECRET` | 네이버 개발자 앱 Client Secret |
 | `NAVER_CALLBACK_URL`  | 네이버 OAuth 콜백 URL          |
 
-### 카카오 API (주소 검색)
+### 🟢 카카오 API (Kakao - 주소 검색)
 
 | 변수명               | 설명                      |
 | -------------------- | ------------------------- |
 | `KAKAO_REST_API_KEY` | 카카오 개발자 REST API 키 |
 
-### Resend (이메일 발송)
+### 🟢 Resend (이메일 발송)
 
 | 변수명            | 설명                                               |
 | ----------------- | -------------------------------------------------- |
@@ -1056,13 +1080,64 @@ kakaopay: {
 | `EMAIL_FROM`      | 발신자 이메일 주소 (기본값: `noreply@example.com`) |
 | `EMAIL_FROM_NAME` | 발신자 이름 (기본값: `ShakiShaki`)                 |
 
-### Cloudinary (이미지 업로드)
+### 🟢 Cloudinary (이미지 업로드)
 
 | 변수명                  | 설명                  |
 | ----------------------- | --------------------- |
 | `CLOUDINARY_CLOUD_NAME` | Cloudinary Cloud Name |
 | `CLOUDINARY_API_KEY`    | Cloudinary API Key    |
 | `CLOUDINARY_API_SECRET` | Cloudinary API Secret |
+
+### 🟢 Meilisearch (검색 엔진 - 선택)
+
+| 변수명                       | 설명                       | 기본값                |
+| ---------------------------- | -------------------------- | --------------------- |
+| `MEILISEARCH_HOST`           | Meilisearch 서버 주소      | `http://localhost:7700` |
+| `MEILISEARCH_API_KEY`        | Meilisearch API 키         | -                     |
+| `MEILISEARCH_PRODUCTS_INDEX` | 상품 검색 인덱스 이름      | `products`            |
+
+### 🟢 SEO 설정 (선택)
+
+| 변수명             | 설명                       | 기본값                      |
+| ------------------ | -------------------------- | --------------------------- |
+| `SITE_NAME`        | 사이트 이름                | `ShakiShaki`                |
+| `SITE_DESCRIPTION` | 사이트 설명                | 기본 설명                   |
+| `SITE_LOGO`        | 사이트 로고 URL            | `{FRONTEND_URL}/logo.png`   |
+
+---
+
+### AWS App Runner 환경 변수 설정 예시
+
+```bash
+# 필수
+DATABASE_URL=postgresql://user:password@your-rds-endpoint:5432/dbname?sslmode=require
+SESSION_SECRET=your-super-secret-session-key-minimum-32-chars
+
+# 서버 설정
+NODE_ENV=production
+PORT=8080
+CORS_ORIGINS=https://your-frontend-domain.com
+FRONTEND_URL=https://your-frontend-domain.com
+
+# 데이터베이스 설정 (AWS RDS)
+DB_SSL=true
+
+# 결제 (필요시)
+TOSS_CLIENT_KEY=your-toss-client-key
+TOSS_SECRET_KEY=your-toss-secret-key
+
+# 이미지 업로드 (필요시)
+CLOUDINARY_CLOUD_NAME=your-cloud-name
+CLOUDINARY_API_KEY=your-api-key
+CLOUDINARY_API_SECRET=your-api-secret
+
+# 카카오 주소 검색 (필요시)
+KAKAO_REST_API_KEY=your-kakao-rest-api-key
+
+# 이메일 발송 (필요시)
+RESEND_API_KEY=your-resend-api-key
+EMAIL_FROM=noreply@your-domain.com
+```
 
 ---
 

@@ -236,18 +236,31 @@ export function generateRequestId(): string {
 
 /**
  * 민감 정보 마스킹
+ * - 로그인, 회원가입, 비밀번호 변경 등에서 비밀번호 필드 보호
+ * - 결제/금융 정보 보호
  */
 export function maskSensitiveData(
   data: Record<string, unknown>
 ): Record<string, unknown> {
   const sensitiveKeys = [
-    "password",
+    // 인증 관련
+    "password",       // password, currentPassword, newPassword, confirmPassword 등 모두 매칭
     "passwordHash",
     "token",
     "secret",
     "authorization",
     "cookie",
     "sessionId",
+    // 금융/결제 관련
+    "pin",
+    "creditcard",
+    "cardnumber",
+    "cvv",
+    "cvc",
+    // API 키
+    "apikey",
+    "accesskey",
+    "privatekey",
   ];
 
   const masked: Record<string, unknown> = {};

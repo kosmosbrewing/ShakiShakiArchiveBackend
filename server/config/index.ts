@@ -65,7 +65,8 @@ export const config = {
 
   // CORS (쉼표로 구분된 origin 목록)
   cors: {
-    allowedOrigins: process.env.CORS_ORIGINS?.split(",") || ["*"],
+    allowedOrigins:
+      process.env.CORS_ORIGINS?.split(",").map((o) => o.trim()) || ["*"],
   },
 
   // 토스페이먼츠 설정

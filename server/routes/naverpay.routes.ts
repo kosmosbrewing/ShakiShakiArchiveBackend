@@ -1,5 +1,7 @@
 // server/routes/naverpay.routes.ts
 // 네이버페이 결제 라우트
+// 참고: 네이버페이는 클라이언트 SDK에서 결제창을 호출하므로
+// 서버에서는 결제 승인(apply), 조회, 취소 API만 처리합니다.
 
 import { Router } from "express";
 import { z } from "zod";
@@ -9,27 +11,25 @@ import { asyncHandler } from "../middleware/error.middleware";
 import { paymentRateLimiter } from "../config/security";
 import { config } from "../config";
 import {
-  reservePayment,
   applyPayment,
   getPayment as getNaverPayPayment,
   cancelPayment as cancelNaverPayPayment,
+  cancelPaymentSimple,
   NaverPayPaymentError,
   mapNaverPayStatusToOrderStatus,
+  getNaverPaySDKConfig,
 } from "../services/naverpay.service";
 import { createLogger } from "../utils/logger";
 
 const router = Router();
 const logger = createLogger("NaverPay");
 
-// 결제 예약 요청 스키마
-const reservePaymentSchema = z.object({
-  orderId: z.string().uuid("유효한 주문 ID가 아닙니다"),
-});
-
 // 결제 취소 요청 스키마
 const cancelPaymentSchema = z.object({
-  cancelReason: z.string().min(1, "취소 사유를 입력해주세요"),
+  cancelReason: z.string().min(1, "취소 사유를 입력해주세요").max(256),
   cancelAmount: z.number().positive().optional(), // 부분 취소 시
+  taxScopeAmount: z.number().nonnegative().optional(), // 과세 금액
+  taxExScopeAmount: z.number().nonnegative().optional(), // 면세 금액
 });
 
 /**
@@ -49,97 +49,30 @@ function checkNaverPayEnabled(
 }
 
 /**
- * 네이버페이 클라이언트 정보 조회
+ * 네이버페이 SDK 설정 정보 조회
+ * GET /api/payments/naverpay/sdk-config
+ *
+ * 클라이언트에서 Naver.Pay.create()에 전달할 파라미터 반환
+ */
+router.get("/sdk-config", checkNaverPayEnabled, (_req, res) => {
+  res.json({
+    ...getNaverPaySDKConfig(),
+    returnUrl: config.naverpay.returnUrl,
+  });
+});
+
+/**
+ * 네이버페이 클라이언트 정보 조회 (기존 호환용)
  * GET /api/payments/naverpay/client-info
  */
 router.get("/client-info", checkNaverPayEnabled, (_req, res) => {
   res.json({
     clientId: config.naverpay.clientId,
-    merchantId: config.naverpay.merchantId,
+    chainId: config.naverpay.chainId,
     mode: config.naverpay.mode,
+    returnUrl: config.naverpay.returnUrl,
   });
 });
-
-/**
- * 결제 예약 (Reserve)
- * POST /api/payments/naverpay/reserve
- *
- * 주문 ID를 받아서 네이버페이 결제 예약 후 결제 페이지 URL 반환
- */
-router.post(
-  "/reserve",
-  paymentRateLimiter,
-  checkNaverPayEnabled,
-  isAuthenticated,
-  asyncHandler(async (req, res) => {
-    // 1. 요청 데이터 검증
-    const validationResult = reservePaymentSchema.safeParse(req.body);
-    if (!validationResult.success) {
-      return res.status(400).json({
-        message: "잘못된 요청 데이터입니다",
-        errors: validationResult.error.flatten().fieldErrors,
-      });
-    }
-
-    const { orderId } = validationResult.data;
-    const userId = req.session.userId!;
-
-    // 2. 주문 조회
-    const order = await storage.getOrder(orderId);
-    if (!order) {
-      return res.status(404).json({ message: "주문을 찾을 수 없습니다" });
-    }
-
-    // 3. 주문 소유자 검증
-    if (order.userId !== userId) {
-      return res.status(403).json({ message: "권한이 없습니다" });
-    }
-
-    // 4. 결제 대기 상태 확인
-    if (order.status !== "pending_payment") {
-      return res.status(400).json({ message: "이미 처리된 주문입니다" });
-    }
-
-    // 5. 주문 상품명 생성
-    const productNames = order.orderItems.map((item) => item.productName);
-    const productName =
-      productNames.length > 1
-        ? `${productNames[0]} 외 ${productNames.length - 1}건`
-        : productNames[0] || "상품";
-
-    // 6. 네이버페이 결제 예약
-    const totalAmount = parseFloat(order.totalAmount);
-    let reserveResult;
-    try {
-      reserveResult = await reservePayment({
-        merchantPayKey: order.externalOrderId || order.id,
-        productName,
-        productCount: order.orderItems.length,
-        totalPayAmount: totalAmount,
-        taxScopeAmount: totalAmount, // 전액 과세로 가정
-        taxExScopeAmount: 0,
-        returnUrl: `${config.naverpay.returnUrl}?orderId=${orderId}`,
-      });
-    } catch (error) {
-      if (error instanceof NaverPayPaymentError) {
-        logger.error("결제 예약 에러", { code: error.code, message: error.message });
-        return res.status(error.statusCode).json({
-          message: error.message,
-          code: error.code,
-        });
-      }
-      throw error;
-    }
-
-    logger.info("결제 예약 완료", { orderId, reserveId: reserveResult.body?.reserveId });
-
-    res.json({
-      message: "결제 예약이 완료되었습니다",
-      reserveId: reserveResult.body?.reserveId,
-      paymentUrl: reserveResult.body?.paymentUrl,
-    });
-  })
-);
 
 /**
  * 결제 콜백 (Callback)
@@ -147,6 +80,9 @@ router.post(
  *
  * 네이버페이 결제 완료 후 리다이렉트되는 URL
  * paymentId를 받아서 결제 승인 처리 후 프론트엔드로 리다이렉트
+ *
+ * 성공 시: ?resultCode=Success&paymentId={네이버페이 결제번호}
+ * 실패 시: ?resultCode={에러코드}&resultMessage={에러메시지}&reserveId={결제 예약 ID}
  */
 router.get("/callback", asyncHandler(async (req, res) => {
   const { orderId, paymentId, resultCode, resultMessage } = req.query as {
@@ -186,36 +122,82 @@ router.get("/callback", asyncHandler(async (req, res) => {
   }
 
   try {
-    // 결제 승인 API 호출
+    // 결제 승인 API 호출 (v2.2)
     const applyResult = await applyPayment(paymentId);
 
     if (!applyResult.body) {
       throw new Error("결제 승인 응답이 없습니다");
     }
 
-    // 주문 상태 업데이트
-    await storage.updateOrderPayment(orderId, {
+    const detail = applyResult.body.detail;
+
+    // 결제 승인 상태 확인
+    if (detail.admissionState !== "SUCCESS") {
+      throw new Error("결제 승인이 실패했습니다");
+    }
+
+    // 금액 검증 (보안)
+    const serverAmount = parseFloat(order.totalAmount);
+    if (detail.totalPayAmount !== serverAmount) {
+      logger.error("금액 불일치", {
+        serverAmount,
+        receivedAmount: detail.totalPayAmount,
+      });
+      throw new Error("결제 금액이 일치하지 않습니다");
+    }
+
+    // 소프트 락 기반 재고 확인 및 차감 + 주문 상태 업데이트
+    const stockResult = await storage.confirmOrderWithStockLock(order.id, {
       paymentProvider: "naverpay",
-      paymentKey: applyResult.body.paymentId,
-      externalOrderId: applyResult.body.merchantPayKey,
-      paymentMethod: applyResult.body.admissionTypeCode.toLowerCase(),
-      status: "payment_confirmed",
+      paymentKey: detail.paymentId,
+      externalOrderId: detail.merchantPayKey,
+      paymentMethod: detail.primaryPayMeans?.toLowerCase() || "naverpay",
       paidAt: new Date(),
     });
 
-    // 주문 아이템 상태도 업데이트 (Promise.all로 원자성 향상)
-    await Promise.all(
-      order.orderItems.map((item) =>
-        storage.updateOrderItemStatus(item.id, "payment_confirmed")
-      )
-    );
+    // 재고 부족 시 PG사 결제 취소 및 에러 반환
+    if (!stockResult.success) {
+      logger.error("재고 부족으로 결제 취소", {
+        orderId: order.id,
+        insufficientStock: stockResult.insufficientStock,
+      });
 
-    logger.info("결제 승인 완료", { orderId, paymentId });
+      // PG사 결제 취소 시도
+      try {
+        await cancelPaymentSimple(
+          detail.paymentId,
+          detail.totalPayAmount,
+          "재고 부족으로 인한 자동 취소",
+          "2", // 가맹점 관리자
+          detail.taxScopeAmount,
+          detail.taxExScopeAmount
+        );
+        logger.info("재고 부족 - PG 결제 취소 완료", { orderId: order.id });
+      } catch (cancelError) {
+        logger.error("재고 부족 - PG 결제 취소 실패", {
+          orderId: order.id,
+          paymentId: detail.paymentId,
+          error: cancelError,
+        });
+      }
+
+      return res.redirect(
+        `${config.frontendUrl}/checkout/fail?message=${encodeURIComponent("재고가 부족합니다")}&code=INSUFFICIENT_STOCK`
+      );
+    }
+
+    logger.info("결제 승인 완료", {
+      orderId,
+      paymentId: detail.paymentId,
+      totalPayAmount: detail.totalPayAmount,
+    });
 
     // 프론트엔드 결제 완료 페이지로 리다이렉트
     res.redirect(`${config.frontendUrl}/checkout/success?orderId=${orderId}`);
   } catch (error) {
-    logger.error("결제 콜백 에러", { error: error instanceof Error ? error.message : String(error) });
+    logger.error("결제 콜백 에러", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     const message =
       error instanceof Error ? error.message : "결제 처리 중 오류가 발생했습니다";
     res.redirect(
@@ -311,7 +293,8 @@ router.post(
       });
     }
 
-    const { cancelReason, cancelAmount } = validationResult.data;
+    const { cancelReason, cancelAmount, taxScopeAmount, taxExScopeAmount } =
+      validationResult.data;
 
     // 2. 주문 조회
     const order = await storage.getOrder(orderId);
@@ -346,15 +329,20 @@ router.post(
     // 7. 네이버페이 결제 취소 API 호출
     let cancelResult;
     try {
-      cancelResult = await cancelNaverPayPayment(
-        order.paymentKey,
-        amount,
+      cancelResult = await cancelNaverPayPayment({
+        paymentId: order.paymentKey,
+        cancelAmount: amount,
         cancelReason,
-        user?.isAdmin ? "2" : "1" // 관리자면 가맹점 관리자로 표시
-      );
+        cancelRequester: user?.isAdmin ? "2" : "1", // 관리자면 가맹점 관리자로 표시
+        taxScopeAmount: taxScopeAmount ?? amount, // 과세 금액 (미지정 시 전액 과세)
+        taxExScopeAmount: taxExScopeAmount ?? 0, // 면세 금액
+      });
     } catch (error) {
       if (error instanceof NaverPayPaymentError) {
-        logger.error("결제 취소 에러", { code: error.code, message: error.message });
+        logger.error("결제 취소 에러", {
+          code: error.code,
+          message: error.message,
+        });
         return res.status(error.statusCode).json({
           message: error.message,
           code: error.code,
@@ -364,24 +352,56 @@ router.post(
     }
 
     // 8. 주문 상태 업데이트
-    const newStatus =
-      cancelResult.body?.remainAmount === 0 ? "cancelled" : order.status;
+    // totalRestAmount가 0이면 전체 취소, 아니면 부분 취소
+    const isFullCancel = cancelResult.body?.totalRestAmount === 0;
+    const newStatus = isFullCancel ? "cancelled" : order.status;
+
+    // 총 취소 금액 계산
+    const totalCancelAmount = cancelResult.body
+      ? cancelResult.body.primaryPayCancelAmount +
+        cancelResult.body.npointCancelAmount +
+        cancelResult.body.giftCardCancelAmount
+      : amount;
+
     await storage.cancelOrderPayment(orderId, {
       status: newStatus,
       canceledAt: new Date(),
       cancelReason,
-      refundedAmount: cancelResult.body?.cancelAmount.toString(),
+      refundedAmount: totalCancelAmount.toString(),
     });
 
-    logger.info("결제 취소 완료", { orderId });
+    // 9. 전체 취소 시 재고 복구
+    if (isFullCancel) {
+      try {
+        await storage.restoreStockOnCancel(orderId);
+        logger.info("재고 복구 완료", { orderId });
+      } catch (restoreError) {
+        logger.error("재고 복구 실패", { orderId, error: restoreError });
+      }
+    }
+
+    logger.info("결제 취소 완료", {
+      orderId,
+      cancelAmount: totalCancelAmount,
+      remainAmount: cancelResult.body?.totalRestAmount,
+    });
 
     res.json({
       message: "결제가 취소되었습니다",
-      refund: {
-        cancelAmount: cancelResult.body?.cancelAmount,
-        remainAmount: cancelResult.body?.remainAmount,
-        cancelTime: cancelResult.body?.cancelTime,
-      },
+      refund: cancelResult.body
+        ? {
+            cancelAmount: totalCancelAmount,
+            remainAmount: cancelResult.body.totalRestAmount,
+            cancelTime: cancelResult.body.cancelYmdt,
+            // 상세 취소 정보
+            detail: {
+              primaryPayCancelAmount: cancelResult.body.primaryPayCancelAmount,
+              npointCancelAmount: cancelResult.body.npointCancelAmount,
+              giftCardCancelAmount: cancelResult.body.giftCardCancelAmount,
+              discountCancelAmount: cancelResult.body.discountCancelAmount,
+            },
+          }
+        : null,
     });
   })
 );

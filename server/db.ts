@@ -122,12 +122,21 @@ logger.info("Pool 설정 완료", {
 export const pool = new Pool(poolConfig);
 
 // Pool 이벤트 리스너
-pool.on("connect", () => {
-  logger.debug("새 연결 생성", {
-    totalCount: pool.totalCount,
-    idleCount: pool.idleCount,
-    waitingCount: pool.waitingCount,
-  });
+// 새 연결이 생성될 때마다 타임존을 KST(Asia/Seoul)로 설정
+pool.on("connect", async (client) => {
+  try {
+    // 세션 타임존을 한국 시간(KST)으로 설정
+    await client.query("SET timezone = 'Asia/Seoul'");
+    logger.debug("새 연결 생성 - 타임존 KST 설정 완료", {
+      totalCount: pool.totalCount,
+      idleCount: pool.idleCount,
+      waitingCount: pool.waitingCount,
+    });
+  } catch (error) {
+    logger.error("타임존 설정 실패", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 });
 
 pool.on("acquire", () => {
@@ -170,9 +179,15 @@ export function getPoolStatus() {
 export async function testConnection(): Promise<boolean> {
   try {
     const client = await pool.connect();
-    await client.query("SELECT 1");
+    // 연결 테스트 및 타임존 확인
+    const result = await client.query(
+      "SELECT current_setting('TIMEZONE') as timezone, NOW() as current_time"
+    );
     client.release();
-    logger.info("연결 테스트 성공");
+    logger.info("연결 테스트 성공", {
+      timezone: result.rows[0]?.timezone,
+      currentTime: result.rows[0]?.current_time,
+    });
     return true;
   } catch (error) {
     logger.error("연결 테스트 실패", {
