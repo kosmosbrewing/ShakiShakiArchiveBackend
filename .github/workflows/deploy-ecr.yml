@@ -101,7 +101,7 @@ jobs:
           echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
-      # 8. ECS 서비스 강제 재배포 (새 이미지 pull) 테스트
+      # 8. ECS 서비스 강제 재배포 (새 이미지 pull)
       - name: Deploy to ECS
         run: |
           aws ecs update-service \
