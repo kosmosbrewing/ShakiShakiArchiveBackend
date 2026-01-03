@@ -134,7 +134,7 @@ jobs:
           jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
             task-definition.json > clean-task-definition.json
 
-      # 10. 태스크 정의에 새 이미지 적용 테스트
+      # 10. 태스크 정의에 새 이미지 적용
       - name: Update task definition with new image
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
