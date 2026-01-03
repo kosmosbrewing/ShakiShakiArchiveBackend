@@ -152,11 +152,15 @@ export const productsRelations = relations(products, ({ one, many }) => ({
 }));
 
 export type Product = typeof products.$inferSelect;
-export const insertProductSchema = createInsertSchema(products).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-});
+export const insertProductSchema = createInsertSchema(products)
+  .omit({
+    id: true,
+    createdAt: true,
+  })
+  .extend({
+    // updatedAt을 optional로 변경하여 직접 입력 가능하게 함 (입력하지 않으면 defaultNow 사용)
+    updatedAt: z.coerce.date().optional(),
+  });
 export type InsertProduct = z.infer<typeof insertProductSchema>;
 
 // Shopping cart items - UUID PK 사용

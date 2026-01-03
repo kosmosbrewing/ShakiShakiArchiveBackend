@@ -374,7 +374,8 @@ export class DatabaseStorage implements IStorage {
   ): Promise<Product | undefined> {
     const [updated] = await db
       .update(products)
-      .set({ ...product, updatedAt: new Date() })
+      // updatedAt이 직접 전달되면 그 값을 사용, 아니면 현재 시간으로 자동 갱신
+      .set({ updatedAt: new Date(), ...product })
       .where(eq(products.id, id))
       .returning();
     return updated;

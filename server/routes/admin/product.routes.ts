@@ -68,9 +68,11 @@ router.post("/", isAuthenticated, isAdmin, asyncHandler(async (req, res) => {
 
 // 상품 수정 (UUID 기반)
 router.patch("/:id", isAuthenticated, isAdmin, asyncHandler(async (req, res) => {
+  // partial()로 부분 업데이트 허용, parse로 날짜 문자열을 Date 객체로 변환
+  const validatedData = insertProductSchema.partial().parse(req.body);
   const product = await storage.updateProduct(
     req.params.id, // UUID 문자열
-    req.body
+    validatedData
   );
   if (!product) {
     return res.status(404).json({ message: "Product not found" });
