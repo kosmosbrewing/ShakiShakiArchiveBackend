@@ -132,8 +132,8 @@ router.get("/user", isAuthenticated, asyncHandler(async (req, res) => {
   res.json(userWithoutPassword);
 }));
 
-// 사용자 정보 수정
-router.patch("/user", isAuthenticated, asyncHandler(async (req, res) => {
+// 사용자 정보 수정 핸들러 (PATCH, PUT 공통 사용)
+const updateUserHandler = asyncHandler(async (req, res) => {
   const userId = req.session.userId!;
   const { userName, zipCode, address, detailAddress, phone, emailOptIn } =
     req.body;
@@ -156,7 +156,11 @@ router.patch("/user", isAuthenticated, asyncHandler(async (req, res) => {
   invalidateUserCache(userId);
 
   res.json({ message: "정보가 수정되었습니다", user: updatedUser });
-}));
+});
+
+// 사용자 정보 수정 (PATCH, PUT 둘 다 지원)
+router.patch("/user", isAuthenticated, updateUserHandler);
+router.put("/user", isAuthenticated, updateUserHandler);
 
 // 비밀번호 변경
 router.put("/password", authRateLimiter, isAuthenticated, asyncHandler(async (req, res) => {
