@@ -1,5 +1,5 @@
 # GitHub Actions: ECR에 Docker 이미지 빌드 및 푸시 + ECS 배포
-# 트리거: main 브랜치에 push 또는 수동 실행
+# 트리거: main 브랜치 push, Git 태그(v*) push, 또는 수동 실행
 
 name: Build and Deploy to ECS
 
@@ -7,12 +7,18 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*" # v1.0.0, v1.2.3 등 시맨틱 버전 태그
     paths-ignore:
       - "*.md"
       - ".gitignore"
       - ".claudeignore"
   workflow_dispatch: # 수동 실행 허용
     inputs:
+      version:
+        description: "배포 버전 (예: v1.2.0)"
+        required: false
+        type: string
       environment:
         description: "배포 환경"
         required: true
@@ -23,58 +29,75 @@ on:
           - staging
 
 env:
-  AWS_REGION: ap-northeast-2 # 서울 리전 (필요시 변경)
-  ECR_REPOSITORY: backend-shakishaki-archive # ECR 리포지토리 이름
-  ECS_CLUSTER: ${{ secrets.ECS_CLUSTER_NAME }} # ECS 클러스터 이름 (Secrets에 설정)
-  ECS_SERVICE: ${{ secrets.ECS_SERVICE_NAME }} # ECS 서비스 이름 (Secrets에 설정)
+  AWS_REGION: ap-northeast-2
+  ECR_REPOSITORY: backend-shakishaki-archive
+  ECS_CLUSTER: ${{ secrets.ECS_CLUSTER_NAME }}
+  ECS_SERVICE: ${{ secrets.ECS_SERVICE_NAME }}
+  ECS_TASK_DEFINITION: ${{ secrets.ECS_TASK_DEFINITION_NAME }}
+  CONTAINER_NAME: ${{ secrets.ECS_CONTAINER_NAME }}
 
 jobs:
-  build-and-push:
-    name: Build and Push Docker Image
+  build-and-deploy:
+    name: Build, Push and Deploy
     runs-on: ubuntu-latest
 
     permissions:
       contents: read
-      id-token: write # OIDC 토큰 발급을 위한 권한
+      id-token: write
 
     steps:
       # 1. 소스 코드 체크아웃
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. AWS 자격증명 구성 (OIDC 사용 권장)
+      # 2. 버전 태그 결정
+      - name: Determine version tag
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.version }}" ]]; then
+            # 수동 실행 시 입력된 버전 사용
+            VERSION="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            # Git 태그 push 시 태그 버전 사용
+            VERSION="${{ github.ref_name }}"
+          else
+            # main push 시 SHA 기반 버전 생성
+            VERSION="v0.0.0-$(echo ${{ github.sha }} | cut -c1-7)"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "📌 Version: $VERSION"
+
+      # 3. AWS 자격증명 구성 (OIDC)
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          # OIDC 방식 (권장) - IAM Role 사용
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          # Access Key 방식 (대안) - 아래 주석 해제하여 사용
-          # aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          # aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
-      # 3. Amazon ECR 로그인
+      # 4. Amazon ECR 로그인
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 4. Docker 메타데이터 설정 (태그, 라벨)
+      # 5. Docker 메타데이터 설정
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
           tags: |
-            # latest 태그 - ECS 서비스가 참조하는 태그
+            # 시맨틱 버전 태그 (v1.2.0)
+            type=raw,value=${{ steps.version.outputs.version }}
+            # latest 태그
             type=raw,value=latest
-            # Git SHA (short) - 커밋별 고유 태그 (롤백용)
+            # Git SHA (short) - 롤백용
             type=sha,prefix=,format=short
 
-      # 5. Docker Buildx 설정 (멀티플랫폼 빌드 지원)
+      # 6. Docker Buildx 설정
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 6. Docker 이미지 빌드 및 ECR 푸시
+      # 7. Docker 이미지 빌드 및 ECR 푸시
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
@@ -85,41 +108,59 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # 빌드 플랫폼 (ARM64 추가 시 linux/arm64 추가)
           platforms: linux/amd64
 
-      # 7. 빌드 결과 출력
+      # 8. 빌드 결과 출력
       - name: Output image info
         run: |
-          echo "### Docker Image Pushed Successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "### 🐳 Docker Image Pushed!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Registry:** ${{ steps.login-ecr.outputs.registry }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Repository:** ${{ env.ECR_REPOSITORY }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** \`${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
-      # 8. ECS 서비스 강제 재배포 (새 이미지 pull)
-      - name: Deploy to ECS
+      # 9. 현재 ECS 태스크 정의 가져오기
+      - name: Download current task definition
         run: |
-          aws ecs update-service \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --service ${{ env.ECS_SERVICE }} \
-            --force-new-deployment \
-            --region ${{ env.AWS_REGION }}
-          echo "### ECS Deployment Triggered!" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Cluster:** ${{ env.ECS_CLUSTER }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Service:** ${{ env.ECS_SERVICE }}" >> $GITHUB_STEP_SUMMARY
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.ECS_TASK_DEFINITION }} \
+            --query 'taskDefinition' \
+            --output json > task-definition.json
 
-      # 9. ECS 배포 완료 대기 (선택 - 배포 상태 확인)
-      - name: Wait for ECS deployment
+          # 불필요한 필드 제거 (새 리비전 등록 시 오류 방지)
+          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+            task-definition.json > clean-task-definition.json
+
+      # 10. 태스크 정의에 새 이미지 적용
+      - name: Update task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: clean-task-definition.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.version.outputs.version }}
+
+      # 11. 새 태스크 정의로 ECS 서비스 배포
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+      # 12. 배포 완료 요약
+      - name: Deployment summary
         run: |
-          echo "Waiting for ECS service to stabilize..."
-          aws ecs wait services-stable \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --services ${{ env.ECS_SERVICE }} \
-            --region ${{ env.AWS_REGION }}
-          echo "### ECS Service Stabilized!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🚀 ECS Deployment Completed!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Cluster | \`${{ env.ECS_CLUSTER }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | \`${{ env.ECS_SERVICE }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | \`${{ steps.version.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | \`${{ env.ECR_REPOSITORY }}:${{ steps.version.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
