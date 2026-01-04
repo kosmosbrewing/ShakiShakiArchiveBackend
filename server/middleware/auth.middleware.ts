@@ -5,19 +5,19 @@ import type { Request, Response, NextFunction } from "express";
 import { storage } from "../storage";
 import type { CachedUser } from "../types";
 import { createLogger } from "../utils/logger";
+import { USER_CACHE, AUTH_MESSAGES } from "../constants";
 
 const logger = createLogger("Auth");
 
-// 메모리 캐시 (TTL: 5분, UUID 기반)
+// 메모리 캐시 (TTL 기반, UUID 기반)
 const userCache = new Map<string, { user: CachedUser; timestamp: number }>();
-const CACHE_TTL = 5 * 60 * 1000; // 5분
 
 /**
  * 캐시에서 사용자 조회 (UUID 기반)
  */
 function getCachedUser(userId: string): CachedUser | null {
   const cached = userCache.get(userId);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+  if (cached && Date.now() - cached.timestamp < USER_CACHE.TTL) {
     return cached.user;
   }
   // 만료된 캐시 삭제
@@ -53,7 +53,7 @@ export function isAuthenticated(
   if (req.session?.userId) {
     return next();
   }
-  res.status(401).json({ message: "인증이 필요합니다" });
+  res.status(401).json({ message: AUTH_MESSAGES.REQUIRED });
 }
 
 /**
@@ -68,7 +68,7 @@ export async function isAdmin(
   try {
     const userId = req.session?.userId;
     if (!userId) {
-      return res.status(401).json({ message: "인증이 필요합니다" });
+      return res.status(401).json({ message: AUTH_MESSAGES.REQUIRED });
     }
 
     // 캐시 확인
@@ -88,14 +88,14 @@ export async function isAdmin(
     }
 
     if (!cachedUser?.isAdmin) {
-      return res.status(403).json({ message: "관리자 권한이 필요합니다" });
+      return res.status(403).json({ message: AUTH_MESSAGES.ADMIN_REQUIRED });
     }
 
     req.user = cachedUser;
     next();
   } catch (error) {
     logger.error("관리자 권한 확인 실패", { error: error instanceof Error ? error.message : String(error) });
-    res.status(500).json({ message: "서버 오류가 발생했습니다" });
+    res.status(500).json({ message: AUTH_MESSAGES.SERVER_ERROR });
   }
 }
 

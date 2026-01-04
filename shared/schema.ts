@@ -295,6 +295,27 @@ export const insertOrderSchema = createInsertSchema(orders, {
 });
 export type InsertOrder = z.infer<typeof insertOrderSchema>;
 
+// 바로 구매 아이템 스키마 (API 입력 검증용)
+export const directPurchaseItemSchema = z.object({
+  productId: z.string().uuid("유효한 상품 ID가 아닙니다"),
+  variantId: z.string().uuid("유효한 옵션 ID가 아닙니다").optional(),
+  quantity: z.number().int().min(1, "최소 1개 이상").max(99, "최대 99개까지"),
+});
+export type DirectPurchaseItem = z.infer<typeof directPurchaseItemSchema>;
+
+// 주문 생성 요청 스키마 (API 입력 검증용)
+export const createOrderRequestSchema = z.object({
+  shippingName: z.string().min(1, "수령인을 입력해주세요"),
+  shippingPhone: z.string().min(1, "연락처를 입력해주세요"),
+  shippingPostalCode: z.string().min(1, "우편번호를 입력해주세요"),
+  shippingAddress: z.string().min(1, "주소를 입력해주세요"),
+  shippingDetailAddress: z.string().optional(),
+  shippingRequestNote: z.string().optional(),
+  paymentMethod: z.enum(["toss", "naverpay"]).optional(),
+  directPurchaseItem: directPurchaseItemSchema.optional(),
+});
+export type CreateOrderRequest = z.infer<typeof createOrderRequestSchema>;
+
 // Order items table
 export const orderItems = pgTable(
   "order_items",

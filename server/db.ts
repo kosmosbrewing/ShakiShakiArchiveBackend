@@ -9,6 +9,7 @@ import path from "path";
 // config import 시 필수 환경 변수 검증이 자동 실행됨
 import { config } from "./config";
 import { createLogger } from "./utils/logger";
+import { DB_POOL, DB_TIMEOUT } from "./constants";
 
 const { Pool } = pg;
 const logger = createLogger("DB");
@@ -97,15 +98,21 @@ const poolConfig: pg.PoolConfig = {
   ssl: sslConfig,
 
   // 연결 수 설정
-  max: parseInt(process.env.DB_POOL_MAX || (isProduction ? "20" : "10"), 10),
-  min: parseInt(process.env.DB_POOL_MIN || "2", 10),
+  max: parseInt(
+    process.env.DB_POOL_MAX || String(isProduction ? DB_POOL.MAX_PROD : DB_POOL.MAX_DEV),
+    10
+  ),
+  min: parseInt(process.env.DB_POOL_MIN || String(DB_POOL.MIN), 10),
 
   // 타임아웃 설정 (밀리초)
-  idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT || "30000", 10), // 유휴 연결 30초 후 해제
-  connectionTimeoutMillis: parseInt(
-    process.env.DB_CONNECTION_TIMEOUT || "10000",
+  idleTimeoutMillis: parseInt(
+    process.env.DB_IDLE_TIMEOUT || String(DB_TIMEOUT.IDLE),
     10
-  ), // 연결 시도 10초 타임아웃
+  ),
+  connectionTimeoutMillis: parseInt(
+    process.env.DB_CONNECTION_TIMEOUT || String(DB_TIMEOUT.CONNECTION),
+    10
+  ),
 
   // 유휴 상태에서 프로세스 종료 허용 (graceful shutdown 지원)
   allowExitOnIdle: false,

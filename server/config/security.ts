@@ -5,6 +5,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { config } from "./index";
 import { createLogger } from "../utils/logger";
+import { RATE_LIMIT, HSTS, RATE_LIMIT_MESSAGES } from "../constants";
 
 const logger = createLogger("RateLimit");
 
@@ -41,7 +42,7 @@ export const helmetMiddleware = helmet({
   // HSTS (프로덕션에서만 활성화)
   hsts: config.isProd
     ? {
-        maxAge: 31536000, // 1년
+        maxAge: HSTS.MAX_AGE,
         includeSubDomains: true,
         preload: true,
       }
@@ -66,11 +67,11 @@ export const helmetMiddleware = helmet({
  * - 기본: 15분당 100회 요청 제한
  */
 export const globalRateLimiter = rateLimit({
-  windowMs: config.rateLimit?.windowMs || 15 * 60 * 1000, // 15분
-  max: config.rateLimit?.maxRequests || 100, // 최대 요청 수
+  windowMs: config.rateLimit?.windowMs || RATE_LIMIT.GLOBAL.WINDOW_MS,
+  max: config.rateLimit?.maxRequests || RATE_LIMIT.GLOBAL.MAX_REQUESTS,
   message: {
     success: false,
-    error: "요청이 너무 많습니다. 잠시 후 다시 시도해주세요.",
+    error: RATE_LIMIT_MESSAGES.GLOBAL,
   },
   standardHeaders: true, // RateLimit-* 헤더 포함
   legacyHeaders: false, // X-RateLimit-* 헤더 비활성화
@@ -92,12 +93,11 @@ export const globalRateLimiter = rateLimit({
  * - 15분당 10회 제한 (Brute Force 방지)
  */
 export const authRateLimiter = rateLimit({
-  windowMs: config.rateLimit?.authWindowMs || 15 * 60 * 1000, // 15분
-  max: config.rateLimit?.authMaxRequests || 10, // 최대 10회
+  windowMs: config.rateLimit?.authWindowMs || RATE_LIMIT.AUTH.WINDOW_MS,
+  max: config.rateLimit?.authMaxRequests || RATE_LIMIT.AUTH.MAX_REQUESTS,
   message: {
     success: false,
-    error:
-      "인증 요청이 너무 많습니다. 15분 후 다시 시도해주세요.",
+    error: RATE_LIMIT_MESSAGES.AUTH,
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -116,11 +116,11 @@ export const authRateLimiter = rateLimit({
  * - 1분당 60회 제한
  */
 export const apiRateLimiter = rateLimit({
-  windowMs: config.rateLimit?.apiWindowMs || 1 * 60 * 1000, // 1분
-  max: config.rateLimit?.apiMaxRequests || 60, // 최대 60회
+  windowMs: config.rateLimit?.apiWindowMs || RATE_LIMIT.API.WINDOW_MS,
+  max: config.rateLimit?.apiMaxRequests || RATE_LIMIT.API.MAX_REQUESTS,
   message: {
     success: false,
-    error: "API 요청이 너무 많습니다. 잠시 후 다시 시도해주세요.",
+    error: RATE_LIMIT_MESSAGES.API,
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -143,11 +143,11 @@ export const apiRateLimiter = rateLimit({
  * - 1분당 5회 제한
  */
 export const paymentRateLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1분
-  max: 5, // 최대 5회
+  windowMs: RATE_LIMIT.PAYMENT.WINDOW_MS,
+  max: RATE_LIMIT.PAYMENT.MAX_REQUESTS,
   message: {
     success: false,
-    error: "결제 요청이 너무 많습니다. 잠시 후 다시 시도해주세요.",
+    error: RATE_LIMIT_MESSAGES.PAYMENT,
   },
   standardHeaders: true,
   legacyHeaders: false,

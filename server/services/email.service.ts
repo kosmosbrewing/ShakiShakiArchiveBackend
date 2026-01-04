@@ -4,6 +4,10 @@
 import { Resend } from "resend";
 import { config } from "../config";
 import { createLogger } from "../utils/logger";
+import {
+  VERIFICATION_CODE,
+  generateVerificationCode as generateCode,
+} from "../constants";
 
 const logger = createLogger("Email");
 
@@ -14,9 +18,10 @@ const resend = config.email.isEnabled
 
 /**
  * 6자리 인증코드 생성
+ * @deprecated shared/constants/validation.ts의 generateVerificationCode 사용 권장
  */
 export function generateVerificationCode(): string {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return generateCode();
 }
 
 /**

@@ -18,6 +18,7 @@ import productSearchRoutes from "./productSearch.routes";
 import siteImageRoutes from "./siteImage.routes";
 import inquiryRoutes from "./inquiry.routes";
 import seoRoutes from "./seo.routes";
+import constantsRoutes from "./constants.routes";
 import adminRoutes from "./admin";
 
 const router = Router();
@@ -41,6 +42,7 @@ router.use("/search/products", productSearchRoutes); // 상품 검색 (Meilisear
 router.use("/site-images", siteImageRoutes); // Hero, Marquee 이미지 조회
 router.use("/inquiries", inquiryRoutes); // Q&A 문의하기
 router.use("/seo", seoRoutes); // SEO 메타데이터 (JSON-LD, OpenGraph)
+router.use("/constants", constantsRoutes); // 프론트엔드 공용 상수
 
 // 인증 필요 라우트
 router.use("/cart", cartRoutes);

@@ -5,7 +5,16 @@ import { Router } from "express";
 import { storage } from "../storage";
 import { isAuthenticated } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
-import { insertOrderSchema, cancelPaymentSchema } from "@shared/schema";
+import { insertOrderSchema, createOrderRequestSchema } from "@shared/schema";
+import {
+  calculateShippingFee,
+  generateExternalOrderId,
+  NON_CANCELABLE_STATUSES,
+  ORDER_STATUS,
+  ORDER_MESSAGES,
+  AUTH_MESSAGES,
+  TOSS_PAYMENT_STATUS,
+} from "../constants";
 import type { OrderItemCreateData } from "../types";
 import { cancelPayment, TossPaymentError } from "../services/toss.service";
 import { createLogger } from "../utils/logger";
@@ -13,81 +22,111 @@ import { createLogger } from "../utils/logger";
 const router = Router();
 const logger = createLogger("Order");
 
-/**
- * PG사 주문번호 생성 (토스페이먼츠, 네이버페이 등 공용)
- * 형식: SHAKI_{YYYYMMDD}_{timestamp}_{random} (영문 대소문자, 숫자, -, _ 허용, 6-64자)
- */
-function generateExternalOrderId(): string {
-  const now = new Date();
-  const dateStr =
-    now.getFullYear().toString() +
-    String(now.getMonth() + 1).padStart(2, "0") +
-    String(now.getDate()).padStart(2, "0");
-  const timestamp = Date.now().toString(36).toUpperCase();
-  const random = Math.random().toString(36).substring(2, 8).toUpperCase();
-  return `${dateStr}_SHAKI_${timestamp}_${random}`;
-}
-
 // 주문 생성
 router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
   const userId = req.session.userId!;
 
-  // 장바구니 아이템 조회
-  const cartItems = await storage.getCartItems(userId);
+  // 입력값 검증
+  const validatedBody = createOrderRequestSchema.parse(req.body);
+  const { directPurchaseItem } = validatedBody;
 
-  if (cartItems.length === 0) {
-    return res.status(400).json({ message: "장바구니가 비어있습니다" });
+  let orderItemsData: OrderItemCreateData[];
+  let subtotal: number;
+  let orderName: string;
+  let isDirectPurchase = false;
+
+  // 바로 구매 모드
+  if (directPurchaseItem) {
+    isDirectPurchase = true;
+    const { productId, variantId, quantity } = directPurchaseItem;
+
+    // 상품 정보 조회
+    const product = await storage.getProduct(productId);
+    if (!product) {
+      return res.status(400).json({ message: ORDER_MESSAGES.PRODUCT_NOT_FOUND });
+    }
+
+    // 옵션 정보 조회 (선택사항)
+    let variant = null;
+    if (variantId) {
+      variant = await storage.getProductVariant(variantId);
+      if (!variant) {
+        return res.status(400).json({ message: ORDER_MESSAGES.VARIANT_NOT_FOUND });
+      }
+    }
+
+    subtotal = parseFloat(product.price) * quantity;
+    orderName = product.name;
+
+    orderItemsData = [{
+      productId: product.id,
+      productName: product.name,
+      productPrice: product.price,
+      quantity,
+      options: variant ? `Size: ${variant.size}` : null,
+    }];
+  }
+  // 장바구니 모드
+  else {
+    const cartItems = await storage.getCartItems(userId);
+
+    if (cartItems.length === 0) {
+      return res.status(400).json({ message: ORDER_MESSAGES.CART_EMPTY });
+    }
+
+    subtotal = cartItems.reduce(
+      (sum, item) => sum + parseFloat(item.product.price) * item.quantity,
+      0
+    );
+
+    orderName =
+      cartItems.length > 1
+        ? `${cartItems[0].product.name} 외 ${cartItems.length - 1}건`
+        : cartItems[0].product.name;
+
+    orderItemsData = cartItems.map((item) => ({
+      productId: item.productId,
+      productName: item.product.name,
+      productPrice: item.product.price,
+      quantity: item.quantity,
+      options: item.variant ? `Size: ${item.variant.size}` : null,
+    }));
   }
 
-  // 총 결제 금액 계산
-  const totalAmount = cartItems.reduce(
-    (sum, item) => sum + parseFloat(item.product.price) * item.quantity,
-    0
-  );
+  // 배송비 계산
+  const shippingFee = calculateShippingFee(subtotal);
+  const totalAmount = subtotal + shippingFee;
 
-  // PG사 주문번호 생성 (토스페이먼츠, 네이버페이 등 공용)
+  // PG사 주문번호 생성
   const externalOrderId = generateExternalOrderId();
 
-  // 주문 데이터 생성 (배송 상세주소, 배송요청사항 포함)
+  // 주문 데이터 생성
   const orderData = insertOrderSchema.parse({
     userId,
     totalAmount: totalAmount.toString(),
-    status: "pending_payment",
-    shippingName: req.body.shippingName,
-    shippingPhone: req.body.shippingPhone,
-    shippingPostalCode: req.body.shippingPostalCode,
-    shippingAddress: req.body.shippingAddress,
-    shippingDetailAddress: req.body.shippingDetailAddress, // 상세 주소
-    shippingRequestNote: req.body.shippingRequestNote, // 배송 요청사항
-    externalOrderId, // PG사 주문번호
+    status: ORDER_STATUS.PENDING_PAYMENT,
+    shippingName: validatedBody.shippingName,
+    shippingPhone: validatedBody.shippingPhone,
+    shippingPostalCode: validatedBody.shippingPostalCode,
+    shippingAddress: validatedBody.shippingAddress,
+    shippingDetailAddress: validatedBody.shippingDetailAddress,
+    shippingRequestNote: validatedBody.shippingRequestNote,
+    externalOrderId,
   });
-
-  // 주문 아이템 데이터 생성 (타입 안전성 강화)
-  const orderItemsData: OrderItemCreateData[] = cartItems.map((item) => ({
-    productId: item.productId,
-    productName: item.product.name,
-    productPrice: item.product.price,
-    quantity: item.quantity,
-    options: item.variant ? `Size: ${item.variant.size}` : null,
-  }));
 
   // 주문 생성 (트랜잭션 적용됨)
   const orderId = await storage.createOrder(orderData, orderItemsData);
 
-  // 장바구니 비우기
-  await storage.clearCart(userId);
-
-  // 주문명 생성 (결제창에 표시)
-  const orderName =
-    cartItems.length > 1
-      ? `${cartItems[0].product.name} 외 ${cartItems.length - 1}건`
-      : cartItems[0].product.name;
+  // 장바구니 모드일 때만 장바구니 비우기
+  if (!isDirectPurchase) {
+    await storage.clearCart(userId);
+  }
 
   res.json({
     orderId,
-    externalOrderId, // 클라이언트에서 결제창 호출 시 사용 (토스, 네이버페이 등)
-    orderName, // 결제창에 표시할 주문명
-    amount: totalAmount, // 결제 금액
+    externalOrderId,
+    orderName,
+    amount: totalAmount,
   });
 }));
 
@@ -130,30 +169,29 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
   // 1. 주문 조회
   const order = await storage.getOrder(orderId);
   if (!order) {
-    return res.status(404).json({ message: "주문을 찾을 수 없습니다" });
+    return res.status(404).json({ message: ORDER_MESSAGES.NOT_FOUND });
   }
 
   // 2. 권한 검증 (본인 또는 관리자)
   const user = await storage.getUser(userId);
   if (order.userId !== userId && !user?.isAdmin) {
-    return res.status(403).json({ message: "권한이 없습니다" });
+    return res.status(403).json({ message: AUTH_MESSAGES.FORBIDDEN });
   }
 
   // 3. 취소 가능 상태 확인
-  const nonCancelableStatuses = ["shipped", "delivered", "cancelled"];
-  if (nonCancelableStatuses.includes(order.status)) {
+  if (NON_CANCELABLE_STATUSES.includes(order.status as typeof NON_CANCELABLE_STATUSES[number])) {
     return res.status(400).json({
-      message: `현재 상태(${order.status})에서는 취소할 수 없습니다`,
+      message: ORDER_MESSAGES.CANNOT_CANCEL(order.status),
     });
   }
 
   // 4. 취소 사유 검증 (결제 완료 상태에서만 필수)
-  const cancelReason = req.body.cancelReason || "고객 요청에 의한 취소";
+  const cancelReason = req.body.cancelReason || ORDER_MESSAGES.DEFAULT_CANCEL_REASON;
 
   // 5. 결제 대기 상태인 경우: 단순 상태 변경 (재고 차감 전이므로 복구 불필요)
-  if (order.status === "pending_payment") {
+  if (order.status === ORDER_STATUS.PENDING_PAYMENT) {
     const updatedOrder = await storage.cancelOrderPayment(orderId, {
-      status: "cancelled",
+      status: ORDER_STATUS.CANCELLED,
       canceledAt: new Date(),
       cancelReason,
     });
@@ -161,14 +199,14 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
     // 주문 아이템 상태도 취소로 변경 (Promise.all로 원자성 향상)
     await Promise.all(
       order.orderItems.map((item) =>
-        storage.updateOrderItemStatus(item.id, "cancelled")
+        storage.updateOrderItemStatus(item.id, ORDER_STATUS.CANCELLED)
       )
     );
 
     logger.info("주문 취소 완료 (결제 전)", { orderId });
 
     return res.json({
-      message: "주문이 취소되었습니다",
+      message: ORDER_MESSAGES.CANCEL_SUCCESS,
       order: updatedOrder,
     });
   }
@@ -176,7 +214,7 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
   // 6. 결제 완료/준비 중 상태인 경우: PG사 결제 취소 필요
   if (!order.paymentKey) {
     return res.status(400).json({
-      message: "결제 정보가 없어 취소할 수 없습니다",
+      message: ORDER_MESSAGES.NO_PAYMENT_INFO,
     });
   }
 
@@ -203,7 +241,7 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
   }
 
   // 9. 주문 상태 업데이트
-  const newStatus = payment.status === "CANCELED" ? "cancelled" : order.status;
+  const newStatus = payment.status === TOSS_PAYMENT_STATUS.CANCELED ? ORDER_STATUS.CANCELLED : order.status;
   const updatedOrder = await storage.cancelOrderPayment(orderId, {
     status: newStatus,
     canceledAt: new Date(),
@@ -212,7 +250,7 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
   });
 
   // 10. 재고 복구 (결제 완료된 주문만 재고가 차감되어 있음)
-  if (newStatus === "cancelled") {
+  if (newStatus === ORDER_STATUS.CANCELLED) {
     try {
       await storage.restoreStockOnCancel(orderId);
       logger.info("재고 복구 완료", { orderId });
@@ -225,14 +263,14 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
   // 11. 주문 아이템 상태도 취소로 변경 (Promise.all로 원자성 향상)
   await Promise.all(
     order.orderItems.map((item) =>
-      storage.updateOrderItemStatus(item.id, "cancelled")
+      storage.updateOrderItemStatus(item.id, ORDER_STATUS.CANCELLED)
     )
   );
 
   logger.info("주문 취소 완료 (결제 취소)", { orderId });
 
   res.json({
-    message: "주문이 취소되었습니다",
+    message: ORDER_MESSAGES.CANCEL_SUCCESS,
     order: updatedOrder,
     refund: {
       cancelAmount: payment.cancels?.[0]?.cancelAmount,

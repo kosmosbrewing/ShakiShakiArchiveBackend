@@ -5,6 +5,11 @@
 import { config } from "../config";
 import crypto from "crypto";
 import { httpRequest, postFormUrlEncoded } from "../utils/http-client";
+import {
+  NAVERPAY_CONFIG,
+  NAVERPAY_PAYMENT_STATUS,
+  ORDER_STATUS,
+} from "../constants";
 
 // 네이버페이 API 기본 URL (환경에 따라 동적 결정)
 // 공식 문서: https://docs.pay.naver.com/docs/common/url-format
@@ -13,9 +18,6 @@ function getApiBaseUrl(): string {
     ? "https://pay.paygate.naver.com"
     : "https://dev-pay.paygate.naver.com";
 }
-
-// API 타임아웃 설정 (문서 권장: 60초)
-const API_TIMEOUT = 60000;
 
 // 네이버페이 결제 상태
 export type NaverPayPaymentStatus =
@@ -277,7 +279,7 @@ export async function applyPayment(
     url,
     { paymentId },
     getHeaders(idempotencyKey),
-    { timeout: API_TIMEOUT }
+    { timeout: NAVERPAY_CONFIG.API_TIMEOUT }
   );
 
   if (response.data.code !== "Success") {
@@ -347,7 +349,7 @@ export async function cancelPayment(
       expectedRestAmount: params.expectedRestAmount,
     },
     getHeaders(idempotencyKey),
-    { timeout: API_TIMEOUT }
+    { timeout: NAVERPAY_CONFIG.API_TIMEOUT }
   );
 
   if (response.data.code !== "Success") {
@@ -394,16 +396,16 @@ export function mapNaverPayStatusToOrderStatus(
   status: NaverPayPaymentStatus
 ): string {
   switch (status) {
-    case "APPROVED":
-      return "payment_confirmed";
-    case "CANCELED":
-      return "cancelled";
-    case "PARTIAL_CANCELED":
-      return "payment_confirmed"; // 부분 취소는 결제 완료 상태 유지
-    case "FAILED":
-      return "pending_payment";
+    case NAVERPAY_PAYMENT_STATUS.APPROVED:
+      return ORDER_STATUS.PAYMENT_CONFIRMED;
+    case NAVERPAY_PAYMENT_STATUS.CANCELED:
+      return ORDER_STATUS.CANCELLED;
+    case NAVERPAY_PAYMENT_STATUS.PARTIAL_CANCELED:
+      return ORDER_STATUS.PAYMENT_CONFIRMED; // 부분 취소는 결제 완료 상태 유지
+    case NAVERPAY_PAYMENT_STATUS.FAILED:
+      return ORDER_STATUS.PENDING_PAYMENT;
     default:
-      return "pending_payment";
+      return ORDER_STATUS.PENDING_PAYMENT;
   }
 }
 

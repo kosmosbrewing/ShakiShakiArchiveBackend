@@ -5,8 +5,7 @@ import session from "express-session";
 import connectPg from "connect-pg-simple";
 import { config } from "./index";
 import { pool } from "../db";
-
-const SESSION_TTL = 7 * 24 * 60 * 60 * 1000; // 1주일
+import { SESSION } from "../constants";
 
 /**
  * PostgreSQL 기반 세션 미들웨어 생성
@@ -17,7 +16,7 @@ export function createSessionMiddleware() {
   const store = new PgStore({
     pool, // SSL 설정이 적용된 pool 사용
     createTableIfMissing: false,
-    ttl: SESSION_TTL,
+    ttl: SESSION.TTL,
     tableName: "sessions",
   });
 
@@ -36,7 +35,7 @@ export function createSessionMiddleware() {
       // Cross-Origin 요청 시 쿠키 전송을 위해 "none" 사용 (HTTPS 필수)
       // 같은 도메인이면 "lax"로 변경 가능
       sameSite: cookieSecure ? "none" : "lax",
-      maxAge: SESSION_TTL,
+      maxAge: SESSION.TTL,
     },
   });
 }
