@@ -131,10 +131,13 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
     });
   }
 
-  // 9. 최종 주문 정보 조회
+  // 9. 장바구니 비우기 (결제 성공 시점에 수행)
+  await storage.clearCart(userId);
+
+  // 10. 최종 주문 정보 조회
   const updatedOrder = await storage.getOrder(order.id);
 
-  logger.info("결제 승인 완료 (재고 차감 포함)", { orderId: order.id, paymentKey });
+  logger.info("결제 승인 완료 (재고 차감 + 장바구니 비움)", { orderId: order.id, paymentKey });
 
   res.json({
     success: true,

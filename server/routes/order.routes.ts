@@ -93,8 +93,8 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
     }));
   }
 
-  // 배송비 계산
-  const shippingFee = calculateShippingFee(subtotal);
+  // 배송비 계산 (도서산간 추가 배송비 포함)
+  const shippingFee = calculateShippingFee(subtotal, validatedBody.shippingPostalCode);
   const totalAmount = subtotal + shippingFee;
 
   // PG사 주문번호 생성
@@ -117,10 +117,7 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
   // 주문 생성 (트랜잭션 적용됨)
   const orderId = await storage.createOrder(orderData, orderItemsData);
 
-  // 장바구니 모드일 때만 장바구니 비우기
-  if (!isDirectPurchase) {
-    await storage.clearCart(userId);
-  }
+  // 장바구니 비우기는 결제 완료 시점에 수행 (payment.routes.ts)
 
   res.json({
     orderId,

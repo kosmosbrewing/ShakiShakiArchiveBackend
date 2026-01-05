@@ -84,6 +84,14 @@ router.post("/:orderId/cancel", isAuthenticated, isAdmin, asyncHandler(async (re
     refundedAmount: cancelAmount?.toString(),
   });
 
+  // 재고 복구
+  try {
+    await storage.restoreStockOnCancel(order.id);
+    logger.info("재고 복구 완료 (관리자)", { orderId: order.id });
+  } catch (restoreError) {
+    logger.error("재고 복구 실패 (관리자)", { orderId: order.id, error: restoreError });
+  }
+
   logger.info("결제 취소 완료 (관리자)", { orderId: order.id });
 
   res.json({

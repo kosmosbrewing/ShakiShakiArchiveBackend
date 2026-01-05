@@ -51,6 +51,7 @@ import type {
   StockLockResult,
   ConfirmPaymentData,
 } from "./types";
+import { getKSTDate } from "./utils/date";
 
 export interface IStorage {
   // User operations (UUID 기반)
@@ -189,6 +190,9 @@ export interface IStorage {
   // 주문 취소 시 재고 복구
   restoreStockOnCancel(orderId: string): Promise<void>;
 
+  // 주문 취소 시 장바구니 복구
+  restoreCartItemsFromOrder(userId: string, orderId: string): Promise<void>;
+
   // Delivery Address operations (UUID 기반)
   getDeliveryAddresses(userId: string): Promise<DeliveryAddress[]>;
   createDeliveryAddress(
@@ -289,7 +293,7 @@ export class DatabaseStorage implements IStorage {
         target: users.id,
         set: {
           ...userData,
-          updatedAt: new Date(),
+          updatedAt: getKSTDate(),
         },
       })
       .returning();
@@ -304,7 +308,7 @@ export class DatabaseStorage implements IStorage {
       .update(users)
       .set({
         ...userData,
-        updatedAt: new Date(),
+        updatedAt: getKSTDate(),
       })
       .where(eq(users.id, id))
       .returning();
@@ -374,8 +378,8 @@ export class DatabaseStorage implements IStorage {
   ): Promise<Product | undefined> {
     const [updated] = await db
       .update(products)
-      // updatedAt이 직접 전달되면 그 값을 사용, 아니면 현재 시간으로 자동 갱신
-      .set({ updatedAt: new Date(), ...product })
+      // updatedAt이 직접 전달되면 그 값을 사용, 아니면 현재 KST 시간으로 자동 갱신
+      .set({ updatedAt: getKSTDate(), ...product })
       .where(eq(products.id, id))
       .returning();
     return updated;
@@ -420,7 +424,7 @@ export class DatabaseStorage implements IStorage {
   ): Promise<ProductVariant | undefined> {
     const [updated] = await db
       .update(productVariants)
-      .set({ ...variant, updatedAt: new Date() })
+      .set({ ...variant, updatedAt: getKSTDate() })
       .where(eq(productVariants.id, id))
       .returning();
     return updated;
@@ -579,7 +583,7 @@ export class DatabaseStorage implements IStorage {
   ): Promise<CartItem | undefined> {
     const [updated] = await db
       .update(cartItems)
-      .set({ quantity, updatedAt: new Date() })
+      .set({ quantity, updatedAt: getKSTDate() })
       .where(eq(cartItems.id, id))
       .returning();
     return updated;
@@ -796,7 +800,7 @@ export class DatabaseStorage implements IStorage {
     trackingNumber?: string
   ): Promise<Order | undefined> {
     // any 타입 제거: 명시적 타입 사용
-    const updateData: OrderStatusUpdate = { status, updatedAt: new Date() };
+    const updateData: OrderStatusUpdate = { status, updatedAt: getKSTDate() };
     if (trackingNumber !== undefined) {
       updateData.trackingNumber = trackingNumber;
     }
@@ -851,7 +855,7 @@ export class DatabaseStorage implements IStorage {
         paymentMethod: paymentData.paymentMethod,
         status: paymentData.status,
         paidAt: paymentData.paidAt,
-        updatedAt: new Date(),
+        updatedAt: getKSTDate(),
       })
       .where(eq(orders.id, orderId))
       .returning();
@@ -884,7 +888,7 @@ export class DatabaseStorage implements IStorage {
         canceledAt: cancelData.canceledAt,
         cancelReason: cancelData.cancelReason,
         refundedAmount: cancelData.refundedAmount,
-        updatedAt: new Date(),
+        updatedAt: getKSTDate(),
       })
       .where(eq(orders.id, orderId))
       .returning();
@@ -1029,14 +1033,15 @@ export class DatabaseStorage implements IStorage {
              external_order_id = $3,
              payment_method = $4,
              paid_at = $5,
-             updated_at = NOW()
-         WHERE id = $6`,
+             updated_at = $6
+         WHERE id = $7`,
         [
           paymentData.paymentProvider,
           paymentData.paymentKey,
           paymentData.externalOrderId,
           paymentData.paymentMethod || null,
-          paymentData.paidAt || new Date(),
+          paymentData.paidAt || getKSTDate(),
+          getKSTDate(),
           orderId,
         ]
       );
@@ -1110,6 +1115,46 @@ export class DatabaseStorage implements IStorage {
       throw error;
     } finally {
       client.release();
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // 주문 취소 시 장바구니 복구
+  // ------------------------------------------------------------------
+  async restoreCartItemsFromOrder(
+    userId: string,
+    orderId: string
+  ): Promise<void> {
+    // 주문 아이템 조회
+    const itemsResult = await db
+      .select()
+      .from(orderItems)
+      .where(eq(orderItems.orderId, orderId));
+
+    for (const item of itemsResult) {
+      // 옵션에서 사이즈 추출하여 variant 찾기
+      let variantId: string | null = null;
+
+      if (item.options) {
+        const match = item.options.match(/Size:\s*(\S+)/i);
+        if (match) {
+          const size = match[1];
+          // 해당 상품의 variant 중 size가 일치하는 것 찾기
+          const variants = await this.getProductVariants(item.productId);
+          const matchedVariant = variants.find((v) => v.size === size);
+          if (matchedVariant) {
+            variantId = matchedVariant.id;
+          }
+        }
+      }
+
+      // 장바구니에 추가 (addCartItem이 중복 처리 자동으로 함)
+      await this.addCartItem({
+        userId,
+        productId: item.productId,
+        variantId,
+        quantity: item.quantity,
+      });
     }
   }
 
@@ -1346,7 +1391,7 @@ export class DatabaseStorage implements IStorage {
   ): Promise<SiteImage | undefined> {
     const [updated] = await db
       .update(siteImages)
-      .set({ ...image, updatedAt: new Date() })
+      .set({ ...image, updatedAt: getKSTDate() })
       .where(eq(siteImages.id, id))
       .returning();
     return updated;
@@ -1465,7 +1510,7 @@ export class DatabaseStorage implements IStorage {
   ): Promise<Inquiry | undefined> {
     const [updated] = await db
       .update(inquiries)
-      .set({ status, updatedAt: new Date() })
+      .set({ status, updatedAt: getKSTDate() })
       .where(eq(inquiries.id, id))
       .returning();
     return updated;
@@ -1487,7 +1532,7 @@ export class DatabaseStorage implements IStorage {
     // 문의 상태를 'answered'로 업데이트
     await db
       .update(inquiries)
-      .set({ status: "answered", updatedAt: new Date() })
+      .set({ status: "answered", updatedAt: getKSTDate() })
       .where(eq(inquiries.id, reply.inquiryId));
 
     return newReply;
