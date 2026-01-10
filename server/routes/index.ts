@@ -19,6 +19,7 @@ import siteImageRoutes from "./siteImage.routes";
 import inquiryRoutes from "./inquiry.routes";
 import seoRoutes from "./seo.routes";
 import constantsRoutes from "./constants.routes";
+import stockRoutes from "./stock.routes";
 import adminRoutes from "./admin";
 
 const router = Router();
@@ -51,6 +52,7 @@ router.use("/payments", paymentRoutes);
 router.use("/payments/naverpay", naverpayRoutes); // 네이버페이 결제
 router.use("/wishlist", wishlistRoutes);
 router.use("/user/addresses", addressRoutes);
+router.use("/stock", stockRoutes); // 재고 선점
 
 // 관리자 라우트
 router.use("/admin", adminRoutes);

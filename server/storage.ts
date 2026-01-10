@@ -666,10 +666,10 @@ export class DatabaseStorage implements IStorage {
     try {
       await client.query("BEGIN");
 
-      // 1. 주문 생성 (배송 상세주소, 배송요청사항, PG사 주문ID 포함)
+      // 1. 주문 생성 (배송 상세주소, 배송요청사항, PG사 주문ID, 재고선점 여부 포함)
       const orderResult = await client.query(
-        `INSERT INTO orders (user_id, total_amount, status, shipping_name, shipping_phone, shipping_postal_code, shipping_address, shipping_detail_address, shipping_request_note, external_order_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+        `INSERT INTO orders (user_id, total_amount, status, shipping_name, shipping_phone, shipping_postal_code, shipping_address, shipping_detail_address, shipping_request_note, external_order_id, is_stock_reserved)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
         [
           order.userId,
           order.totalAmount,
@@ -681,6 +681,7 @@ export class DatabaseStorage implements IStorage {
           order.shippingDetailAddress || null,
           order.shippingRequestNote || null,
           order.externalOrderId || null,
+          order.isStockReserved || false,
         ]
       );
       const orderId = orderResult.rows[0].id;

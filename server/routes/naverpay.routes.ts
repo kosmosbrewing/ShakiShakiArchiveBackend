@@ -146,44 +146,59 @@ router.get("/callback", asyncHandler(async (req, res) => {
       throw new Error("결제 금액이 일치하지 않습니다");
     }
 
-    // 소프트 락 기반 재고 확인 및 차감 + 주문 상태 업데이트
-    const stockResult = await storage.confirmOrderWithStockLock(order.id, {
-      paymentProvider: "naverpay",
-      paymentKey: detail.paymentId,
-      externalOrderId: detail.merchantPayKey,
-      paymentMethod: detail.primaryPayMeans?.toLowerCase() || "naverpay",
-      paidAt: new Date(),
-    });
-
-    // 재고 부족 시 PG사 결제 취소 및 에러 반환
-    if (!stockResult.success) {
-      logger.error("재고 부족으로 결제 취소", {
-        orderId: order.id,
-        insufficientStock: stockResult.insufficientStock,
+    // 재고 처리 분기: 선점 패턴 사용 여부에 따라 다르게 처리
+    // @ts-ignore - isStockReserved는 새로 추가된 필드
+    if (order.isStockReserved) {
+      // 선점 패턴 사용: 이미 재고가 차감되어 있으므로 상태만 업데이트
+      await storage.updateOrderPayment(order.id, {
+        paymentProvider: "naverpay",
+        paymentKey: detail.paymentId,
+        externalOrderId: detail.merchantPayKey,
+        paymentMethod: detail.primaryPayMeans?.toLowerCase() || "naverpay",
+        status: "payment_confirmed",
+        paidAt: new Date(),
+      });
+      logger.info("결제 승인 완료 (선점 패턴 - 재고 이미 차감됨)", { orderId: order.id });
+    } else {
+      // 기존 방식: 소프트 락 기반 재고 확인 및 차감 + 주문 상태 업데이트
+      const stockResult = await storage.confirmOrderWithStockLock(order.id, {
+        paymentProvider: "naverpay",
+        paymentKey: detail.paymentId,
+        externalOrderId: detail.merchantPayKey,
+        paymentMethod: detail.primaryPayMeans?.toLowerCase() || "naverpay",
+        paidAt: new Date(),
       });
 
-      // PG사 결제 취소 시도
-      try {
-        await cancelPaymentSimple(
-          detail.paymentId,
-          detail.totalPayAmount,
-          "재고 부족으로 인한 자동 취소",
-          "2", // 가맹점 관리자
-          detail.taxScopeAmount,
-          detail.taxExScopeAmount
-        );
-        logger.info("재고 부족 - PG 결제 취소 완료", { orderId: order.id });
-      } catch (cancelError) {
-        logger.error("재고 부족 - PG 결제 취소 실패", {
+      // 재고 부족 시 PG사 결제 취소 및 에러 반환
+      if (!stockResult.success) {
+        logger.error("재고 부족으로 결제 취소", {
           orderId: order.id,
-          paymentId: detail.paymentId,
-          error: cancelError,
+          insufficientStock: stockResult.insufficientStock,
         });
-      }
 
-      return res.redirect(
-        `${config.frontendUrl}/checkout/fail?message=${encodeURIComponent("재고가 부족합니다")}&code=INSUFFICIENT_STOCK`
-      );
+        // PG사 결제 취소 시도
+        try {
+          await cancelPaymentSimple(
+            detail.paymentId,
+            detail.totalPayAmount,
+            "재고 부족으로 인한 자동 취소",
+            "2", // 가맹점 관리자
+            detail.taxScopeAmount,
+            detail.taxExScopeAmount
+          );
+          logger.info("재고 부족 - PG 결제 취소 완료", { orderId: order.id });
+        } catch (cancelError) {
+          logger.error("재고 부족 - PG 결제 취소 실패", {
+            orderId: order.id,
+            paymentId: detail.paymentId,
+            error: cancelError,
+          });
+        }
+
+        return res.redirect(
+          `${config.frontendUrl}/checkout/fail?message=${encodeURIComponent("재고가 부족합니다")}&code=INSUFFICIENT_STOCK`
+        );
+      }
     }
 
     logger.info("결제 승인 완료", {

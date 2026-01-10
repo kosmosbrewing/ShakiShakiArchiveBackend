@@ -54,3 +54,6 @@ export {
   RATE_LIMIT_MESSAGES,
   VALIDATION_MESSAGES,
 } from "./messages";
+
+// 재고 선점 관련
+export { STOCK_RESERVATION, STOCK_MESSAGES } from "./stock";

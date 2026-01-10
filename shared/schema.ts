@@ -265,6 +265,8 @@ export const orders = pgTable(
       precision: 10,
       scale: 2,
     }).default("0"),
+    // 재고 선점 여부 (선점 패턴 사용 시 true, 결제 승인 시 재고 차감 건너뜀)
+    isStockReserved: boolean("is_stock_reserved").default(false).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -313,6 +315,7 @@ export const createOrderRequestSchema = z.object({
   shippingRequestNote: z.string().optional(),
   paymentMethod: z.enum(["toss", "naverpay"]).optional(),
   directPurchaseItem: directPurchaseItemSchema.optional(),
+  reservationId: z.string().uuid().optional(), // 재고 선점 ID
 });
 export type CreateOrderRequest = z.infer<typeof createOrderRequestSchema>;
 
@@ -797,3 +800,52 @@ export const createInquiryReplySchema = z.object({
   content: z.string().min(1, "답변 내용을 입력해주세요"),
 });
 export type CreateInquiryReplyInput = z.infer<typeof createInquiryReplySchema>;
+
+// ------------------------------------------------------------------
+// 재고 선점 (Stock Reservation) 테이블
+// ------------------------------------------------------------------
+export const stockReservations = pgTable(
+  "stock_reservations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    // 선점한 상품 목록 (JSONB)
+    items: jsonb("items").$type<{
+      productId: string;
+      variantId?: string;
+      quantity: number;
+      productName: string;
+    }[]>().notNull(),
+    expiresAt: timestamp("expires_at").notNull(), // 만료 시간
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("IDX_stock_reservations_user_id").on(table.userId),
+    index("IDX_stock_reservations_expires_at").on(table.expiresAt),
+  ]
+);
+
+export type StockReservation = typeof stockReservations.$inferSelect;
+export const insertStockReservationSchema = createInsertSchema(stockReservations, {
+  userId: z.string().uuid(),
+}).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertStockReservation = z.infer<typeof insertStockReservationSchema>;
+
+// 재고 선점 요청 스키마
+export const reserveStockItemSchema = z.object({
+  productId: z.string().uuid("유효한 상품 ID가 아닙니다"),
+  variantId: z.string().uuid("유효한 옵션 ID가 아닙니다").optional(),
+  quantity: z.number().int().min(1, "최소 1개 이상"),
+});
+export type ReserveStockItem = z.infer<typeof reserveStockItemSchema>;
+
+export const reserveStockRequestSchema = z.object({
+  items: z.array(reserveStockItemSchema).min(1, "선점할 상품이 없습니다"),
+  directPurchaseItem: directPurchaseItemSchema.optional(),
+});
+export type ReserveStockRequest = z.infer<typeof reserveStockRequestSchema>;

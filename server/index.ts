@@ -14,6 +14,7 @@ import {
 } from "./middleware";
 import routes from "./routes";
 import { meilisearchService } from "./services/meilisearch.service";
+import { startReservationCleanup } from "./routes/stock.routes";
 import { testConnection } from "./db";
 import { createLogger, getCurrentLogLevel } from "./utils/logger";
 
@@ -97,5 +98,8 @@ httpServer.listen(
         error: error instanceof Error ? error.message : String(error),
       });
     }
+
+    // 재고 선점 자동 정리 시작
+    startReservationCleanup();
   }
 );

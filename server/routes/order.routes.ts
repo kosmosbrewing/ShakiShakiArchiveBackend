@@ -3,9 +3,10 @@
 
 import { Router } from "express";
 import { storage } from "../storage";
+import { db } from "../db";
 import { isAuthenticated } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
-import { insertOrderSchema, createOrderRequestSchema } from "@shared/schema";
+import { insertOrderSchema, createOrderRequestSchema, stockReservations } from "@shared/schema";
 import {
   calculateShippingFee,
   generateExternalOrderId,
@@ -14,10 +15,12 @@ import {
   ORDER_MESSAGES,
   AUTH_MESSAGES,
   TOSS_PAYMENT_STATUS,
+  STOCK_MESSAGES,
 } from "../constants";
 import type { OrderItemCreateData } from "../types";
 import { cancelPayment, TossPaymentError } from "../services/toss.service";
 import { createLogger } from "../utils/logger";
+import { eq, and, gt } from "drizzle-orm";
 
 const router = Router();
 const logger = createLogger("Order");
@@ -28,7 +31,30 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
 
   // 입력값 검증
   const validatedBody = createOrderRequestSchema.parse(req.body);
-  const { directPurchaseItem } = validatedBody;
+  const { directPurchaseItem, reservationId } = validatedBody;
+
+  // 재고 선점 검증 (reservationId가 제공된 경우)
+  if (reservationId) {
+    const [reservation] = await db
+      .select()
+      .from(stockReservations)
+      .where(
+        and(
+          eq(stockReservations.id, reservationId),
+          eq(stockReservations.userId, userId),
+          gt(stockReservations.expiresAt, new Date())
+        )
+      );
+
+    if (!reservation) {
+      return res.status(400).json({
+        message: STOCK_MESSAGES.RESERVATION_EXPIRED,
+        code: "RESERVATION_INVALID",
+      });
+    }
+
+    logger.info("재고 선점 확인됨", { userId, reservationId });
+  }
 
   let orderItemsData: OrderItemCreateData[];
   let subtotal: number;
@@ -112,10 +138,25 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
     shippingDetailAddress: validatedBody.shippingDetailAddress,
     shippingRequestNote: validatedBody.shippingRequestNote,
     externalOrderId,
+    // 재고 선점 사용 여부 (결제 승인 시 재고 차감 건너뜀)
+    isStockReserved: !!reservationId,
   });
 
   // 주문 생성 (트랜잭션 적용됨)
   const orderId = await storage.createOrder(orderData, orderItemsData);
+
+  // 재고 선점 삭제 (주문 생성 성공 시)
+  if (reservationId) {
+    try {
+      await db
+        .delete(stockReservations)
+        .where(eq(stockReservations.id, reservationId));
+      logger.info("재고 선점 삭제 완료", { userId, reservationId, orderId });
+    } catch (error) {
+      // 선점 삭제 실패해도 주문은 계속 진행 (TTL로 자동 삭제됨)
+      logger.warn("재고 선점 삭제 실패", { reservationId, error });
+    }
+  }
 
   // 장바구니 비우기는 결제 완료 시점에 수행 (payment.routes.ts)
 
