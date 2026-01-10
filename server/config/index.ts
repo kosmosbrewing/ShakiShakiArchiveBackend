@@ -87,6 +87,16 @@ export const config = {
     isEnabled: !!process.env.NAVER_CLIENT_ID,
   },
 
+  // 카카오 OAuth 설정
+  kakao: {
+    clientId: process.env.KAKAO_CLIENT_ID || "", // REST API 키
+    clientSecret: process.env.KAKAO_CLIENT_SECRET || "", // Client Secret (선택)
+    callbackUrl:
+      process.env.KAKAO_CALLBACK_URL ||
+      "http://localhost:8080/api/oauth/kakao/callback",
+    isEnabled: !!process.env.KAKAO_CLIENT_ID,
+  },
+
   // 네이버페이 결제 설정
   naverpay: {
     clientId: process.env.NAVERPAY_CLIENT_ID || "",

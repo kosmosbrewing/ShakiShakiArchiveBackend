@@ -44,6 +44,19 @@ router.post("/", isAuthenticated, isAdmin, asyncHandler(async (req, res) => {
   const validatedData = insertProductSchema.parse(req.body);
   const product = await storage.createProduct(validatedData);
 
+  // 기본 variant 자동 생성 (옵션이 없는 상품을 위한 ONE_SIZE)
+  // 프론트엔드에서 별도로 variant를 생성하지 않은 경우를 대비
+  const existingVariants = await storage.getProductVariants(product.id);
+  if (existingVariants.length === 0) {
+    await storage.createProductVariant({
+      productId: product.id,
+      size: "ONE_SIZE",
+      stockQuantity: 0, // 기본 재고 0, 관리자가 수동으로 설정해야 함
+      isAvailable: true,
+    });
+    logger.info("기본 variant(ONE_SIZE) 자동 생성", { productId: product.id });
+  }
+
   // Meilisearch 인덱싱 (동기로 변경하여 결과 확인)
   let searchIndexResult: { success: boolean; warning?: string };
   if (product.categoryId) {

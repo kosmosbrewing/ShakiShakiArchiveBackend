@@ -48,6 +48,7 @@ export const users = pgTable("users", {
 
   // [추가] 소셜 로그인 관련 필드
   naverId: varchar("naver_id", { length: 100 }).unique(), // 네이버 고유 ID
+  kakaoId: varchar("kakao_id", { length: 100 }).unique(), // 카카오 고유 ID
   socialProvider: varchar("social_provider", { length: 20 }), // 'naver', 'kakao' 등
 
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -113,7 +114,6 @@ export const products = pgTable(
     imageUrl: varchar("image_url"),
     images: text("images").array(),
     detailImages: text("detail_images").array(),
-    stockQuantity: integer("stock_quantity").default(0).notNull(),
     isAvailable: boolean("is_available").default(true).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),

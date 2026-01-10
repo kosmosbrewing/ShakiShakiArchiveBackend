@@ -20,7 +20,6 @@ export interface ProductDocument {
   categoryName: string | null;
   categorySlug: string | null;
   imageUrl: string | null;
-  stockQuantity: number;
   isAvailable: boolean;
   createdAt: number; // timestamp for sorting
   updatedAt: number;
@@ -167,7 +166,6 @@ class MeilisearchService {
       categoryName: category?.name || null,
       categorySlug: category?.slug || null,
       imageUrl: product.imageUrl,
-      stockQuantity: product.stockQuantity,
       isAvailable: product.isAvailable,
       createdAt: new Date(product.createdAt).getTime(),
       updatedAt: new Date(product.updatedAt).getTime(),

@@ -12,3 +12,7 @@ dev.sh
 # SSL 인증서 (민감 정보)
 certs/
 *.pem
+backup*.sql
+migrate*.sql
+migrate*.ts
+MIGRAT*.md

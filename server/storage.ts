@@ -58,6 +58,7 @@ export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   getUserByNaverId(naverId: string): Promise<User | undefined>;
+  getUserByKakaoId(kakaoId: string): Promise<User | undefined>;
   createUser(user: Omit<UpsertUser, "id">): Promise<User>;
   upsertUser(user: UpsertUser): Promise<User>;
   updateUser(id: string, user: Partial<UpsertUser>): Promise<User | undefined>;
@@ -66,7 +67,7 @@ export interface IStorage {
   getProducts(filters?: {
     search?: string;
     categoryId?: number;
-  }): Promise<Product[]>;
+  }): Promise<(Product & { totalStock: number })[]>;
   getProduct(id: string): Promise<Product | undefined>;
   getProductBySlug(slug: string): Promise<Product | undefined>;
   createProduct(product: InsertProduct): Promise<Product>;
@@ -280,6 +281,14 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
+  async getUserByKakaoId(kakaoId: string): Promise<User | undefined> {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.kakaoId, kakaoId));
+    return user;
+  }
+
   async createUser(userData: Omit<UpsertUser, "id">): Promise<User> {
     const [user] = await db.insert(users).values(userData).returning();
     return user;
@@ -331,7 +340,7 @@ export class DatabaseStorage implements IStorage {
   async getProducts(filters?: {
     search?: string;
     categoryId?: number;
-  }): Promise<Product[]> {
+  }): Promise<(Product & { totalStock: number })[]> {
     let query = db.select().from(products);
 
     const conditions = [];
@@ -348,7 +357,29 @@ export class DatabaseStorage implements IStorage {
     }
 
     const results = await query.orderBy(desc(products.updatedAt));
-    return results;
+
+    // 각 상품의 variants 재고를 합산하여 totalStock 계산
+    const productsWithStock = await Promise.all(
+      results.map(async (product) => {
+        const variants = await db
+          .select()
+          .from(productVariants)
+          .where(eq(productVariants.productId, product.id));
+
+        // 모든 variants의 stockQuantity 합산
+        const totalStock = variants.reduce(
+          (sum, variant) => sum + (variant.stockQuantity || 0),
+          0
+        );
+
+        return {
+          ...product,
+          totalStock,
+        };
+      })
+    );
+
+    return productsWithStock;
   }
 
   async getProduct(id: string): Promise<Product | undefined> {
@@ -980,36 +1011,53 @@ export class DatabaseStorage implements IStorage {
                 [item.quantity, variant.id]
               );
             }
+          } else {
+            // variant를 찾을 수 없음
+            insufficientStock.push({
+              productName: item.current_product_name,
+              variantSize: variantSize,
+              requested: item.quantity,
+              available: 0,
+            });
           }
         } else {
-          // variant가 없는 경우: products 테이블의 재고 확인
-          const productResult = await client.query(
-            `SELECT id, stock_quantity, name
-             FROM products
-             WHERE id = $1
+          // variant가 없는 경우: 기본 variant(ONE_SIZE) 사용
+          const variantResult = await client.query(
+            `SELECT id, stock_quantity, size
+             FROM product_variants
+             WHERE product_id = $1
+             ORDER BY created_at ASC
+             LIMIT 1
              FOR UPDATE`,
             [item.product_id]
           );
 
-          if (productResult.rows.length > 0) {
-            const product = productResult.rows[0];
-            const available = product.stock_quantity;
+          if (variantResult.rows.length > 0) {
+            const variant = variantResult.rows[0];
+            const available = variant.stock_quantity;
 
             if (available < item.quantity) {
               insufficientStock.push({
-                productName: product.name,
+                productName: item.current_product_name,
                 requested: item.quantity,
                 available: available,
               });
             } else {
               // 재고 차감
               await client.query(
-                `UPDATE products
+                `UPDATE product_variants
                  SET stock_quantity = stock_quantity - $1, updated_at = NOW()
                  WHERE id = $2`,
-                [item.quantity, product.id]
+                [item.quantity, variant.id]
               );
             }
+          } else {
+            // variant가 없음 (데이터 무결성 문제)
+            insufficientStock.push({
+              productName: item.current_product_name,
+              requested: item.quantity,
+              available: 0,
+            });
           }
         }
       }
@@ -1092,7 +1140,7 @@ export class DatabaseStorage implements IStorage {
         }
 
         if (variantSize) {
-          // variant 재고 복구
+          // variant 재고 복구 (사이즈 지정)
           await client.query(
             `UPDATE product_variants
              SET stock_quantity = stock_quantity + $1, updated_at = NOW()
@@ -1100,11 +1148,17 @@ export class DatabaseStorage implements IStorage {
             [item.quantity, item.product_id, variantSize]
           );
         } else {
-          // product 재고 복구
+          // variant 재고 복구 (첫 번째 variant 사용)
           await client.query(
-            `UPDATE products
+            `UPDATE product_variants
              SET stock_quantity = stock_quantity + $1, updated_at = NOW()
-             WHERE id = $2`,
+             WHERE product_id = $2
+             AND id = (
+               SELECT id FROM product_variants
+               WHERE product_id = $2
+               ORDER BY created_at ASC
+               LIMIT 1
+             )`,
             [item.quantity, item.product_id]
           );
         }

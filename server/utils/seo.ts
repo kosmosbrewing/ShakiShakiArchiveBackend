@@ -186,11 +186,10 @@ export function generateProductSeo(
   const description =
     product.description || `${product.name} - ${SITE_CONFIG.name}에서 구매하세요`;
 
-  // 재고 상태 확인
-  const availability =
-    product.isAvailable && product.stockQuantity > 0
-      ? "https://schema.org/InStock"
-      : "https://schema.org/OutOfStock";
+  // 재고 상태 확인 (variant별 재고는 개별 확인 필요, 여기서는 isAvailable만 체크)
+  const availability = product.isAvailable
+    ? "https://schema.org/InStock"
+    : "https://schema.org/OutOfStock";
 
   const openGraph: OpenGraphMeta = {
     title: `${product.name} | ${SITE_CONFIG.name}`,
@@ -203,10 +202,7 @@ export function generateProductSeo(
     product: {
       price: String(product.price),
       currency: SITE_CONFIG.currency,
-      availability:
-        product.isAvailable && product.stockQuantity > 0
-          ? "in stock"
-          : "out of stock",
+      availability: product.isAvailable ? "in stock" : "out of stock",
     },
     twitter: {
       card: "summary_large_image",
