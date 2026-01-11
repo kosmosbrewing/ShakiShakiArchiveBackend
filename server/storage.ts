@@ -43,7 +43,7 @@ import {
   type InquiryType,
 } from "@shared/schema";
 import { db, pool } from "./db";
-import { eq, and, like, desc, isNull, gt, lt, count, sql } from "drizzle-orm";
+import { eq, and, like, desc, isNull, gt, lt, count, sql, inArray } from "drizzle-orm";
 import { createLogger } from "./utils/logger";
 import type {
   OrderItemCreateData,
@@ -280,7 +280,7 @@ export interface IStorage {
     productId?: string;
     type?: InquiryType;
     status?: string;
-  }): Promise<(Inquiry & { user: User; product?: Product | null })[]>;
+  }): Promise<(Inquiry & { user: User; product?: Product | null; replyCount: number })[]>;
   getInquiry(
     id: string
   ): Promise<
@@ -300,6 +300,7 @@ export interface IStorage {
 
   // Inquiry Reply operations
   createInquiryReply(reply: InsertInquiryReply): Promise<InquiryReply>;
+  getInquiryReply(id: number): Promise<InquiryReply | undefined>;
   deleteInquiryReply(id: number): Promise<void>;
 }
 
@@ -2222,7 +2223,7 @@ export class DatabaseStorage implements IStorage {
     productId?: string;
     type?: InquiryType;
     status?: string;
-  }): Promise<(Inquiry & { user: User; product?: Product | null })[]> {
+  }): Promise<(Inquiry & { user: User; product?: Product | null; replyCount: number })[]> {
     const conditions = [];
 
     if (filters?.userId) {
@@ -2251,10 +2252,32 @@ export class DatabaseStorage implements IStorage {
 
     const result = await query.orderBy(desc(inquiries.createdAt));
 
+    // 문의 ID 목록 추출
+    const inquiryIds = result.map((row) => row.inquiries.id);
+
+    // 각 문의별 답변 개수를 단일 쿼리로 조회 (성능 최적화)
+    let replyCountMap = new Map<string, number>();
+    if (inquiryIds.length > 0) {
+      const replyCounts = await db
+        .select({
+          inquiryId: inquiryReplies.inquiryId,
+          count: count(),
+        })
+        .from(inquiryReplies)
+        .where(inArray(inquiryReplies.inquiryId, inquiryIds))
+        .groupBy(inquiryReplies.inquiryId);
+
+      replyCountMap = new Map(
+        replyCounts.map((r) => [r.inquiryId, r.count])
+      );
+    }
+
+    // 결과 매핑 (답변 개수 포함)
     return result.map((row) => ({
       ...row.inquiries,
       user: row.users,
       product: row.products || null,
+      replyCount: replyCountMap.get(row.inquiries.id) || 0,
     }));
   }
 
@@ -2340,6 +2363,14 @@ export class DatabaseStorage implements IStorage {
       .where(eq(inquiries.id, reply.inquiryId));
 
     return newReply;
+  }
+
+  async getInquiryReply(id: number): Promise<InquiryReply | undefined> {
+    const [reply] = await db
+      .select()
+      .from(inquiryReplies)
+      .where(eq(inquiryReplies.id, id));
+    return reply;
   }
 
   async deleteInquiryReply(id: number): Promise<void> {

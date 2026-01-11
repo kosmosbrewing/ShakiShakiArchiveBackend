@@ -238,7 +238,40 @@ router.patch("/:id/status", isAdmin, asyncHandler(async (req, res) => {
   res.json(updated);
 }));
 
-// 답변 삭제 (관리자만)
+// 답변 삭제 (관리자만) - RESTful 엔드포인트
+router.delete("/:inquiryId/replies/:replyId", isAdmin, asyncHandler(async (req, res) => {
+  const { inquiryId, replyId } = req.params;
+  const replyIdNum = parseInt(replyId);
+
+  // 답변 ID 유효성 검사
+  if (isNaN(replyIdNum)) {
+    return res.status(400).json({ message: "유효한 답변 ID가 필요합니다" });
+  }
+
+  // 1. 문의 존재 확인
+  const inquiry = await storage.getInquiry(inquiryId);
+  if (!inquiry) {
+    return res.status(404).json({ message: "문의를 찾을 수 없습니다" });
+  }
+
+  // 2. 답변 존재 확인
+  const reply = await storage.getInquiryReply(replyIdNum);
+  if (!reply) {
+    return res.status(404).json({ message: "답변을 찾을 수 없습니다" });
+  }
+
+  // 3. 해당 답변이 해당 문의에 속하는지 확인
+  if (reply.inquiryId !== inquiryId) {
+    return res.status(400).json({ message: "해당 답변은 이 문의에 속하지 않습니다" });
+  }
+
+  // 4. 답변 삭제
+  await storage.deleteInquiryReply(replyIdNum);
+
+  res.json({ message: "답변이 삭제되었습니다" });
+}));
+
+// 답변 삭제 (관리자만) - 기존 엔드포인트 호환성 유지 (Deprecated)
 router.delete("/replies/:replyId", isAdmin, asyncHandler(async (req, res) => {
   const replyId = parseInt(req.params.replyId);
 
