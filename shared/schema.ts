@@ -224,11 +224,13 @@ export type InsertCartItem = z.infer<typeof insertCartItemSchema>;
 // Order status enum
 export const orderStatusEnum = [
   "pending_payment",
+  "paying",
   "payment_confirmed",
   "preparing",
   "shipped",
   "delivered",
   "cancelled",
+  "refunded",
 ] as const;
 
 export type OrderStatus = (typeof orderStatusEnum)[number];
@@ -265,8 +267,10 @@ export const orders = pgTable(
       precision: 10,
       scale: 2,
     }).default("0"),
-    // 재고 선점 여부 (선점 패턴 사용 시 true, 결제 승인 시 재고 차감 건너뜀)
-    isStockReserved: boolean("is_stock_reserved").default(false).notNull(),
+    // 재고 선점 여부 (주문 생성 시 재고 차감하므로 항상 true)
+    // - 주문 생성 시: storage.createOrder()가 재고 차감 → isStockReserved = true
+    // - 결제 승인 시: updateOrderPayment()로 상태만 업데이트 (재고 차감 안 함)
+    isStockReserved: boolean("is_stock_reserved").default(true).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },

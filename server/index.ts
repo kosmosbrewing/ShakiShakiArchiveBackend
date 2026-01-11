@@ -15,6 +15,7 @@ import {
 import routes from "./routes";
 import { meilisearchService } from "./services/meilisearch.service";
 import { startReservationCleanup } from "./routes/stock.routes";
+import { startOrderCleanup } from "./utils/orderCleanup";
 import { testConnection } from "./db";
 import { createLogger, getCurrentLogLevel } from "./utils/logger";
 
@@ -84,6 +85,22 @@ httpServer.listen(
       logLevel: getCurrentLogLevel(),
     });
 
+    // 🔍 환경 변수 설정 확인 (디버깅용)
+    logger.info("환경 변수 설정 상태", {
+      frontendUrl: config.frontendUrl,
+      frontendUrlSource: process.env.FRONTEND_URL ? 'env' : 'default',
+      naverpayEnabled: config.naverpay.isEnabled,
+      naverpayReturnUrl: config.naverpay.isEnabled ? config.naverpay.returnUrl : '(비활성화)',
+      tossEnabled: config.toss.isEnabled,
+    });
+
+    // ⚠️ 개발 환경에서 FRONTEND_URL 미설정 경고
+    if (!config.isProd && !process.env.FRONTEND_URL) {
+      logger.warn("⚠️  FRONTEND_URL 환경 변수가 설정되지 않았습니다. 기본값 사용: " + config.frontendUrl);
+      logger.warn("   네이버페이 결제 완료 후 " + config.frontendUrl + " 로 리다이렉트됩니다.");
+      logger.warn("   다른 포트를 사용 중이라면 .env 파일에 FRONTEND_URL을 설정하세요.");
+    }
+
     // DB 연결 테스트
     const dbConnected = await testConnection();
     if (!dbConnected) {
@@ -101,5 +118,8 @@ httpServer.listen(
 
     // 재고 선점 자동 정리 시작
     startReservationCleanup();
+
+    // 유령 주문 자동 정리 시작 (1시간 이상 pending_payment 주문 삭제)
+    startOrderCleanup();
   }
 );

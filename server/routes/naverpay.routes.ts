@@ -95,10 +95,19 @@ function checkNaverPayEnabled(
  * 클라이언트에서 Naver.Pay.create()에 전달할 파라미터 반환
  */
 router.get("/sdk-config", checkNaverPayEnabled, (_req, res) => {
-  res.json({
+  const sdkConfig = {
     ...getNaverPaySDKConfig(),
     returnUrl: config.naverpay.returnUrl,
+  };
+
+  // 🔍 디버깅: SDK 설정 정보 로그
+  logger.info("네이버페이 SDK 설정 반환", {
+    returnUrl: sdkConfig.returnUrl,
+    mode: sdkConfig.mode,
+    clientId: sdkConfig.clientId?.substring(0, 10) + '***',
   });
+
+  res.json(sdkConfig);
 });
 
 /**
@@ -132,13 +141,17 @@ router.get("/callback", asyncHandler(async (req, res) => {
     resultMessage?: string;
   };
 
-  // 디버깅: 콜백 진입 로그
+  // 🔍 디버깅: 콜백 진입 로그 (환경 변수 확인)
   logger.info("네이버페이 콜백 진입", {
     orderId,
     paymentId,
     resultCode,
     resultMessage,
     fullQuery: req.query,
+    // 중요: 프론트엔드 URL 설정 확인
+    frontendUrl: config.frontendUrl,
+    naverpayReturnUrl: config.naverpay.returnUrl,
+    envFrontendUrl: process.env.FRONTEND_URL || '(미설정 - 기본값 사용)',
   });
 
   // 결제 실패 시
@@ -161,27 +174,48 @@ router.get("/callback", asyncHandler(async (req, res) => {
       cleaned: cleanMessage
     });
 
-    return res.redirect(
-      `${config.frontendUrl}/checkout/fail?message=${encodeURIComponent(cleanMessage)}`
-    );
+    // ✅ URL 클래스를 사용한 안전한 리다이렉트 URL 생성
+    const failUrl = new URL('/checkout/fail', config.frontendUrl);
+    if (orderId) {
+      failUrl.searchParams.set('orderId', orderId);
+    }
+    failUrl.searchParams.set('message', cleanMessage);
+
+    logger.info("🔴 결제 실패 - 프론트엔드로 리다이렉트", {
+      redirectUrl: failUrl.toString(),
+      frontendUrl: config.frontendUrl,
+    });
+
+    return res.redirect(failUrl.toString());
   }
 
   if (!orderId) {
-    return res.redirect(
-      `${config.frontendUrl}/checkout/fail?message=${encodeURIComponent("주문 정보가 없습니다")}`
-    );
+    // ✅ URL 클래스를 사용한 안전한 리다이렉트 URL 생성
+    const failUrl = new URL('/checkout/fail', config.frontendUrl);
+    failUrl.searchParams.set('message', '주문 정보가 없습니다');
+    return res.redirect(failUrl.toString());
   }
 
   // 주문 조회
   const order = await storage.getOrder(orderId);
   if (!order) {
-    return res.redirect(
-      `${config.frontendUrl}/checkout/fail?message=${encodeURIComponent("주문을 찾을 수 없습니다")}`
-    );
+    // ✅ URL 클래스를 사용한 안전한 리다이렉트 URL 생성
+    const failUrl = new URL('/checkout/fail', config.frontendUrl);
+    failUrl.searchParams.set('orderId', orderId);
+    failUrl.searchParams.set('message', '주문을 찾을 수 없습니다');
+    return res.redirect(failUrl.toString());
   }
 
-  // 이미 처리된 주문인지 확인
-  if (order.status !== "pending_payment") {
+  // 결제 가능 상태 확인
+  // pending_payment: 주문 생성 직후
+  // paying: 결제창 오픈 후
+  const payableStatuses = ["pending_payment", "paying"];
+  if (!payableStatuses.includes(order.status)) {
+    logger.warn("결제 불가능한 주문 상태 (네이버페이)", {
+      orderId: order.id,
+      currentStatus: order.status,
+      payableStatuses,
+    });
     return res.redirect(
       `${config.frontendUrl}/orders/${orderId}?already_paid=true`
     );
@@ -224,7 +258,22 @@ router.get("/callback", asyncHandler(async (req, res) => {
 
     // 재고 처리 분기: 선점 패턴 사용 여부에 따라 다르게 처리
     // @ts-ignore - isStockReserved는 새로 추가된 필드
+
+    // 🔍 디버깅: isStockReserved 값과 실행 경로 확인
+    logger.info("🔍 네이버페이 결제 승인 - 재고 처리 분기 확인", {
+      orderId: order.id,
+      externalOrderId: order.externalOrderId,
+      isStockReserved: order.isStockReserved,
+      status: order.status,
+      willSkipStockCheck: !!order.isStockReserved,
+      message: order.isStockReserved
+        ? "✅ 재고 이미 차감됨 - 재고 체크 건너뜀"
+        : "❌ 재고 미차감 - 소프트 락 실행",
+    });
+
     if (order.isStockReserved) {
+      logger.info("✅ 재고 이미 차감됨 - updateOrderPayment만 호출 (네이버페이)", { orderId: order.id });
+
       // 선점 패턴 사용: 이미 재고가 차감되어 있으므로 상태만 업데이트
       await storage.updateOrderPayment(order.id, {
         paymentProvider: "naverpay",
@@ -248,6 +297,12 @@ router.get("/callback", asyncHandler(async (req, res) => {
 
       logger.info("결제 승인 완료 (선점 패턴 - 재고 이미 차감됨)", { orderId: order.id });
     } else {
+      logger.warn("❌ 소프트 락 방식 실행 (deprecated) - 이중 차감 위험! (네이버페이)", {
+        orderId: order.id,
+        isStockReserved: order.isStockReserved,
+        warning: "주문 생성 시 isStockReserved를 true로 설정해야 합니다!",
+      });
+
       // 기존 방식: 소프트 락 기반 재고 확인 및 차감 + 주문 상태 업데이트
       const stockResult = await storage.confirmOrderWithStockLock(order.id, {
         paymentProvider: "naverpay",
@@ -283,9 +338,12 @@ router.get("/callback", asyncHandler(async (req, res) => {
           });
         }
 
-        return res.redirect(
-          `${config.frontendUrl}/checkout/fail?message=${encodeURIComponent("재고가 부족합니다")}&code=INSUFFICIENT_STOCK`
-        );
+        // ✅ URL 클래스를 사용한 안전한 리다이렉트 URL 생성
+        const failUrl = new URL('/checkout/fail', config.frontendUrl);
+        failUrl.searchParams.set('orderId', orderId);
+        failUrl.searchParams.set('message', '재고가 부족합니다');
+        failUrl.searchParams.set('code', 'INSUFFICIENT_STOCK');
+        return res.redirect(failUrl.toString());
       }
     }
 
@@ -295,9 +353,23 @@ router.get("/callback", asyncHandler(async (req, res) => {
       totalPayAmount: detail.totalPayAmount,
     });
 
-    // 프론트엔드 결제 완료 페이지로 리다이렉트
-    // result=success 쿼리 파라미터 추가 (PaymentCallback.vue가 이를 확인함)
-    res.redirect(`${config.frontendUrl}/checkout/success?result=success&orderId=${orderId}`);
+    // ✅ URL 클래스를 사용한 안전한 리다이렉트 URL 생성
+    const successUrl = new URL('/checkout/success', config.frontendUrl);
+    successUrl.searchParams.set('result', 'success');
+    successUrl.searchParams.set('orderId', orderId);
+    successUrl.searchParams.set('provider', 'naverpay');
+    successUrl.searchParams.set('externalOrderId', detail.merchantPayKey || detail.paymentId);
+    successUrl.searchParams.set('orderName', 'ShakiShaki 주문');
+    successUrl.searchParams.set('amount', detail.totalPayAmount.toString());
+
+    logger.info("✅ 결제 성공 - 프론트엔드로 리다이렉트", {
+      redirectUrl: successUrl.toString(),
+      frontendUrl: config.frontendUrl,
+      orderId,
+      amount: detail.totalPayAmount,
+    });
+
+    return res.redirect(successUrl.toString());
   } catch (error) {
     // 디버깅: 에러 타입 확인
     logger.error("결제 콜백 에러 (상세)", {
@@ -325,15 +397,18 @@ router.get("/callback", asyncHandler(async (req, res) => {
       });
     }
 
-    const redirectUrl = `${config.frontendUrl}/checkout/fail?message=${encodeURIComponent(message)}`;
+    // ✅ URL 클래스를 사용한 안전한 리다이렉트 URL 생성
+    const failUrl = new URL('/checkout/fail', config.frontendUrl);
+    failUrl.searchParams.set('orderId', orderId);
+    failUrl.searchParams.set('message', message);
 
-    logger.info("프론트엔드로 리다이렉트", {
+    logger.info("🔴 결제 에러 - 프론트엔드로 리다이렉트", {
       message: message,
-      redirectUrl: redirectUrl,
+      redirectUrl: failUrl.toString(),
       frontendUrl: config.frontendUrl,
     });
 
-    res.redirect(redirectUrl);
+    return res.redirect(failUrl.toString());
   }
 }));
 
@@ -550,16 +625,8 @@ router.post(
         logger.error("재고 복구 실패", { orderId, error: restoreError });
       }
 
-      // 재고 선점 기록 삭제 (선점 패턴 사용 시)
-      try {
-        await db
-          .delete(stockReservations)
-          .where(eq(stockReservations.userId, order.userId));
-        logger.info("재고 선점 기록 삭제 완료 (취소)", { userId: order.userId, orderId });
-      } catch (deleteError) {
-        // 선점 기록 삭제 실패 시 로그만 남기고 계속 진행
-        logger.error("재고 선점 기록 삭제 실패 (취소)", { userId: order.userId, orderId, error: deleteError });
-      }
+      // 🔒 Option A: 재고 선점 패턴 제거로 인해 불필요 (주석 처리)
+      // 재고는 restoreStockOnCancel()에서 복구됨
     }
 
     logger.info("결제 취소 완료", {

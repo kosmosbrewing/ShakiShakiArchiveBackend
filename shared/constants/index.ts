@@ -56,7 +56,7 @@ export {
 } from "./messages";
 
 // 재고 선점 관련
-export { STOCK_RESERVATION, STOCK_MESSAGES } from "./stock";
+export { STOCK_MESSAGES } from "./stock";
 
 // 로거 관련
 export {

@@ -44,6 +44,7 @@ import {
 } from "@shared/schema";
 import { db, pool } from "./db";
 import { eq, and, like, desc, isNull, gt, lt, count, sql } from "drizzle-orm";
+import { createLogger } from "./utils/logger";
 import type {
   OrderItemCreateData,
   OrderStatusUpdate,
@@ -221,6 +222,18 @@ export interface IStorage {
 
   // 주문 취소 시 재고 복구
   restoreStockOnCancel(orderId: string): Promise<void>;
+
+  // 🔒 Cron Job 전용: 재고 복구 + 주문 삭제 (원자적 트랜잭션)
+  restoreStockAndDeleteOrder(orderId: string): Promise<void>;
+
+  // 🔒 트랜잭션 기반 결제 전 취소 (재고 복구 + 주문/아이템 상태 업데이트)
+  cancelOrderBeforePayment(
+    orderId: string,
+    cancelData: {
+      cancelReason: string;
+      restoreStock: boolean;
+    }
+  ): Promise<Order | undefined>;
 
   // 주문 취소 시 장바구니 복구
   restoreCartItemsFromOrder(userId: string, orderId: string): Promise<void>;
@@ -897,21 +910,152 @@ export class DatabaseStorage implements IStorage {
     order: InsertOrder,
     items: OrderItemCreateData[]
   ): Promise<string> { // UUID 반환
-    // 트랜잭션으로 주문과 주문 아이템을 원자적으로 생성
+    // 🔒 Option A: 주문 생성 시 재고 확인 + 차감 (Self-Lock Bypass 포함)
     const client = await pool.connect();
+    const logger = createLogger("OrderCreate");
+
+    // 🔒 수정: Size 정규화 함수 (Self-Lock Bypass 키 일치 보장)
+    const normalizeSize = (size: string): string => {
+      return size.trim().toLowerCase();
+    };
 
     try {
       await client.query("BEGIN");
 
-      // 🔍 디버깅: 주문 생성 시작
-      console.log('[Storage] 주문 생성 트랜잭션 시작', {
+      logger.info("주문 생성 트랜잭션 시작", {
         userId: order.userId,
         totalAmount: order.totalAmount,
         itemCount: items.length,
-        isStockReserved: order.isStockReserved
       });
 
-      // 1. 주문 생성 (배송 상세주소, 배송요청사항, PG사 주문ID, 재고선점 여부 포함)
+      // 1. 🔒 Self-Lock Bypass: 본인의 pending_payment/paying 주문 확인
+      const userOrdersResult = await client.query(
+        `SELECT oi.product_id, oi.quantity, oi.options
+         FROM orders o
+         JOIN order_items oi ON oi.order_id = o.id
+         WHERE o.user_id = $1
+           AND o.status IN ('pending_payment', 'paying')
+           AND o.created_at > NOW() - INTERVAL '10 minutes'`,
+        [order.userId]
+      );
+
+      // 본인의 주문 아이템을 Map으로 저장 (variantId -> quantity)
+      const userReservedStock = new Map<string, number>();
+      for (const item of userOrdersResult.rows) {
+        // options에서 Size 추출 (Size: XXX 형식)
+        let variantKey = item.product_id; // 기본값은 productId
+        if (item.options) {
+          const match = item.options.match(/Size:\s*(.+?)$/im);
+          if (match) {
+            const size = normalizeSize(match[1]); // 🔒 수정: 정규화 적용
+            variantKey = `${item.product_id}-${size}`;
+          }
+        }
+
+        const existing = userReservedStock.get(variantKey) || 0;
+        userReservedStock.set(variantKey, existing + item.quantity);
+      }
+
+      logger.info("Self-Lock Bypass 확인", {
+        userId: order.userId,
+        existingOrderCount: userOrdersResult.rows.length,
+        reservedItemCount: userReservedStock.size,
+      });
+
+      // 2. 재고 확인 및 차감 (Self-Lock Bypass 적용)
+      const insufficientStock: { productName: string; requested: number; available: number }[] = [];
+
+      for (const item of items) {
+        // options에서 Size 추출
+        let size: string | null = null;
+        if (item.options) {
+          const match = item.options.match(/Size:\s*(.+?)$/im);
+          if (match) {
+            size = match[1].trim();
+          }
+        }
+
+        if (size) {
+          // variant가 있는 경우: SELECT FOR UPDATE로 행 잠금
+          const variantResult = await client.query(
+            `SELECT pv.id, pv.stock_quantity, p.name as product_name
+             FROM product_variants pv
+             JOIN products p ON p.id = pv.product_id
+             WHERE pv.product_id = $1 AND pv.size = $2
+             FOR UPDATE`,
+            [item.productId, size]
+          );
+
+          if (variantResult.rows.length === 0) {
+            await client.query("ROLLBACK");
+            throw new Error(`상품 옵션을 찾을 수 없습니다: ${item.productName} (Size: ${size})`);
+          }
+
+          const variant = variantResult.rows[0];
+          const availableStock = variant.stock_quantity;
+
+          // 🔒 Self-Lock Bypass: 본인 차감 재고 복구
+          const variantKey = `${item.productId}-${normalizeSize(size)}`; // 🔒 수정: 정규화 적용
+          const userReserved = userReservedStock.get(variantKey) || 0;
+          const effectiveStock = availableStock + userReserved;
+
+          if (effectiveStock < item.quantity) {
+            insufficientStock.push({
+              productName: item.productName,
+              requested: item.quantity,
+              available: effectiveStock, // 🔒 수정: Self-Lock Bypass 적용된 재고 표시
+            });
+            continue; // 🔒 수정: 재고 부족 시 차감하지 않고 다음 아이템으로
+          }
+
+          // 재고 차감
+          await client.query(
+            `UPDATE product_variants
+             SET stock_quantity = stock_quantity - $1, updated_at = NOW()
+             WHERE id = $2`,
+            [item.quantity, variant.id]
+          );
+
+          logger.info("재고 차감 완료", {
+            productId: item.productId,
+            size,
+            quantity: item.quantity,
+            before: availableStock,
+            after: availableStock - item.quantity,
+            selfLockBypass: userReserved > 0,
+          });
+        } else {
+          // 🔒 수정: variant(옵션) 정보가 없으면 에러 (fallback 제거)
+          await client.query("ROLLBACK");
+          throw new Error(
+            `상품 옵션 정보가 누락되었습니다: ${item.productName}. ` +
+            `상품에 옵션(사이즈)이 있는 경우 반드시 선택해야 합니다.`
+          );
+        }
+      }
+
+      // 3. 재고 부족 시 롤백
+      if (insufficientStock.length > 0) {
+        await client.query("ROLLBACK");
+        logger.warn("재고 부족으로 주문 생성 실패", {
+          userId: order.userId,
+          insufficientStock,
+        });
+        throw new Error(
+          `재고가 부족합니다: ${insufficientStock.map(s => `${s.productName} (요청: ${s.requested}개, 재고: ${s.available}개)`).join(", ")}`
+        );
+      }
+
+      // 4. 주문 생성
+      const isStockReservedValue = order.isStockReserved ?? true;
+
+      logger.info("🔍 주문 생성 - isStockReserved 값 확인", {
+        userId: order.userId,
+        receivedValue: order.isStockReserved,
+        finalValue: isStockReservedValue,
+        message: "✅ DB에 저장될 값",
+      });
+
       const orderResult = await client.query(
         `INSERT INTO orders (user_id, total_amount, status, shipping_name, shipping_phone, shipping_postal_code, shipping_address, shipping_detail_address, shipping_request_note, external_order_id, is_stock_reserved)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
@@ -926,14 +1070,17 @@ export class DatabaseStorage implements IStorage {
           order.shippingDetailAddress || null,
           order.shippingRequestNote || null,
           order.externalOrderId || null,
-          order.isStockReserved || false,
+          isStockReservedValue, // 🔒 CRITICAL: 주문 생성 시 재고 차감하므로 true (이중 차감 방지)
         ]
       );
       const orderId = orderResult.rows[0].id;
 
-      console.log('[Storage] 주문 테이블 삽입 완료', { orderId });
+      logger.info("주문 테이블 삽입 완료", {
+        orderId,
+        isStockReserved: isStockReservedValue,
+      });
 
-      // 2. 주문 아이템 생성
+      // 5. 주문 아이템 생성
       for (const item of items) {
         await client.query(
           `INSERT INTO order_items (order_id, product_id, product_name, product_price, quantity, options, status)
@@ -950,20 +1097,20 @@ export class DatabaseStorage implements IStorage {
         );
       }
 
-      console.log('[Storage] 주문 아이템 삽입 완료', { orderId, itemCount: items.length });
+      logger.info("주문 아이템 삽입 완료", { orderId, itemCount: items.length });
 
       await client.query("COMMIT");
 
-      console.log('[Storage] 트랜잭션 커밋 완료', { orderId });
+      logger.info("주문 생성 완료", { orderId, userId: order.userId });
 
       return orderId;
     } catch (error) {
       await client.query("ROLLBACK");
 
-      console.error('[Storage] 주문 생성 실패 (롤백)', {
+      logger.error("주문 생성 실패", {
         error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined, // 🔒 수정: stack trace 추가
         userId: order.userId,
-        stack: error instanceof Error ? error.stack : undefined
       });
 
       throw error;
@@ -1111,20 +1258,57 @@ export class DatabaseStorage implements IStorage {
       paidAt?: Date;
     }
   ): Promise<Order | undefined> {
-    const [updated] = await db
-      .update(orders)
-      .set({
-        paymentProvider: paymentData.paymentProvider,
-        paymentKey: paymentData.paymentKey,
-        externalOrderId: paymentData.externalOrderId,
-        paymentMethod: paymentData.paymentMethod,
-        status: paymentData.status,
-        paidAt: paymentData.paidAt,
-        updatedAt: getKSTDate(),
-      })
-      .where(eq(orders.id, orderId))
-      .returning();
-    return updated;
+    // 🔒 트랜잭션으로 주문 및 주문 아이템 상태 동시 업데이트
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      // 1. 주문 상태 업데이트
+      const orderResult = await client.query(
+        `UPDATE orders
+         SET payment_provider = $1,
+             payment_key = $2,
+             external_order_id = $3,
+             payment_method = $4,
+             status = $5,
+             paid_at = $6,
+             updated_at = NOW()
+         WHERE id = $7
+         RETURNING *`,
+        [
+          paymentData.paymentProvider,
+          paymentData.paymentKey,
+          paymentData.externalOrderId,
+          paymentData.paymentMethod || null,
+          paymentData.status,
+          paymentData.paidAt || null,
+          orderId,
+        ]
+      );
+
+      if (orderResult.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return undefined;
+      }
+
+      // 2. 주문 아이템 상태 일괄 업데이트
+      await client.query(
+        `UPDATE order_items
+         SET status = $1
+         WHERE order_id = $2`,
+        [paymentData.status, orderId]
+      );
+
+      await client.query("COMMIT");
+
+      return orderResult.rows[0] as Order;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async getOrderByExternalOrderId(
@@ -1146,18 +1330,53 @@ export class DatabaseStorage implements IStorage {
       refundedAmount?: string;
     }
   ): Promise<Order | undefined> {
-    const [updated] = await db
-      .update(orders)
-      .set({
-        status: cancelData.status,
-        canceledAt: cancelData.canceledAt,
-        cancelReason: cancelData.cancelReason,
-        refundedAmount: cancelData.refundedAmount,
-        updatedAt: getKSTDate(),
-      })
-      .where(eq(orders.id, orderId))
-      .returning();
-    return updated;
+    // 🔒 트랜잭션으로 주문 및 주문 아이템 상태 동시 업데이트
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      // 1. 주문 상태 업데이트
+      const orderResult = await client.query(
+        `UPDATE orders
+         SET status = $1,
+             canceled_at = $2,
+             cancel_reason = $3,
+             refunded_amount = $4,
+             updated_at = NOW()
+         WHERE id = $5
+         RETURNING *`,
+        [
+          cancelData.status,
+          cancelData.canceledAt,
+          cancelData.cancelReason,
+          cancelData.refundedAmount || null,
+          orderId,
+        ]
+      );
+
+      if (orderResult.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return undefined;
+      }
+
+      // 2. 주문 아이템 상태 일괄 업데이트
+      await client.query(
+        `UPDATE order_items
+         SET status = $1
+         WHERE order_id = $2`,
+        [cancelData.status, orderId]
+      );
+
+      await client.query("COMMIT");
+
+      return orderResult.rows[0] as Order;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   // ------------------------------------------------------------------
@@ -1185,7 +1404,10 @@ export class DatabaseStorage implements IStorage {
       }
 
       const order = orderResult.rows[0];
-      if (order.status !== "pending_payment") {
+      // pending_payment: 주문 생성 직후
+      // paying: 결제창 오픈 후 (PUT /api/orders/:id/status/paying 호출 후)
+      const validStatuses = ["pending_payment", "paying"];
+      if (!validStatuses.includes(order.status)) {
         await client.query("ROLLBACK");
         return { success: false, orderId, error: "이미 처리된 주문입니다" };
       }
@@ -1350,6 +1572,12 @@ export class DatabaseStorage implements IStorage {
   // ------------------------------------------------------------------
   async restoreStockOnCancel(orderId: string): Promise<void> {
     const client = await pool.connect();
+    const logger = createLogger("StockRestore");
+
+    // 🔒 normalizeSize 함수 (createOrder와 동일)
+    const normalizeSize = (size: string): string => {
+      return size.trim().toLowerCase();
+    };
 
     try {
       await client.query("BEGIN");
@@ -1362,27 +1590,48 @@ export class DatabaseStorage implements IStorage {
         [orderId]
       );
 
+      logger.info("재고 복구 시작", {
+        orderId,
+        itemCount: itemsResult.rows.length,
+      });
+
       for (const item of itemsResult.rows) {
-        // 옵션에서 사이즈 추출
+        // 옵션에서 사이즈 추출 (공백 포함된 사이즈도 처리: "X Large", "Free Size" 등)
         let variantSize: string | null = null;
         if (item.options) {
-          const match = item.options.match(/Size:\s*(\S+)/i);
+          const match = item.options.match(/Size:\s*(.+?)$/im);
           if (match) {
-            variantSize = match[1];
+            // 🔒 normalizeSize 적용 (createOrder와 동일하게)
+            variantSize = normalizeSize(match[1]);
           }
         }
 
         if (variantSize) {
           // variant 재고 복구 (사이즈 지정)
-          await client.query(
+          const updateResult = await client.query(
             `UPDATE product_variants
              SET stock_quantity = stock_quantity + $1, updated_at = NOW()
-             WHERE product_id = $2 AND size = $3`,
+             WHERE product_id = $2 AND LOWER(TRIM(size)) = $3
+             RETURNING id, size, stock_quantity`,
             [item.quantity, item.product_id, variantSize]
           );
+
+          if (updateResult.rows.length > 0) {
+            logger.info("재고 복구 완료 (variant)", {
+              productId: item.product_id,
+              size: updateResult.rows[0].size,
+              quantity: item.quantity,
+              newStock: updateResult.rows[0].stock_quantity,
+            });
+          } else {
+            logger.warn("재고 복구 실패 - variant 찾을 수 없음", {
+              productId: item.product_id,
+              size: variantSize,
+            });
+          }
         } else {
           // variant 재고 복구 (첫 번째 variant 사용)
-          await client.query(
+          const updateResult = await client.query(
             `UPDATE product_variants
              SET stock_quantity = stock_quantity + $1, updated_at = NOW()
              WHERE product_id = $2
@@ -1391,13 +1640,280 @@ export class DatabaseStorage implements IStorage {
                WHERE product_id = $2
                ORDER BY created_at ASC
                LIMIT 1
-             )`,
+             )
+             RETURNING id, size, stock_quantity`,
             [item.quantity, item.product_id]
           );
+
+          if (updateResult.rows.length > 0) {
+            logger.info("재고 복구 완료 (기본 variant)", {
+              productId: item.product_id,
+              size: updateResult.rows[0].size,
+              quantity: item.quantity,
+              newStock: updateResult.rows[0].stock_quantity,
+            });
+          }
         }
       }
 
       await client.query("COMMIT");
+      logger.info("재고 복구 트랜잭션 완료", { orderId });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      logger.error("재고 복구 실패 - 롤백", {
+        orderId,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // 🔒 Cron Job 전용: 재고 복구 + 주문 삭제 (원자적 트랜잭션)
+  // 재고 복구 성공 후 주문 삭제 실패 시 중복 재고 복구 방지
+  // ------------------------------------------------------------------
+  async restoreStockAndDeleteOrder(orderId: string): Promise<void> {
+    const client = await pool.connect();
+    const logger = createLogger("RestoreAndDelete");
+
+    // 🔒 normalizeSize 함수 (createOrder와 동일)
+    const normalizeSize = (size: string): string => {
+      return size.trim().toLowerCase();
+    };
+
+    try {
+      await client.query("BEGIN");
+
+      // 1. 주문 아이템 조회
+      const itemsResult = await client.query(
+        `SELECT oi.product_id, oi.quantity, oi.options
+         FROM order_items oi
+         WHERE oi.order_id = $1`,
+        [orderId]
+      );
+
+      logger.info("재고 복구 및 주문 삭제 시작 (Cron)", {
+        orderId,
+        itemCount: itemsResult.rows.length,
+      });
+
+      // 2. 재고 복구
+      for (const item of itemsResult.rows) {
+        // 옵션에서 사이즈 추출
+        let variantSize: string | null = null;
+        if (item.options) {
+          const match = item.options.match(/Size:\s*(.+?)$/im);
+          if (match) {
+            variantSize = normalizeSize(match[1]);
+          }
+        }
+
+        if (variantSize) {
+          // variant 재고 복구 (사이즈 지정)
+          const updateResult = await client.query(
+            `UPDATE product_variants
+             SET stock_quantity = stock_quantity + $1, updated_at = NOW()
+             WHERE product_id = $2 AND LOWER(TRIM(size)) = $3
+             RETURNING id, size, stock_quantity`,
+            [item.quantity, item.product_id, variantSize]
+          );
+
+          if (updateResult.rows.length > 0) {
+            logger.info("재고 복구 완료 (variant)", {
+              productId: item.product_id,
+              size: updateResult.rows[0].size,
+              quantity: item.quantity,
+              newStock: updateResult.rows[0].stock_quantity,
+            });
+          } else {
+            logger.warn("재고 복구 실패 - variant 찾을 수 없음", {
+              productId: item.product_id,
+              size: variantSize,
+            });
+          }
+        } else {
+          // variant 재고 복구 (첫 번째 variant 사용)
+          const updateResult = await client.query(
+            `UPDATE product_variants
+             SET stock_quantity = stock_quantity + $1, updated_at = NOW()
+             WHERE product_id = $2
+             AND id = (
+               SELECT id FROM product_variants
+               WHERE product_id = $2
+               ORDER BY created_at ASC
+               LIMIT 1
+             )
+             RETURNING id, size, stock_quantity`,
+            [item.quantity, item.product_id]
+          );
+
+          if (updateResult.rows.length > 0) {
+            logger.info("재고 복구 완료 (기본 variant)", {
+              productId: item.product_id,
+              size: updateResult.rows[0].size,
+              quantity: item.quantity,
+              newStock: updateResult.rows[0].stock_quantity,
+            });
+          }
+        }
+      }
+
+      // 3. 주문 및 주문 아이템 삭제 (CASCADE)
+      const deleteResult = await client.query(
+        `DELETE FROM orders WHERE id = $1 RETURNING id, external_order_id`,
+        [orderId]
+      );
+
+      if (deleteResult.rows.length > 0) {
+        logger.info("주문 삭제 완료", {
+          orderId,
+          externalOrderId: deleteResult.rows[0].external_order_id,
+        });
+      }
+
+      await client.query("COMMIT");
+      logger.info("재고 복구 및 주문 삭제 트랜잭션 완료 (Cron)", { orderId });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      logger.error("재고 복구 및 주문 삭제 실패 - 롤백", {
+        orderId,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // 🔒 트랜잭션 기반 결제 전 취소
+  // 재고 복구 + 주문 상태 업데이트 + 아이템 상태 업데이트를 원자적으로 처리
+  // ------------------------------------------------------------------
+  async cancelOrderBeforePayment(
+    orderId: string,
+    cancelData: {
+      cancelReason: string;
+      restoreStock: boolean;
+    }
+  ): Promise<Order | undefined> {
+    const client = await pool.connect();
+    const logger = createLogger("CancelOrderBeforePayment");
+
+    // 🔒 normalizeSize 함수 (createOrder와 동일)
+    const normalizeSize = (size: string): string => {
+      return size.trim().toLowerCase();
+    };
+
+    try {
+      await client.query("BEGIN");
+
+      // 1. 재고 복구 (필요한 경우)
+      if (cancelData.restoreStock) {
+        logger.info("재고 복구 시작 (결제 전 취소)", { orderId });
+
+        // 주문 아이템 조회
+        const itemsResult = await client.query(
+          `SELECT oi.product_id, oi.quantity, oi.options
+           FROM order_items oi
+           WHERE oi.order_id = $1`,
+          [orderId]
+        );
+
+        for (const item of itemsResult.rows) {
+          // 옵션에서 사이즈 추출 (공백 포함된 사이즈도 처리: "X Large", "Free Size" 등)
+          let variantSize: string | null = null;
+          if (item.options) {
+            const match = item.options.match(/Size:\s*(.+?)$/im);
+            if (match) {
+              // 🔒 normalizeSize 적용 (createOrder와 동일하게)
+              variantSize = normalizeSize(match[1]);
+            }
+          }
+
+          if (variantSize) {
+            // variant 재고 복구 (사이즈 지정)
+            const updateResult = await client.query(
+              `UPDATE product_variants
+               SET stock_quantity = stock_quantity + $1, updated_at = NOW()
+               WHERE product_id = $2 AND LOWER(TRIM(size)) = $3
+               RETURNING id, size, stock_quantity`,
+              [item.quantity, item.product_id, variantSize]
+            );
+
+            if (updateResult.rows.length > 0) {
+              logger.info("재고 복구 완료 (variant)", {
+                productId: item.product_id,
+                size: updateResult.rows[0].size,
+                quantity: item.quantity,
+                newStock: updateResult.rows[0].stock_quantity,
+              });
+            } else {
+              logger.warn("재고 복구 실패 - variant 찾을 수 없음", {
+                productId: item.product_id,
+                size: variantSize,
+              });
+            }
+          } else {
+            // variant 재고 복구 (첫 번째 variant 사용)
+            const updateResult = await client.query(
+              `UPDATE product_variants
+               SET stock_quantity = stock_quantity + $1, updated_at = NOW()
+               WHERE product_id = $2
+               AND id = (
+                 SELECT id FROM product_variants
+                 WHERE product_id = $2
+                 ORDER BY created_at ASC
+                 LIMIT 1
+               )
+               RETURNING id, size, stock_quantity`,
+              [item.quantity, item.product_id]
+            );
+
+            if (updateResult.rows.length > 0) {
+              logger.info("재고 복구 완료 (기본 variant)", {
+                productId: item.product_id,
+                size: updateResult.rows[0].size,
+                quantity: item.quantity,
+                newStock: updateResult.rows[0].stock_quantity,
+              });
+            }
+          }
+        }
+
+        logger.info("재고 복구 완료 (결제 전 취소)", { orderId });
+      }
+
+      // 2. 주문 상태 업데이트
+      const orderResult = await client.query(
+        `UPDATE orders
+         SET status = $1,
+             canceled_at = NOW(),
+             cancel_reason = $2,
+             updated_at = NOW()
+         WHERE id = $3
+         RETURNING *`,
+        ["cancelled", cancelData.cancelReason, orderId]
+      );
+
+      // 3. 주문 아이템 상태 일괄 업데이트
+      await client.query(
+        `UPDATE order_items
+         SET status = $1
+         WHERE order_id = $2`,
+        ["cancelled", orderId]
+      );
+
+      await client.query("COMMIT");
+
+      // Drizzle 타입으로 변환하여 반환
+      if (orderResult.rows.length > 0) {
+        return orderResult.rows[0] as Order;
+      }
+      return undefined;
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
@@ -1424,9 +1940,9 @@ export class DatabaseStorage implements IStorage {
       let variantId: string | null = null;
 
       if (item.options) {
-        const match = item.options.match(/Size:\s*(\S+)/i);
+        const match = item.options.match(/Size:\s*(.+?)$/im);
         if (match) {
-          const size = match[1];
+          const size = match[1].trim();
           // 해당 상품의 variant 중 size가 일치하는 것 찾기
           const variants = await this.getProductVariants(item.productId);
           const matchedVariant = variants.find((v) => v.size === size);

@@ -7,6 +7,8 @@
 export const ORDER_STATUS = {
   /** 결제 대기 */
   PENDING_PAYMENT: "pending_payment",
+  /** 결제 진행 중 */
+  PAYING: "paying",
   /** 결제 완료 */
   PAYMENT_CONFIRMED: "payment_confirmed",
   /** 상품 준비 중 */
@@ -15,8 +17,10 @@ export const ORDER_STATUS = {
   SHIPPED: "shipped",
   /** 배송 완료 */
   DELIVERED: "delivered",
-  /** 주문 취소 */
+  /** 주문 취소 (결제 전) */
   CANCELLED: "cancelled",
+  /** 환불 완료 (결제 후 취소) */
+  REFUNDED: "refunded",
 } as const;
 
 export type OrderStatusType = (typeof ORDER_STATUS)[keyof typeof ORDER_STATUS];
@@ -26,21 +30,24 @@ export type OrderStatusType = (typeof ORDER_STATUS)[keyof typeof ORDER_STATUS];
  */
 export const ORDER_STATUS_ENUM = [
   ORDER_STATUS.PENDING_PAYMENT,
+  ORDER_STATUS.PAYING,
   ORDER_STATUS.PAYMENT_CONFIRMED,
   ORDER_STATUS.PREPARING,
   ORDER_STATUS.SHIPPED,
   ORDER_STATUS.DELIVERED,
   ORDER_STATUS.CANCELLED,
+  ORDER_STATUS.REFUNDED,
 ] as const;
 
 /**
  * 취소 불가능한 주문 상태 목록
- * 배송 중, 배송 완료, 이미 취소된 주문은 취소 불가
+ * 배송 중, 배송 완료, 이미 취소/환불된 주문은 취소 불가
  */
 export const NON_CANCELABLE_STATUSES = [
   ORDER_STATUS.SHIPPED,
   ORDER_STATUS.DELIVERED,
   ORDER_STATUS.CANCELLED,
+  ORDER_STATUS.REFUNDED,
 ] as const;
 
 /**

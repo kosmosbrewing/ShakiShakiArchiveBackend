@@ -167,6 +167,7 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
     orderId: order?.id,
     externalOrderId: order?.externalOrderId,
     status: order?.status,
+    userId: order?.userId,
   });
 
   if (!order) {
@@ -212,9 +213,44 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
     return res.status(400).json({ message: "결제 금액이 일치하지 않습니다" });
   }
 
-  // 5. 이미 결제된 주문인지 확인
-  if (order.status !== "pending_payment") {
-    return res.status(400).json({ message: "이미 처리된 주문입니다" });
+  // 5. 결제 가능 상태 확인
+  // pending_payment: 주문 생성 직후
+  // paying: 결제창 오픈 후 (PUT /api/orders/:id/status/paying 호출 후)
+  const payableStatuses = ["pending_payment", "paying"];
+  if (!payableStatuses.includes(order.status)) {
+    logger.warn("결제 불가능한 주문 상태", {
+      orderId: order.id,
+      externalOrderId: order.externalOrderId,
+      currentStatus: order.status,
+      payableStatuses,
+      userId: order.userId,
+    });
+
+    // 취소된 주문에 대한 명확한 메시지
+    if (order.status === "cancelled") {
+      return res.status(400).json({
+        message: "취소된 주문입니다. 새로운 주문을 생성해주세요.",
+        code: "ORDER_CANCELLED",
+        currentStatus: order.status,
+        hint: "프론트엔드에서 새로운 주문을 생성하고 결제를 다시 시도하세요.",
+      });
+    }
+
+    // 이미 결제 완료된 주문
+    if (order.status === "payment_confirmed") {
+      return res.status(400).json({
+        message: "이미 결제가 완료된 주문입니다.",
+        code: "ALREADY_PAID",
+        currentStatus: order.status,
+      });
+    }
+
+    // 기타 상태
+    return res.status(400).json({
+      message: "결제할 수 없는 주문 상태입니다.",
+      code: "INVALID_ORDER_STATUS",
+      currentStatus: order.status,
+    });
   }
 
   // 6. 토스페이먼츠 결제 승인 API 호출
@@ -255,7 +291,22 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
 
   // 7. 재고 처리 분기: 선점 패턴 사용 여부에 따라 다르게 처리
   // @ts-ignore - isStockReserved는 새로 추가된 필드
+
+  // 🔍 디버깅: isStockReserved 값과 실행 경로 확인
+  logger.info("🔍 결제 승인 - 재고 처리 분기 확인", {
+    orderId: order.id,
+    externalOrderId: order.externalOrderId,
+    isStockReserved: order.isStockReserved,
+    status: order.status,
+    willSkipStockCheck: !!order.isStockReserved,
+    message: order.isStockReserved
+      ? "✅ 재고 이미 차감됨 - 재고 체크 건너뜀"
+      : "❌ 재고 미차감 - 소프트 락 실행",
+  });
+
   if (order.isStockReserved) {
+    logger.info("✅ 재고 이미 차감됨 - updateOrderPayment만 호출", { orderId: order.id });
+
     // 선점 패턴 사용: 이미 재고가 차감되어 있으므로 상태만 업데이트
     await storage.updateOrderPayment(order.id, {
       paymentProvider: "toss",
@@ -279,6 +330,12 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
 
     logger.info("결제 승인 완료 (선점 패턴 - 재고 이미 차감됨)", { orderId: order.id });
   } else {
+    logger.warn("❌ 소프트 락 방식 실행 (deprecated) - 이중 차감 위험!", {
+      orderId: order.id,
+      isStockReserved: order.isStockReserved,
+      warning: "주문 생성 시 isStockReserved를 true로 설정해야 합니다!",
+    });
+
     // 기존 방식: 소프트 락 기반 재고 확인 및 차감 + 주문 상태 업데이트
     const stockResult = await storage.confirmOrderWithStockLock(order.id, {
       paymentProvider: "toss",
@@ -444,16 +501,8 @@ router.post("/:orderId/cancel", paymentRateLimiter, isAuthenticated, asyncHandle
       logger.error("재고 복구 실패", { orderId, error: restoreError });
     }
 
-    // 재고 선점 기록 삭제 (선점 패턴 사용 시)
-    try {
-      await db
-        .delete(stockReservations)
-        .where(eq(stockReservations.userId, order.userId));
-      logger.info("재고 선점 기록 삭제 완료 (취소)", { userId: order.userId, orderId });
-    } catch (deleteError) {
-      // 선점 기록 삭제 실패 시 로그만 남기고 계속 진행
-      logger.error("재고 선점 기록 삭제 실패 (취소)", { userId: order.userId, orderId, error: deleteError });
-    }
+    // 🔒 Option A: 재고 선점 패턴 제거로 인해 불필요 (주석 처리)
+    // 재고는 restoreStockOnCancel()에서 복구됨
   }
 
   logger.info("결제 취소 완료", { orderId });

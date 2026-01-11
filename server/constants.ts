@@ -45,7 +45,6 @@ export {
   RATE_LIMIT_MESSAGES,
   VALIDATION_MESSAGES,
   // 재고 선점
-  STOCK_RESERVATION,
   STOCK_MESSAGES,
   // 로거
   LogLevel,

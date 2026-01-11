@@ -13,7 +13,7 @@ import {
   cartItems,
   type StockReservation,
 } from "@shared/schema";
-import { STOCK_RESERVATION, STOCK_MESSAGES } from "../constants";
+import { STOCK_MESSAGES } from "../constants";
 import { eq, and, gt, lt } from "drizzle-orm";
 import { createLogger } from "../utils/logger";
 import { getKSTDate } from "../utils/date";
@@ -72,7 +72,53 @@ router.post(
     try {
       await client.query("BEGIN");
 
-      // 1. 기존 만료되지 않은 선점이 있으면 삭제
+      // 1. 🔒 Self-Lock Bypass: 기존 선점 조회 (본인 재고 확인용)
+      const existingReservationResult = await client.query(
+        `SELECT id, items FROM stock_reservations
+         WHERE user_id = $1 AND expires_at > NOW()`,
+        [userId]
+      );
+
+      // 2. 🔒 Self-Lock Bypass (확장): 본인의 paying 상태 주문 조회
+      // 브라우저 강제 종료 후 재진입 시 즉시 재구매 가능하도록
+      const payingOrdersResult = await client.query(
+        `SELECT oi.product_id, oi.variant_id, oi.quantity, oi.options
+         FROM orders o
+         JOIN order_items oi ON oi.order_id = o.id
+         WHERE o.user_id = $1
+           AND o.status = 'paying'
+           AND o.created_at > NOW() - INTERVAL '10 minutes'`,
+        [userId]
+      );
+
+      // 본인의 기존 선점 + paying 주문 아이템을 Map으로 저장 (variantId -> quantity)
+      const userReservedStock = new Map<string, number>();
+
+      // 2-1. 재고 선점 아이템 추가
+      if (existingReservationResult.rows.length > 0) {
+        const existingItems = existingReservationResult.rows[0]
+          .items as ReservedItem[];
+        for (const item of existingItems) {
+          const key = item.variantId || item.productId;
+          userReservedStock.set(key, item.quantity);
+        }
+      }
+
+      // 2-2. paying 주문 아이템 추가 (브라우저 강제 종료 대응)
+      for (const item of payingOrdersResult.rows) {
+        const key = item.variant_id || item.product_id;
+        const existing = userReservedStock.get(key) || 0;
+        userReservedStock.set(key, existing + item.quantity);
+      }
+
+      logger.info("재고 선점 요청 - 본인 차감 재고 확인", {
+        userId,
+        reservationCount: existingReservationResult.rows.length,
+        payingOrderCount: payingOrdersResult.rows.length,
+        totalReservedItems: userReservedStock.size,
+      });
+
+      // 3. 기존 만료되지 않은 선점 삭제 (새로운 선점으로 교체)
       await client.query(
         `DELETE FROM stock_reservations WHERE user_id = $1 AND expires_at > NOW()`,
         [userId]
@@ -81,7 +127,7 @@ router.post(
       const insufficientStock: InsufficientStockItem[] = [];
       const reservedItems: ReservedItem[] = [];
 
-      // 2. 각 상품에 대해 재고 확인 및 차감 (소프트 락)
+      // 4. 각 상품에 대해 재고 확인 및 차감 (소프트 락)
       for (const item of itemsToReserve) {
         let productName = "";
         let variantInfo = "";
@@ -100,15 +146,23 @@ router.post(
 
           if (variantResult.rows.length === 0) {
             await client.query("ROLLBACK");
-            return res.status(400).json({ message: STOCK_MESSAGES.VARIANT_NOT_FOUND });
+            return res
+              .status(400)
+              .json({ message: STOCK_MESSAGES.VARIANT_NOT_FOUND });
           }
 
           const variant = variantResult.rows[0];
           productName = variant.product_name;
-          variantInfo = `Size: ${variant.size}${variant.color ? `, Color: ${variant.color}` : ""}`;
+          variantInfo = `Size: ${variant.size}${
+            variant.color ? `, Color: ${variant.color}` : ""
+          }`;
           availableStock = variant.stock_quantity;
 
-          if (availableStock < item.quantity) {
+          // 🔒 Self-Lock Bypass: 본인의 선점 재고를 사용 가능한 재고로 계산
+          const userReserved = userReservedStock.get(item.variantId!) || 0;
+          const effectiveStock = availableStock + userReserved;
+
+          if (effectiveStock < item.quantity) {
             insufficientStock.push({
               productId: item.productId,
               variantId: item.variantId,
@@ -142,14 +196,20 @@ router.post(
 
           if (productResult.rows.length === 0) {
             await client.query("ROLLBACK");
-            return res.status(400).json({ message: STOCK_MESSAGES.PRODUCT_NOT_FOUND });
+            return res
+              .status(400)
+              .json({ message: STOCK_MESSAGES.PRODUCT_NOT_FOUND });
           }
 
           const product = productResult.rows[0];
           productName = product.name;
           availableStock = product.stock_quantity;
 
-          if (availableStock < item.quantity) {
+          // 🔒 Self-Lock Bypass: 본인의 선점 재고를 사용 가능한 재고로 계산
+          const userReserved = userReservedStock.get(item.productId) || 0;
+          const effectiveStock = availableStock + userReserved;
+
+          if (effectiveStock < item.quantity) {
             insufficientStock.push({
               productId: item.productId,
               productName,
@@ -174,7 +234,7 @@ router.post(
         }
       }
 
-      // 3. 재고 부족 시 롤백 (이미 차감된 재고도 롤백됨)
+      // 5. 재고 부족 시 롤백 (이미 차감된 재고도 롤백됨)
       if (insufficientStock.length > 0) {
         await client.query("ROLLBACK");
         return res.status(400).json({
@@ -184,8 +244,9 @@ router.post(
         });
       }
 
-      // 4. 재고 선점 기록 생성 (해제/만료 시 재고 복구용)
-      const expiresAt = new Date(Date.now() + STOCK_RESERVATION.TTL_SECONDS * 1000);
+      // 6. 재고 선점 기록 생성 (해제/만료 시 재고 복구용)
+      const TTL_SECONDS = 180; // 3분
+      const expiresAt = new Date(Date.now() + TTL_SECONDS * 1000);
       const reservationResult = await client.query(
         `INSERT INTO stock_reservations (user_id, items, expires_at)
          VALUES ($1, $2, $3)
@@ -201,12 +262,14 @@ router.post(
         userId,
         reservationId: reservation.id,
         itemCount: reservedItems.length,
+        selfLockBypassed: userReservedStock.size > 0, // 본인 선점/paying 주문 재고 재사용 여부
+        payingOrdersFound: payingOrdersResult.rows.length > 0, // 브라우저 강제 종료 후 재진입 감지
       });
 
       res.json({
         reservationId: reservation.id,
         expiresAt: reservation.expires_at,
-        ttlSeconds: STOCK_RESERVATION.TTL_SECONDS,
+        ttlSeconds: TTL_SECONDS,
         reservedItems,
       });
     } catch (error) {
@@ -246,7 +309,9 @@ router.delete(
 
       if (reservationResult.rows.length === 0) {
         await client.query("ROLLBACK");
-        return res.status(404).json({ message: STOCK_MESSAGES.RESERVATION_NOT_FOUND });
+        return res
+          .status(404)
+          .json({ message: STOCK_MESSAGES.RESERVATION_NOT_FOUND });
       }
 
       const reservation = reservationResult.rows[0];
@@ -272,10 +337,9 @@ router.delete(
       }
 
       // 선점 기록 삭제
-      await client.query(
-        `DELETE FROM stock_reservations WHERE id = $1`,
-        [reservationId]
-      );
+      await client.query(`DELETE FROM stock_reservations WHERE id = $1`, [
+        reservationId,
+      ]);
 
       await client.query("COMMIT");
 
@@ -322,7 +386,9 @@ router.get(
       );
 
     if (!reservation) {
-      return res.status(404).json({ message: STOCK_MESSAGES.RESERVATION_NOT_FOUND });
+      return res
+        .status(404)
+        .json({ message: STOCK_MESSAGES.RESERVATION_NOT_FOUND });
     }
 
     // 만료 여부 확인
@@ -355,10 +421,9 @@ router.get(
         }
 
         // 선점 기록 삭제
-        await client.query(
-          `DELETE FROM stock_reservations WHERE id = $1`,
-          [reservationId]
-        );
+        await client.query(`DELETE FROM stock_reservations WHERE id = $1`, [
+          reservationId,
+        ]);
 
         await client.query("COMMIT");
 
@@ -374,7 +439,9 @@ router.get(
         client.release();
       }
 
-      return res.status(410).json({ message: STOCK_MESSAGES.RESERVATION_EXPIRED });
+      return res
+        .status(410)
+        .json({ message: STOCK_MESSAGES.RESERVATION_EXPIRED });
     }
 
     const ttlSeconds = Math.floor(
@@ -439,12 +506,16 @@ export async function cleanupExpiredReservations(): Promise<number> {
     }
 
     // 만료된 선점 삭제
-    await client.query(`DELETE FROM stock_reservations WHERE expires_at < NOW()`);
+    await client.query(
+      `DELETE FROM stock_reservations WHERE expires_at < NOW()`
+    );
 
     await client.query("COMMIT");
 
     if (cleanedCount > 0) {
-      logger.info("만료된 재고 선점 정리 및 복구 완료", { count: cleanedCount });
+      logger.info("만료된 재고 선점 정리 및 복구 완료", {
+        count: cleanedCount,
+      });
     }
 
     return cleanedCount;
@@ -463,16 +534,18 @@ let cleanupInterval: NodeJS.Timeout | null = null;
 export function startReservationCleanup(): void {
   if (cleanupInterval) return;
 
+  const CLEANUP_INTERVAL_MS = 60000; // 1분
+
   cleanupInterval = setInterval(async () => {
     try {
       await cleanupExpiredReservations();
     } catch (error) {
       logger.error("재고 선점 정리 실패", { error });
     }
-  }, STOCK_RESERVATION.CLEANUP_INTERVAL_MS);
+  }, CLEANUP_INTERVAL_MS);
 
   logger.info("재고 선점 자동 정리 시작", {
-    intervalMs: STOCK_RESERVATION.CLEANUP_INTERVAL_MS,
+    intervalMs: CLEANUP_INTERVAL_MS,
   });
 }
 

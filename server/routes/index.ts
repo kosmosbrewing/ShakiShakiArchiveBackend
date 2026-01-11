@@ -19,7 +19,8 @@ import siteImageRoutes from "./siteImage.routes";
 import inquiryRoutes from "./inquiry.routes";
 import seoRoutes from "./seo.routes";
 import constantsRoutes from "./constants.routes";
-import stockRoutes from "./stock.routes";
+// 🔒 Option A: 재고 선점 제거 - stock.routes 비활성화
+// import stockRoutes from "./stock.routes";
 import adminRoutes from "./admin";
 
 const router = Router();
@@ -52,7 +53,8 @@ router.use("/payments", paymentRoutes);
 router.use("/payments/naverpay", naverpayRoutes); // 네이버페이 결제
 router.use("/wishlist", wishlistRoutes);
 router.use("/user/addresses", addressRoutes);
-router.use("/stock", stockRoutes); // 재고 선점
+// 🔒 Option A: 재고 선점 제거 - stock 엔드포인트 비활성화
+// router.use("/stock", stockRoutes);
 
 // 관리자 라우트
 router.use("/admin", adminRoutes);
