@@ -3,81 +3,50 @@
 // 개발: 컬러 텍스트 + DEBUG 레벨 기본 + Pretty Print
 
 import { config } from "../config";
-
-// 로그 레벨 정의
-export enum LogLevel {
-  DEBUG = 0,
-  INFO = 1,
-  WARN = 2,
-  ERROR = 3,
-}
-
-// 로그 레벨 문자열 매핑
-const levelFromString: Record<string, LogLevel> = {
-  debug: LogLevel.DEBUG,
-  info: LogLevel.INFO,
-  warn: LogLevel.WARN,
-  error: LogLevel.ERROR,
-};
+import {
+  LogLevel,
+  LOG_LEVEL_MAP,
+  LOG_LEVEL_NAMES,
+  LOG_COLORS,
+  LOG_LEVEL_COLORS,
+  LOGGER_DEFAULTS,
+  SENSITIVE_KEYS,
+  LOGGER_ENV_KEYS,
+  type LogLevelString,
+} from "../constants";
 
 // 환경변수에서 로그 레벨 파싱
 function getLogLevel(): LogLevel {
-  const envLevel = process.env.LOG_LEVEL?.toLowerCase();
-  if (envLevel && envLevel in levelFromString) {
-    return levelFromString[envLevel];
+  const envLevel = process.env[LOGGER_ENV_KEYS.LOG_LEVEL]?.toLowerCase() as
+    | LogLevelString
+    | undefined;
+  if (envLevel && envLevel in LOG_LEVEL_MAP) {
+    return LOG_LEVEL_MAP[envLevel];
   }
   // 프로덕션: ERROR만, 개발: DEBUG부터
-  return config.isProd ? LogLevel.ERROR : LogLevel.DEBUG;
+  return config.isProd ? LOGGER_DEFAULTS.PROD_LOG_LEVEL : LOGGER_DEFAULTS.DEV_LOG_LEVEL;
 }
 
 // 로그 출력 형식 설정
 // LOG_COLOR: 색상 사용 여부 (기본: 개발=true, 운영=false)
 // LOG_PRETTY: Pretty Print 여부 (기본: 개발=true, 운영=false)
 function getLogColor(): boolean {
-  const envColor = process.env.LOG_COLOR?.toLowerCase();
+  const envColor = process.env[LOGGER_ENV_KEYS.LOG_COLOR]?.toLowerCase();
   if (envColor === "true") return true;
   if (envColor === "false") return false;
-  return !config.isProd; // 기본값: 운영 환경에서는 색상 없음
+  return config.isProd ? LOGGER_DEFAULTS.PROD_USE_COLOR : LOGGER_DEFAULTS.DEV_USE_COLOR;
 }
 
 function getLogPretty(): boolean {
-  const envPretty = process.env.LOG_PRETTY?.toLowerCase();
+  const envPretty = process.env[LOGGER_ENV_KEYS.LOG_PRETTY]?.toLowerCase();
   if (envPretty === "true") return true;
   if (envPretty === "false") return false;
-  return !config.isProd; // 기본값: 운영 환경에서는 Pretty Print 없음
+  return config.isProd ? LOGGER_DEFAULTS.PROD_USE_PRETTY : LOGGER_DEFAULTS.DEV_USE_PRETTY;
 }
 
 const CURRENT_LOG_LEVEL = getLogLevel();
 const USE_COLOR = getLogColor();
 const USE_PRETTY = getLogPretty();
-
-// 로그 레벨 이름
-const levelNames: Record<LogLevel, string> = {
-  [LogLevel.DEBUG]: "DEBUG",
-  [LogLevel.INFO]: "INFO",
-  [LogLevel.WARN]: "WARN",
-  [LogLevel.ERROR]: "ERROR",
-};
-
-// 컬러 코드 (개발 환경 터미널용)
-const colors = {
-  reset: "\x1b[0m",
-  bright: "\x1b[1m",
-  dim: "\x1b[2m",
-  red: "\x1b[31m",
-  green: "\x1b[32m",
-  yellow: "\x1b[33m",
-  blue: "\x1b[34m",
-  cyan: "\x1b[36m",
-  gray: "\x1b[90m",
-};
-
-const levelColors: Record<LogLevel, string> = {
-  [LogLevel.DEBUG]: colors.gray,
-  [LogLevel.INFO]: colors.cyan,
-  [LogLevel.WARN]: colors.yellow,
-  [LogLevel.ERROR]: colors.red,
-};
 
 /**
  * ISO 타임스탬프 생성
@@ -120,7 +89,7 @@ function outputJson(
 ): void {
   const logEntry: Record<string, unknown> = {
     timestamp: getTimestamp(),
-    level: levelNames[level],
+    level: LOG_LEVEL_NAMES[level],
     message,
   };
 
@@ -153,14 +122,14 @@ function outputPretty(
   meta?: Record<string, unknown>
 ): void {
   const timestamp = getLocalTime();
-  const levelName = levelNames[level];
+  const levelName = LOG_LEVEL_NAMES[level];
   const contextStr = context ? `[${context}]` : "";
 
   let logLine: string;
   if (USE_COLOR) {
     // 색상 사용
-    const color = levelColors[level];
-    logLine = `${colors.dim}${timestamp}${colors.reset} ${color}${levelName}${colors.reset} ${colors.bright}${contextStr}${colors.reset} ${message}`;
+    const color = LOG_LEVEL_COLORS[level];
+    logLine = `${LOG_COLORS.dim}${timestamp}${LOG_COLORS.reset} ${color}${levelName}${LOG_COLORS.reset} ${LOG_COLORS.bright}${contextStr}${LOG_COLORS.reset} ${message}`;
   } else {
     // 색상 없음
     logLine = `${timestamp} ${levelName} ${contextStr} ${message}`;
@@ -176,7 +145,7 @@ function outputPretty(
   if (meta && Object.keys(meta).length > 0) {
     const metaStr = JSON.stringify(meta, null, 2);
     if (USE_COLOR) {
-      console.log(`${colors.dim}${metaStr}${colors.reset}`);
+      console.log(`${LOG_COLORS.dim}${metaStr}${LOG_COLORS.reset}`);
     } else {
       console.log(metaStr);
     }
@@ -275,30 +244,9 @@ export function generateRequestId(): string {
 export function maskSensitiveData(
   data: Record<string, unknown>
 ): Record<string, unknown> {
-  const sensitiveKeys = [
-    // 인증 관련
-    "password",       // password, currentPassword, newPassword, confirmPassword 등 모두 매칭
-    "passwordHash",
-    "token",
-    "secret",
-    "authorization",
-    "cookie",
-    "sessionId",
-    // 금융/결제 관련
-    "pin",
-    "creditcard",
-    "cardnumber",
-    "cvv",
-    "cvc",
-    // API 키
-    "apikey",
-    "accesskey",
-    "privatekey",
-  ];
-
   const masked: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(data)) {
-    if (sensitiveKeys.some((sk) => key.toLowerCase().includes(sk))) {
+    if (SENSITIVE_KEYS.some((sk) => key.toLowerCase().includes(sk))) {
       masked[key] = "[MASKED]";
     } else if (typeof value === "object" && value !== null) {
       masked[key] = maskSensitiveData(value as Record<string, unknown>);
@@ -319,7 +267,7 @@ export function createLogger(context: string): Logger {
 
 // 현재 로그 레벨 확인용
 export function getCurrentLogLevel(): string {
-  return levelNames[CURRENT_LOG_LEVEL];
+  return LOG_LEVEL_NAMES[CURRENT_LOG_LEVEL];
 }
 
 export default logger;

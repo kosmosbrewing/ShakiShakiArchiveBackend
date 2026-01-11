@@ -170,10 +170,34 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
   });
 
   if (!order) {
+    // 🔍 디버깅: DB에 있는 모든 주문의 externalOrderId 로그 (개발 환경에서만)
+    if (!config.isProd) {
+      try {
+        const allOrders = await storage.getAllOrders();
+        const recentOrderIds = allOrders
+          .slice(0, 10)
+          .map(o => ({
+            id: o.id,
+            externalOrderId: o.externalOrderId,
+            createdAt: o.createdAt,
+            userId: o.userId,
+          }));
+        logger.debug("최근 주문 10건의 externalOrderId", { recentOrderIds });
+      } catch (debugError) {
+        logger.warn("디버깅용 주문 조회 실패", { error: debugError });
+      }
+    }
+
     logger.error("주문을 찾을 수 없음", {
       searchedExternalOrderId: orderId,
+      userId,
+      hint: "주문 생성 API (POST /api/orders)가 호출되었는지 확인하세요",
     });
-    return res.status(404).json({ message: "주문을 찾을 수 없습니다" });
+    return res.status(404).json({
+      message: "주문을 찾을 수 없습니다",
+      code: "ORDER_NOT_FOUND",
+      details: !config.isProd ? "주문 생성 API (POST /api/orders)가 호출되지 않았거나 실패했을 수 있습니다. 프론트엔드 네트워크 탭을 확인하세요." : undefined,
+    });
   }
 
   // 3. 주문 소유자 검증

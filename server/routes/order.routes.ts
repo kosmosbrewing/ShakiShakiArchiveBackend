@@ -78,6 +78,25 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
       return res.status(400).json({ message: ORDER_MESSAGES.PRODUCT_NOT_FOUND });
     }
 
+    // 🔒 보안: 상품 활성화 상태 확인
+    if (!product.isAvailable) {
+      logger.warn("비활성화된 상품 주문 시도", { userId, productId, productName: product.name });
+      return res.status(400).json({
+        message: "현재 판매하지 않는 상품입니다",
+        code: "PRODUCT_NOT_AVAILABLE"
+      });
+    }
+
+    // 🔒 보안: 가격 유효성 검증
+    const price = parseFloat(product.price);
+    if (price <= 0) {
+      logger.error("잘못된 상품 가격 감지", { userId, productId, price });
+      return res.status(400).json({
+        message: "상품 가격 오류가 발생했습니다",
+        code: "INVALID_PRODUCT_PRICE"
+      });
+    }
+
     // 옵션 정보 조회 (선택사항)
     let variant = null;
     if (variantId) {
@@ -85,10 +104,43 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
       if (!variant) {
         return res.status(400).json({ message: ORDER_MESSAGES.VARIANT_NOT_FOUND });
       }
+
+      // 🔒 보안: 옵션 활성화 상태 확인
+      if (!variant.isAvailable) {
+        logger.warn("비활성화된 옵션 주문 시도", { userId, productId, variantId, size: variant.size });
+        return res.status(400).json({
+          message: "선택하신 옵션은 현재 판매하지 않습니다",
+          code: "VARIANT_NOT_AVAILABLE"
+        });
+      }
+
+      // 🔒 보안: 재고 확인 (재고 선점을 사용하지 않는 경우만)
+      if (!reservationId && variant.stockQuantity < quantity) {
+        logger.warn("재고 부족 주문 시도", {
+          userId,
+          productId,
+          variantId,
+          requested: quantity,
+          available: variant.stockQuantity
+        });
+        return res.status(400).json({
+          message: `재고가 부족합니다. (요청: ${quantity}개, 재고: ${variant.stockQuantity}개)`,
+          code: "INSUFFICIENT_STOCK"
+        });
+      }
     }
 
-    subtotal = parseFloat(product.price) * quantity;
+    subtotal = price * quantity;
     orderName = product.name;
+
+    logger.info("바로 구매 주문 검증 완료", {
+      userId,
+      productId,
+      variantId,
+      quantity,
+      price,
+      subtotal
+    });
 
     orderItemsData = [{
       productId: product.id,
@@ -109,6 +161,68 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
     }
 
     logger.info("장바구니 조회 완료", { userId, itemCount: cartItems.length });
+
+    // 🔒 보안: 장바구니 상품 유효성 검증
+    for (const item of cartItems) {
+      // 상품 활성화 상태 확인
+      if (!item.product.isAvailable) {
+        logger.warn("장바구니에 비활성화된 상품 존재", {
+          userId,
+          productId: item.productId,
+          productName: item.product.name
+        });
+        return res.status(400).json({
+          message: `${item.product.name}은(는) 현재 판매하지 않는 상품입니다. 장바구니에서 제거해주세요.`,
+          code: "CART_ITEM_NOT_AVAILABLE"
+        });
+      }
+
+      // 가격 유효성 검증
+      const price = parseFloat(item.product.price);
+      if (price <= 0) {
+        logger.error("장바구니 상품 가격 오류", {
+          userId,
+          productId: item.productId,
+          price
+        });
+        return res.status(400).json({
+          message: "일부 상품의 가격 오류가 발생했습니다. 장바구니를 다시 확인해주세요.",
+          code: "INVALID_CART_ITEM_PRICE"
+        });
+      }
+
+      // 옵션 재고 확인 (재고 선점을 사용하지 않는 경우만)
+      if (!reservationId && item.variant) {
+        if (!item.variant.isAvailable) {
+          logger.warn("장바구니에 비활성화된 옵션 존재", {
+            userId,
+            productId: item.productId,
+            variantId: item.variantId,
+            size: item.variant.size
+          });
+          return res.status(400).json({
+            message: `${item.product.name}의 선택하신 옵션은 현재 판매하지 않습니다.`,
+            code: "CART_VARIANT_NOT_AVAILABLE"
+          });
+        }
+
+        if (item.variant.stockQuantity < item.quantity) {
+          logger.warn("장바구니 상품 재고 부족", {
+            userId,
+            productId: item.productId,
+            variantId: item.variantId,
+            requested: item.quantity,
+            available: item.variant.stockQuantity
+          });
+          return res.status(400).json({
+            message: `${item.product.name}의 재고가 부족합니다. (요청: ${item.quantity}개, 재고: ${item.variant.stockQuantity}개)`,
+            code: "CART_INSUFFICIENT_STOCK"
+          });
+        }
+      }
+    }
+
+    logger.info("장바구니 상품 검증 완료", { userId, itemCount: cartItems.length });
 
     subtotal = cartItems.reduce(
       (sum, item) => sum + parseFloat(item.product.price) * item.quantity,
@@ -132,6 +246,21 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
   // 배송비 계산 (도서산간 추가 배송비 포함)
   const shippingFee = calculateShippingFee(subtotal, validatedBody.shippingPostalCode);
   const totalAmount = subtotal + shippingFee;
+
+  // 🔒 보안: 총 금액 범위 검증
+  if (totalAmount <= 0 || totalAmount > 100000000) {
+    logger.error("비정상적인 주문 금액 감지", {
+      userId,
+      subtotal,
+      shippingFee,
+      totalAmount,
+      itemCount: orderItemsData.length
+    });
+    return res.status(400).json({
+      message: "주문 금액이 올바르지 않습니다",
+      code: "INVALID_TOTAL_AMOUNT"
+    });
+  }
 
   logger.info("주문 금액 계산 완료", { subtotal, shippingFee, totalAmount });
 
@@ -160,12 +289,19 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
     userId,
     totalAmount,
     itemCount: orderItemsData.length,
-    isStockReserved: !!reservationId
+    isStockReserved: !!reservationId,
+    externalOrderId,
   });
 
   const orderId = await storage.createOrder(orderData, orderItemsData);
 
-  logger.info("주문 생성 완료", { userId, orderId, externalOrderId });
+  logger.info("주문 생성 완료 - DB 저장 성공", {
+    userId,
+    orderId,
+    externalOrderId,
+    totalAmount,
+    status: ORDER_STATUS.PENDING_PAYMENT,
+  });
 
   // 재고 선점 삭제 (주문 생성 성공 시)
   if (reservationId) {
@@ -181,6 +317,12 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
   }
 
   // 장바구니 비우기는 결제 완료 시점에 수행 (payment.routes.ts)
+
+  logger.info("주문 생성 API 응답 반환", {
+    orderId,
+    externalOrderId,
+    amount: totalAmount,
+  });
 
   res.json({
     orderId,
