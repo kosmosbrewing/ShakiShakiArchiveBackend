@@ -3,6 +3,7 @@
 
 import { Router } from "express";
 import { storage } from "../storage";
+import { db } from "../db";
 import { isAuthenticated } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
 import { paymentRateLimiter } from "../config/security";
@@ -13,11 +14,106 @@ import {
   getPayment,
   TossPaymentError,
 } from "../services/toss.service";
-import { confirmPaymentSchema, cancelPaymentSchema } from "@shared/schema";
+import { confirmPaymentSchema, cancelPaymentSchema, stockReservations } from "@shared/schema";
+import { eq } from "drizzle-orm";
 import { createLogger } from "../utils/logger";
 
 const router = Router();
 const logger = createLogger("Payment");
+
+/**
+ * 토스페이먼츠 에러 코드를 사용자 친화적인 메시지로 변환
+ * 공식 문서: https://docs.tosspayments.com/reference/error-codes
+ */
+const tossErrorMessages: Record<string, string> = {
+  // 카드 관련 에러
+  ALREADY_PROCESSED_PAYMENT: "이미 처리된 결제입니다.",
+  INVALID_CARD_NUMBER: "카드번호를 다시 확인해주세요.",
+  INVALID_CARD_EXPIRATION: "카드 유효기간을 다시 확인해주세요.",
+  INVALID_STOPPED_CARD: "정지된 카드입니다. 다른 카드를 이용해주세요.",
+  INVALID_CARD_LOST_OR_STOLEN: "분실 또는 도난 카드입니다. 카드사에 문의해주세요.",
+  INVALID_REJECT_CARD: "카드 사용이 거절되었습니다. 카드사에 문의해주세요.",
+
+  // 한도 초과 에러
+  EXCEED_MAX_CARD_INSTALLMENT_PLAN: "최대 할부 개월 수를 초과했습니다.",
+  EXCEED_MAX_DAILY_PAYMENT_COUNT: "하루 결제 가능 횟수를 초과했습니다.",
+  EXCEED_MAX_PAYMENT_AMOUNT: "하루 결제 가능 금액을 초과했습니다.",
+  EXCEED_MAX_ONE_DAY_WITHDRAW_AMOUNT: "1일 출금 한도를 초과했습니다.",
+  EXCEED_MAX_ONE_TIME_WITHDRAW_AMOUNT: "1회 출금 한도를 초과했습니다.",
+  EXCEED_MAX_AMOUNT: "거래 금액 한도를 초과했습니다.",
+  EXCEED_MAX_MONTHLY_PAYMENT_AMOUNT: "당월 결제 가능 금액을 초과했습니다.",
+  EXCEED_MAX_ONE_DAY_AMOUNT: "일일 한도를 초과했습니다.",
+
+  // 잔액/승인 거부
+  REJECT_ACCOUNT_PAYMENT: "계좌 잔액이 부족합니다.",
+  REJECT_CARD_PAYMENT: "카드 한도 초과 또는 잔액이 부족합니다.",
+
+  // 할부 관련
+  NOT_SUPPORTED_INSTALLMENT_PLAN_CARD_OR_MERCHANT: "할부가 지원되지 않는 카드 또는 가맹점입니다.",
+  INVALID_CARD_INSTALLMENT_PLAN: "할부 개월 정보가 잘못되었습니다.",
+  NOT_SUPPORTED_MONTHLY_INSTALLMENT_PLAN: "할부가 지원되지 않는 카드입니다.",
+
+  // 인증 관련
+  INVALID_PASSWORD: "결제 비밀번호가 일치하지 않습니다.",
+  EXCEED_MAX_AUTH_COUNT: "최대 인증 횟수를 초과했습니다. 카드사에 문의해주세요.",
+  INVALID_AUTHORIZE_AUTH: "유효하지 않은 인증 방식입니다.",
+
+  // 계좌 관련
+  RESTRICTED_TRANSFER_ACCOUNT: "계좌는 등록 후 12시간 뒤부터 결제할 수 있습니다.",
+  INVALID_ACCOUNT_INFO_RE_REGISTER: "유효하지 않은 계좌입니다. 계좌를 재등록해주세요.",
+  REJECT_TOSSPAY_INVALID_ACCOUNT: "출금 계좌가 등록되지 않았습니다. 계좌를 다시 등록해주세요.",
+
+  // 시스템 에러
+  PROVIDER_ERROR: "일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+  CARD_PROCESSING_ERROR: "카드사에서 오류가 발생했습니다.",
+  FAILED_PAYMENT_INTERNAL_SYSTEM_PROCESSING: "결제가 완료되지 않았습니다. 다시 시도해주세요.",
+  FAILED_INTERNAL_SYSTEM_PROCESSING: "내부 시스템 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+  UNKNOWN_PAYMENT_ERROR: "결제에 실패했습니다. 같은 문제가 반복되면 은행이나 카드사에 문의해주세요.",
+
+  // 요청/인증 에러
+  INVALID_REQUEST: "잘못된 요청입니다.",
+  INVALID_API_KEY: "잘못된 인증 정보입니다.",
+  REJECT_CARD_COMPANY: "결제 승인이 거절되었습니다.",
+  FORBIDDEN_REQUEST: "허용되지 않은 요청입니다.",
+
+  // 기타
+  NOT_ALLOWED_POINT_USE: "포인트 사용이 불가능한 카드입니다.",
+  BELOW_MINIMUM_AMOUNT: "최소 결제 금액은 신용카드 100원, 계좌 200원입니다.",
+  NOT_AVAILABLE_PAYMENT: "결제가 불가능한 시간대입니다.",
+  NOT_AVAILABLE_BANK: "은행 서비스 시간이 아닙니다.",
+  NOT_FOUND_PAYMENT: "존재하지 않는 결제 정보입니다.",
+  NOT_FOUND_PAYMENT_SESSION: "결제 시간이 만료되었습니다. 다시 시도해주세요.",
+  UNAPPROVED_ORDER_ID: "아직 승인되지 않은 주문입니다.",
+  FDS_ERROR: "위험 거래가 감지되었습니다. 문자로 발송된 링크를 통해 본인인증 후 결제해주세요.",
+  NOT_FOUND_TERMINAL_ID: "단말기 정보가 없습니다. 고객센터에 문의해주세요.",
+  INVALID_UNREGISTERED_SUBMALL: "등록되지 않은 서브몰입니다.",
+  NOT_REGISTERED_BUSINESS: "등록되지 않은 사업자번호입니다.",
+  UNAUTHORIZED_KEY: "인증되지 않은 키입니다.",
+  INCORRECT_BASIC_AUTH_FORMAT: "잘못된 인증 형식입니다.",
+
+  // 결제 취소/환불 관련
+  ALREADY_CANCELED_PAYMENT: "이미 취소된 결제입니다.",
+  ALREADY_REFUND_PAYMENT: "이미 환불된 결제입니다.",
+  NOT_CANCELABLE_PAYMENT: "취소할 수 없는 결제입니다.",
+  NOT_CANCELABLE_AMOUNT: "취소할 수 없는 금액입니다.",
+  NOT_CANCELABLE_PAYMENT_FOR_DORMANT_USER: "휴면 처리된 회원의 결제는 취소할 수 없습니다.",
+  EXCEED_CANCEL_LIMIT: "취소 한도 금액을 초과했습니다.",
+  EXCEED_CANCEL_AMOUNT_DISCOUNT_AMOUNT: "즉시할인금액보다 적은 금액은 부분취소가 불가능합니다.",
+  EXCEED_MAX_REFUND_DUE: "환불 가능한 기간이 지났습니다.",
+  NOT_ALLOWED_PARTIAL_REFUND: "에스크로 주문, 현금 카드 결제는 부분 환불이 불가합니다. 다른 결제 수단도 부분 취소가 안 되면 고객센터에 문의해주세요.",
+  NOT_ALLOWED_PARTIAL_REFUND_WAITING_DEPOSIT: "입금 대기 중인 결제는 부분 환불이 불가합니다.",
+  INVALID_REFUND_ACCOUNT_INFO: "환불 계좌번호와 예금주명이 일치하지 않습니다.",
+  INVALID_REFUND_ACCOUNT_NUMBER: "잘못된 환불 계좌번호입니다.",
+  INVALID_BANK: "유효하지 않은 은행입니다.",
+  NOT_MATCHES_REFUNDABLE_AMOUNT: "잔액 결과가 일치하지 않습니다.",
+  FORBIDDEN_BANK_REFUND_REQUEST: "고객 계좌가 입금되지 않는 상태입니다.",
+  FORBIDDEN_CONSECUTIVE_REQUEST: "반복적인 요청은 허용되지 않습니다. 잠시 후 다시 시도해주세요.",
+  REFUND_REJECTED: "환불이 거절되었습니다. 결제사에 문의해주세요.",
+  FAILED_REFUND_PROCESS: "은행 응답 지연이나 일시적인 오류로 환불 요청에 실패했습니다.",
+  FAILED_METHOD_HANDLING_CANCEL: "취소 중 결제 수단 처리 과정에서 일시적인 오류가 발생했습니다.",
+  FAILED_PARTIAL_REFUND: "은행 점검, 해약 계좌 등의 사유로 부분 환불이 실패했습니다.",
+  COMMON_ERROR: "일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+};
 
 /**
  * 클라이언트 키 조회 (결제창 SDK 초기화용)
@@ -55,10 +151,28 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
   const { paymentKey, orderId, amount } = validationResult.data;
   const userId = req.session.userId!;
 
+  // 디버깅: 결제 승인 요청 정보
+  logger.info("토스 결제 승인 요청", {
+    paymentKey,
+    orderId,
+    amount,
+    userId,
+  });
+
   // 2. 서버에 저장된 주문 조회 (orderId는 externalOrderId로 저장됨)
   const order = await storage.getOrderByExternalOrderId(orderId);
 
+  logger.info("주문 조회 결과", {
+    found: !!order,
+    orderId: order?.id,
+    externalOrderId: order?.externalOrderId,
+    status: order?.status,
+  });
+
   if (!order) {
+    logger.error("주문을 찾을 수 없음", {
+      searchedExternalOrderId: orderId,
+    });
     return res.status(404).json({ message: "주문을 찾을 수 없습니다" });
   }
 
@@ -84,13 +198,34 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
   try {
     payment = await confirmPayment(paymentKey, orderId, amount);
   } catch (error) {
+    // 디버깅: 에러 타입 확인
+    logger.error("결제 에러 (토스) - 상세", {
+      errorType: error?.constructor?.name,
+      isTossPaymentError: error instanceof TossPaymentError,
+      error: error instanceof Error ? error.message : String(error),
+      errorCode: (error as any)?.code,
+      errorObject: error,
+    });
+
     if (error instanceof TossPaymentError) {
-      logger.error("결제 에러 (토스)", { code: error.code, message: error.message });
+      const userMessage = tossErrorMessages[error.code] || error.message;
+
+      logger.info("토스페이먼츠 에러 메시지 변환", {
+        code: error.code,
+        original: error.message,
+        converted: userMessage
+      });
+
       return res.status(error.statusCode).json({
-        message: error.message,
+        message: userMessage,
         code: error.code,
       });
     }
+
+    // TossPaymentError가 아닌 일반 에러
+    logger.warn("일반 Error로 처리됨 (TossPaymentError 아님)", {
+      errorMessage: error instanceof Error ? error.message : String(error)
+    });
     throw error;
   }
 
@@ -106,6 +241,18 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
       status: "payment_confirmed",
       paidAt: payment.approvedAt ? new Date(payment.approvedAt) : new Date(),
     });
+
+    // 재고 선점 기록 삭제 (중요: 만료 시 이중 복구 방지)
+    try {
+      await db
+        .delete(stockReservations)
+        .where(eq(stockReservations.userId, userId));
+      logger.info("재고 선점 기록 삭제 완료", { userId, orderId: order.id });
+    } catch (deleteError) {
+      // 선점 기록 삭제 실패 시 로그만 남기고 계속 진행
+      logger.error("재고 선점 기록 삭제 실패", { userId, orderId: order.id, error: deleteError });
+    }
+
     logger.info("결제 승인 완료 (선점 패턴 - 재고 이미 차감됨)", { orderId: order.id });
   } else {
     // 기존 방식: 소프트 락 기반 재고 확인 및 차감 + 주문 상태 업데이트
@@ -223,13 +370,34 @@ router.post("/:orderId/cancel", paymentRateLimiter, isAuthenticated, asyncHandle
       refundReceiveAccount
     );
   } catch (error) {
+    // 디버깅: 에러 타입 확인
+    logger.error("결제 취소 에러 (토스) - 상세", {
+      errorType: error?.constructor?.name,
+      isTossPaymentError: error instanceof TossPaymentError,
+      error: error instanceof Error ? error.message : String(error),
+      errorCode: (error as any)?.code,
+      errorObject: error,
+    });
+
     if (error instanceof TossPaymentError) {
-      logger.error("결제 취소 에러 (토스)", { code: error.code, message: error.message });
+      const userMessage = tossErrorMessages[error.code] || error.message;
+
+      logger.info("토스페이먼츠 에러 메시지 변환 (취소)", {
+        code: error.code,
+        original: error.message,
+        converted: userMessage
+      });
+
       return res.status(error.statusCode).json({
-        message: error.message,
+        message: userMessage,
         code: error.code,
       });
     }
+
+    // TossPaymentError가 아닌 일반 에러
+    logger.warn("일반 Error로 처리됨 (TossPaymentError 아님)", {
+      errorMessage: error instanceof Error ? error.message : String(error)
+    });
     throw error;
   }
 
@@ -250,6 +418,17 @@ router.post("/:orderId/cancel", paymentRateLimiter, isAuthenticated, asyncHandle
     } catch (restoreError) {
       // 재고 복구 실패 시 로그 남기고 계속 진행 (관리자 수동 처리 필요)
       logger.error("재고 복구 실패", { orderId, error: restoreError });
+    }
+
+    // 재고 선점 기록 삭제 (선점 패턴 사용 시)
+    try {
+      await db
+        .delete(stockReservations)
+        .where(eq(stockReservations.userId, order.userId));
+      logger.info("재고 선점 기록 삭제 완료 (취소)", { userId: order.userId, orderId });
+    } catch (deleteError) {
+      // 선점 기록 삭제 실패 시 로그만 남기고 계속 진행
+      logger.error("재고 선점 기록 삭제 실패 (취소)", { userId: order.userId, orderId, error: deleteError });
     }
   }
 
@@ -301,12 +480,34 @@ router.get("/:orderId/status", isAuthenticated, asyncHandler(async (req, res) =>
   try {
     payment = await getPayment(order.paymentKey);
   } catch (error) {
+    // 디버깅: 에러 타입 확인
+    logger.error("결제 상태 조회 에러 (토스) - 상세", {
+      errorType: error?.constructor?.name,
+      isTossPaymentError: error instanceof TossPaymentError,
+      error: error instanceof Error ? error.message : String(error),
+      errorCode: (error as any)?.code,
+      errorObject: error,
+    });
+
     if (error instanceof TossPaymentError) {
+      const userMessage = tossErrorMessages[error.code] || error.message;
+
+      logger.info("토스페이먼츠 에러 메시지 변환 (조회)", {
+        code: error.code,
+        original: error.message,
+        converted: userMessage
+      });
+
       return res.status(error.statusCode).json({
-        message: error.message,
+        message: userMessage,
         code: error.code,
       });
     }
+
+    // TossPaymentError가 아닌 일반 에러
+    logger.warn("일반 Error로 처리됨 (TossPaymentError 아님)", {
+      errorMessage: error instanceof Error ? error.message : String(error)
+    });
     throw error;
   }
 

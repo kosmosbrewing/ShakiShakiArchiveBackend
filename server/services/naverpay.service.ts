@@ -253,6 +253,16 @@ function getHeaders(idempotencyKey?: string): Record<string, string> {
     headers["X-NaverPay-Idempotency-Key"] = idempotencyKey;
   }
 
+  // 🔍 디버깅용 로그 (환경 변수 설정 확인)
+  if (!config.naverpay.clientId || !config.naverpay.clientSecret || !config.naverpay.chainId) {
+    console.error('[NaverPay] 환경 변수 누락 감지!', {
+      clientId: config.naverpay.clientId ? 'SET' : 'MISSING ❌',
+      clientSecret: config.naverpay.clientSecret ? 'SET' : 'MISSING ❌',
+      chainId: config.naverpay.chainId ? 'SET' : 'MISSING ❌',
+      mode: config.naverpay.mode,
+    });
+  }
+
   return headers;
 }
 
@@ -275,6 +285,18 @@ export async function applyPayment(
   const idempotencyKey = generateIdempotencyKey();
   const url = `${getApiBaseUrl()}/naverpay-partner/naverpay/payments/v2.2/apply/payment`;
 
+  // 🔍 디버깅용 로그 (API 호출 정보)
+  console.log('[NaverPay] 결제 승인 API 호출:', {
+    url,
+    mode: config.naverpay.mode,
+    paymentId,
+    headers: {
+      clientId: config.naverpay.clientId ? `${config.naverpay.clientId.substring(0, 8)}...` : 'MISSING',
+      clientSecret: config.naverpay.clientSecret ? 'SET' : 'MISSING',
+      chainId: config.naverpay.chainId || 'MISSING',
+    },
+  });
+
   const response = await postFormUrlEncoded<NaverPayApplyResponse>(
     url,
     { paymentId },
@@ -283,6 +305,13 @@ export async function applyPayment(
   );
 
   if (response.data.code !== "Success") {
+    // 🔍 디버깅용 로그 (에러 상세)
+    console.error('[NaverPay] 결제 승인 실패:', {
+      code: response.data.code,
+      message: response.data.message,
+      status: response.status,
+    });
+
     throw new NaverPayPaymentError(
       response.data.code,
       response.data.message,

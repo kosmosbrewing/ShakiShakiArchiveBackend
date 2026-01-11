@@ -328,10 +328,51 @@ router.get(
     // 만료 여부 확인
     const now = new Date();
     if (reservation.expiresAt < now) {
-      // 만료된 선점 삭제
-      await db
-        .delete(stockReservations)
-        .where(eq(stockReservations.id, reservationId));
+      // 만료된 선점 삭제 전 재고 복구 (중요!)
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+
+        const items = reservation.items as ReservedItem[];
+
+        // 재고 복구
+        for (const item of items) {
+          if (item.variantId) {
+            await client.query(
+              `UPDATE product_variants
+               SET stock_quantity = stock_quantity + $1, updated_at = NOW()
+               WHERE id = $2`,
+              [item.quantity, item.variantId]
+            );
+          } else {
+            await client.query(
+              `UPDATE products
+               SET stock_quantity = stock_quantity + $1, updated_at = NOW()
+               WHERE id = $2`,
+              [item.quantity, item.productId]
+            );
+          }
+        }
+
+        // 선점 기록 삭제
+        await client.query(
+          `DELETE FROM stock_reservations WHERE id = $1`,
+          [reservationId]
+        );
+
+        await client.query("COMMIT");
+
+        logger.info("만료된 재고 선점 복구 및 삭제 완료", {
+          userId,
+          reservationId,
+          itemCount: items.length,
+        });
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
 
       return res.status(410).json({ message: STOCK_MESSAGES.RESERVATION_EXPIRED });
     }

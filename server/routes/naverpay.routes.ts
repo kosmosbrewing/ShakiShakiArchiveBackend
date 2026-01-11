@@ -6,10 +6,13 @@
 import { Router } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
+import { db } from "../db";
 import { isAuthenticated } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
 import { paymentRateLimiter } from "../config/security";
 import { config } from "../config";
+import { stockReservations } from "@shared/schema";
+import { eq } from "drizzle-orm";
 import {
   applyPayment,
   getPayment as getNaverPayPayment,
@@ -23,6 +26,43 @@ import { createLogger } from "../utils/logger";
 
 const router = Router();
 const logger = createLogger("NaverPay");
+
+/**
+ * 네이버페이 에러 코드를 사용자 친화적인 메시지로 변환
+ * 공식 문서 참고
+ */
+const naverPayErrorMessages: Record<string, string> = {
+  // 공식 문서 에러 코드
+  Fail: "결제 처리 중 오류가 발생했습니다. 다시 시도해주세요.",
+  InvalidMerchant: "가맹점 정보가 올바르지 않습니다.",
+  TimeExpired: "결제 시간이 만료되었습니다. 다시 시도해주세요.",
+  AlreadyOnGoing: "이미 진행 중인 결제입니다.",
+  AlreadyComplete: "이미 완료된 결제입니다.",
+  OwnerAuthFail: "본인 인증에 실패했습니다. 카드 정보를 확인해주세요.",
+  BankMaintenance: "은행 시스템 점검 중입니다. 잠시 후 다시 시도해주세요.",
+  NotEnoughAccountBalance: "계좌 잔액이 부족합니다. 잔액을 확인해주세요.",
+  MaintenanceOngoing: "서비스 점검 중입니다. 잠시 후 다시 시도해주세요.",
+  FaultCheckOngoing: "결제 시스템 점검 중입니다. 다른 결제 수단을 이용해주세요.",
+  // 일반적인 에러
+  UserCancel: "결제가 취소되었습니다.",
+  Timeout: "결제 시간이 만료되었습니다. 다시 시도해주세요.",
+  ExceedLimit: "카드 한도가 부족합니다. 다른 결제 수단을 이용해주세요.",
+  AuthenticationFailed: "인증에 실패했습니다. 다시 시도해주세요.",
+  PaymentCanceled: "결제가 취소되었습니다.",
+  AlreadyApproved: "이미 승인된 결제입니다.",
+  InvalidPaymentId: "결제 정보를 찾을 수 없습니다.",
+
+  // 결제 취소 관련 에러
+  AlreadyCanceled: "이미 전체 취소된 결제입니다.",
+  OverRemainAmount: "취소 요청 금액이 잔여 결제 금액을 초과했습니다.",
+  PreCancelNotComplete: "이전에 요청한 취소가 완료되지 않았습니다. 이전 취소 정보로 재시도해주세요.",
+  CancelDeadlineExpired: "취소 기한이 만료되어 취소가 불가합니다. 고객센터에 문의해주세요.",
+  TaxScopeAmtGreaterThanRemainError: "취소 가능한 금액보다 큰 금액을 요청했습니다.",
+  TaxScopeAmountError: "과면세 금액과 취소 요청 금액이 일치하지 않습니다.",
+  RestAmountDiff: "잔여 금액이 일치하지 않습니다. 다시 시도해주세요.",
+  CancelNotComplete: "취소 처리 중입니다. 빠른 시일 내에 자동 완료됩니다.",
+  InvalidDiscountCancelCondition: "즉시 할인 정책에 따라 취소가 불가합니다.",
+};
 
 // 결제 취소 요청 스키마
 const cancelPaymentSchema = z.object({
@@ -92,11 +132,37 @@ router.get("/callback", asyncHandler(async (req, res) => {
     resultMessage?: string;
   };
 
+  // 디버깅: 콜백 진입 로그
+  logger.info("네이버페이 콜백 진입", {
+    orderId,
+    paymentId,
+    resultCode,
+    resultMessage,
+    fullQuery: req.query,
+  });
+
   // 결제 실패 시
   if (resultCode !== "Success" || !paymentId) {
-    logger.error("결제 콜백 실패", { resultCode, resultMessage });
+    logger.error("결제 콜백 실패 (resultCode 체크)", { resultCode, resultMessage });
+
+    // 네이버페이 resultMessage 정제 (긴 메시지를 간결하게)
+    let cleanMessage = resultMessage || "결제가 취소되었습니다";
+
+    if (resultCode && naverPayErrorMessages[resultCode]) {
+      cleanMessage = naverPayErrorMessages[resultCode];
+    } else if (cleanMessage.length > 50) {
+      // 긴 메시지는 간단하게
+      cleanMessage = "결제 처리 중 오류가 발생했습니다.";
+    }
+
+    logger.info("네이버페이 결제 실패 메시지 정제", {
+      resultCode,
+      original: resultMessage,
+      cleaned: cleanMessage
+    });
+
     return res.redirect(
-      `${config.frontendUrl}/checkout/fail?message=${encodeURIComponent(resultMessage || "결제가 취소되었습니다")}`
+      `${config.frontendUrl}/checkout/fail?message=${encodeURIComponent(cleanMessage)}`
     );
   }
 
@@ -133,7 +199,17 @@ router.get("/callback", asyncHandler(async (req, res) => {
 
     // 결제 승인 상태 확인
     if (detail.admissionState !== "SUCCESS") {
-      throw new Error("결제 승인이 실패했습니다");
+      // admissionState가 SUCCESS가 아니면 에러 코드와 메시지를 포함한 NaverPayPaymentError throw
+      const errorCode = applyResult.code || "Fail";
+      const errorMessage = applyResult.message || "결제 승인이 실패했습니다";
+
+      logger.error("결제 승인 상태 실패", {
+        admissionState: detail.admissionState,
+        code: errorCode,
+        message: errorMessage,
+      });
+
+      throw new NaverPayPaymentError(errorCode, errorMessage, 400);
     }
 
     // 금액 검증 (보안)
@@ -158,6 +234,18 @@ router.get("/callback", asyncHandler(async (req, res) => {
         status: "payment_confirmed",
         paidAt: new Date(),
       });
+
+      // 재고 선점 기록 삭제 (중요: 만료 시 이중 복구 방지)
+      try {
+        await db
+          .delete(stockReservations)
+          .where(eq(stockReservations.userId, order.userId));
+        logger.info("재고 선점 기록 삭제 완료", { userId: order.userId, orderId: order.id });
+      } catch (deleteError) {
+        // 선점 기록 삭제 실패 시 로그만 남기고 계속 진행
+        logger.error("재고 선점 기록 삭제 실패", { userId: order.userId, orderId: order.id, error: deleteError });
+      }
+
       logger.info("결제 승인 완료 (선점 패턴 - 재고 이미 차감됨)", { orderId: order.id });
     } else {
       // 기존 방식: 소프트 락 기반 재고 확인 및 차감 + 주문 상태 업데이트
@@ -208,16 +296,44 @@ router.get("/callback", asyncHandler(async (req, res) => {
     });
 
     // 프론트엔드 결제 완료 페이지로 리다이렉트
-    res.redirect(`${config.frontendUrl}/checkout/success?orderId=${orderId}`);
+    // result=success 쿼리 파라미터 추가 (PaymentCallback.vue가 이를 확인함)
+    res.redirect(`${config.frontendUrl}/checkout/success?result=success&orderId=${orderId}`);
   } catch (error) {
-    logger.error("결제 콜백 에러", {
+    // 디버깅: 에러 타입 확인
+    logger.error("결제 콜백 에러 (상세)", {
+      errorType: error?.constructor?.name,
+      isNaverPayError: error instanceof NaverPayPaymentError,
       error: error instanceof Error ? error.message : String(error),
+      errorCode: (error as any)?.code,
+      errorObject: error,
     });
-    const message =
-      error instanceof Error ? error.message : "결제 처리 중 오류가 발생했습니다";
-    res.redirect(
-      `${config.frontendUrl}/checkout/fail?message=${encodeURIComponent(message)}`
-    );
+
+    // 네이버페이 에러 메시지 정제
+    let message = "결제 처리 중 오류가 발생했습니다";
+
+    if (error instanceof NaverPayPaymentError) {
+      message = naverPayErrorMessages[error.code] || error.message;
+      logger.info("네이버페이 에러 메시지 변환", {
+        code: error.code,
+        original: error.message,
+        converted: message
+      });
+    } else if (error instanceof Error) {
+      message = error.message;
+      logger.warn("일반 Error로 처리됨 (NaverPayPaymentError 아님)", {
+        errorMessage: error.message
+      });
+    }
+
+    const redirectUrl = `${config.frontendUrl}/checkout/fail?message=${encodeURIComponent(message)}`;
+
+    logger.info("프론트엔드로 리다이렉트", {
+      message: message,
+      redirectUrl: redirectUrl,
+      frontendUrl: config.frontendUrl,
+    });
+
+    res.redirect(redirectUrl);
   }
 }));
 
@@ -259,12 +375,34 @@ router.get(
     try {
       payment = await getNaverPayPayment(order.paymentKey);
     } catch (error) {
+      // 디버깅: 에러 타입 확인
+      logger.error("결제 상태 조회 에러 (네이버페이) - 상세", {
+        errorType: error?.constructor?.name,
+        isNaverPayError: error instanceof NaverPayPaymentError,
+        error: error instanceof Error ? error.message : String(error),
+        errorCode: (error as any)?.code,
+        errorObject: error,
+      });
+
       if (error instanceof NaverPayPaymentError) {
+        const userMessage = naverPayErrorMessages[error.code] || error.message;
+
+        logger.info("네이버페이 에러 메시지 변환 (조회)", {
+          code: error.code,
+          original: error.message,
+          converted: userMessage
+        });
+
         return res.status(error.statusCode).json({
-          message: error.message,
+          message: userMessage,
           code: error.code,
         });
       }
+
+      // NaverPayPaymentError가 아닌 일반 에러
+      logger.warn("일반 Error로 처리됨 (NaverPayPaymentError 아님)", {
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
       throw error;
     }
 
@@ -353,16 +491,34 @@ router.post(
         taxExScopeAmount: taxExScopeAmount ?? 0, // 면세 금액
       });
     } catch (error) {
+      // 디버깅: 에러 타입 확인
+      logger.error("결제 취소 에러 (네이버페이) - 상세", {
+        errorType: error?.constructor?.name,
+        isNaverPayError: error instanceof NaverPayPaymentError,
+        error: error instanceof Error ? error.message : String(error),
+        errorCode: (error as any)?.code,
+        errorObject: error,
+      });
+
       if (error instanceof NaverPayPaymentError) {
-        logger.error("결제 취소 에러", {
+        const userMessage = naverPayErrorMessages[error.code] || error.message;
+
+        logger.info("네이버페이 에러 메시지 변환 (취소)", {
           code: error.code,
-          message: error.message,
+          original: error.message,
+          converted: userMessage
         });
+
         return res.status(error.statusCode).json({
-          message: error.message,
+          message: userMessage,
           code: error.code,
         });
       }
+
+      // NaverPayPaymentError가 아닌 일반 에러
+      logger.warn("일반 Error로 처리됨 (NaverPayPaymentError 아님)", {
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
       throw error;
     }
 
@@ -392,6 +548,17 @@ router.post(
         logger.info("재고 복구 완료", { orderId });
       } catch (restoreError) {
         logger.error("재고 복구 실패", { orderId, error: restoreError });
+      }
+
+      // 재고 선점 기록 삭제 (선점 패턴 사용 시)
+      try {
+        await db
+          .delete(stockReservations)
+          .where(eq(stockReservations.userId, order.userId));
+        logger.info("재고 선점 기록 삭제 완료 (취소)", { userId: order.userId, orderId });
+      } catch (deleteError) {
+        // 선점 기록 삭제 실패 시 로그만 남기고 계속 진행
+        logger.error("재고 선점 기록 삭제 실패 (취소)", { userId: order.userId, orderId, error: deleteError });
       }
     }
 

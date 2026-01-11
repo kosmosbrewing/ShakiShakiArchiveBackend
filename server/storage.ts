@@ -43,7 +43,7 @@ import {
   type InquiryType,
 } from "@shared/schema";
 import { db, pool } from "./db";
-import { eq, and, like, desc, isNull, gt, lt, count } from "drizzle-orm";
+import { eq, and, like, desc, isNull, gt, lt, count, sql } from "drizzle-orm";
 import type {
   OrderItemCreateData,
   OrderStatusUpdate,
@@ -62,6 +62,35 @@ export interface IStorage {
   createUser(user: Omit<UpsertUser, "id">): Promise<User>;
   upsertUser(user: UpsertUser): Promise<User>;
   updateUser(id: string, user: Partial<UpsertUser>): Promise<User | undefined>;
+
+  // Admin user management operations (관리자 전용 회원 관리)
+  getAdminUsers(params: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    sortBy?: string;
+    sortOrder?: "asc" | "desc";
+  }): Promise<{
+    users: User[];
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+      totalPages: number;
+      hasMore: boolean;
+    };
+  }>;
+  getAdminUserDetail(userId: string): Promise<
+    | (User & {
+        stats: {
+          totalOrders: number;
+          totalSpent: number;
+          lastOrderDate: string | null;
+          totalInquiries: number;
+        };
+      })
+    | undefined
+  >;
 
   // Product operations (UUID 기반)
   getProducts(filters?: {
@@ -154,6 +183,8 @@ export interface IStorage {
     status: string,
     trackingNumber?: string
   ): Promise<OrderItem | undefined>;
+
+  deleteOrder(orderId: string): Promise<void>;
 
   // 결제 관련 메서드 (PG사 통합: 토스페이먼츠, 네이버페이 등)
   updateOrderPayment(
@@ -322,6 +353,181 @@ export class DatabaseStorage implements IStorage {
       .where(eq(users.id, id))
       .returning();
     return updated;
+  }
+
+  // ------------------------------------------------------------------
+  // Admin user management operations (관리자 전용 회원 관리)
+  // ------------------------------------------------------------------
+  async getAdminUsers(params: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    sortBy?: string;
+    sortOrder?: "asc" | "desc";
+  }): Promise<{
+    users: User[];
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+      totalPages: number;
+      hasMore: boolean;
+    };
+  }> {
+    // 기본값 설정
+    const page = params.page || 1;
+    const limit = params.limit || 20;
+    const search = params.search || "";
+    const sortBy = params.sortBy || "createdAt";
+    const sortOrder = params.sortOrder || "desc";
+    const offset = (page - 1) * limit;
+
+    // 검색 조건 구성 (이름, 이메일, 전화번호 검색)
+    const conditions = [];
+    if (search.trim()) {
+      conditions.push(
+        sql`(
+          ${users.userName} ILIKE ${`%${search}%`} OR
+          ${users.email} ILIKE ${`%${search}%`} OR
+          ${users.phone} ILIKE ${`%${search}%`}
+        )`
+      );
+    }
+
+    // 정렬 필드 검증 (SQL Injection 방지)
+    const allowedSortFields = ["createdAt", "userName", "email", "updatedAt"];
+    const safeSortBy = allowedSortFields.includes(sortBy)
+      ? sortBy
+      : "createdAt";
+
+    // 정렬 컬럼 매핑
+    const sortColumn =
+      safeSortBy === "createdAt"
+        ? users.createdAt
+        : safeSortBy === "userName"
+        ? users.userName
+        : safeSortBy === "email"
+        ? users.email
+        : users.updatedAt;
+
+    // 총 개수 조회
+    let countQuery = db.select({ count: count() }).from(users);
+    if (conditions.length > 0) {
+      // @ts-ignore: Drizzle SQL builder type complexity
+      countQuery = countQuery.where(and(...conditions));
+    }
+    const [countResult] = await countQuery;
+    const total = countResult?.count ?? 0;
+
+    // 회원 목록 조회 (비밀번호 해시 제외)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let usersQuery: any = db
+      .select({
+        id: users.id,
+        email: users.email,
+        userName: users.userName,
+        zipCode: users.zipCode,
+        address: users.address,
+        detailAddress: users.detailAddress,
+        phone: users.phone,
+        emailOptIn: users.emailOptIn,
+        profileImageUrl: users.profileImageUrl,
+        isAdmin: users.isAdmin,
+        naverId: users.naverId,
+        kakaoId: users.kakaoId,
+        socialProvider: users.socialProvider,
+        createdAt: users.createdAt,
+        updatedAt: users.updatedAt,
+      })
+      .from(users);
+
+    if (conditions.length > 0) {
+      usersQuery = usersQuery.where(and(...conditions));
+    }
+
+    // 정렬 적용
+    usersQuery =
+      sortOrder === "asc"
+        ? usersQuery.orderBy(sortColumn)
+        : usersQuery.orderBy(desc(sortColumn));
+
+    // 페이지네이션 적용
+    usersQuery = usersQuery.limit(limit).offset(offset);
+
+    const usersList = await usersQuery;
+
+    // 응답 구성
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+      users: usersList as User[],
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasMore: page < totalPages,
+      },
+    };
+  }
+
+  async getAdminUserDetail(userId: string): Promise<
+    | (User & {
+        stats: {
+          totalOrders: number;
+          totalSpent: number;
+          lastOrderDate: string | null;
+          totalInquiries: number;
+        };
+      })
+    | undefined
+  > {
+    // 사용자 정보 조회
+    const user = await this.getUser(userId);
+    if (!user) return undefined;
+
+    // 통계 정보 병렬 조회
+    const [orderStats, inquiryStats] = await Promise.all([
+      // 주문 통계
+      db
+        .select({
+          totalOrders: count(),
+          totalSpent: sql<string>`COALESCE(SUM(${orders.totalAmount}), 0)`,
+          lastOrderDate: sql<Date | null>`MAX(${orders.createdAt})`,
+        })
+        .from(orders)
+        .where(eq(orders.userId, userId)),
+      // 문의 통계
+      db
+        .select({ totalInquiries: count() })
+        .from(inquiries)
+        .where(eq(inquiries.userId, userId)),
+    ]);
+
+    const orderStat = orderStats[0];
+    const inquiryStat = inquiryStats[0];
+
+    // lastOrderDate를 안전하게 ISO 문자열로 변환
+    let lastOrderDateString: string | null = null;
+    if (orderStat?.lastOrderDate) {
+      try {
+        // Date 객체인 경우 ISO 문자열로 변환
+        lastOrderDateString = new Date(orderStat.lastOrderDate).toISOString();
+      } catch (error) {
+        // 변환 실패 시 null로 유지
+        lastOrderDateString = null;
+      }
+    }
+
+    return {
+      ...user,
+      stats: {
+        totalOrders: orderStat?.totalOrders ?? 0,
+        totalSpent: parseFloat(orderStat?.totalSpent ?? "0"),
+        lastOrderDate: lastOrderDateString, // 항상 string | null
+        totalInquiries: inquiryStat?.totalInquiries ?? 0,
+      },
+    };
   }
 
   // ------------------------------------------------------------------
@@ -697,6 +903,14 @@ export class DatabaseStorage implements IStorage {
     try {
       await client.query("BEGIN");
 
+      // 🔍 디버깅: 주문 생성 시작
+      console.log('[Storage] 주문 생성 트랜잭션 시작', {
+        userId: order.userId,
+        totalAmount: order.totalAmount,
+        itemCount: items.length,
+        isStockReserved: order.isStockReserved
+      });
+
       // 1. 주문 생성 (배송 상세주소, 배송요청사항, PG사 주문ID, 재고선점 여부 포함)
       const orderResult = await client.query(
         `INSERT INTO orders (user_id, total_amount, status, shipping_name, shipping_phone, shipping_postal_code, shipping_address, shipping_detail_address, shipping_request_note, external_order_id, is_stock_reserved)
@@ -717,6 +931,8 @@ export class DatabaseStorage implements IStorage {
       );
       const orderId = orderResult.rows[0].id;
 
+      console.log('[Storage] 주문 테이블 삽입 완료', { orderId });
+
       // 2. 주문 아이템 생성
       for (const item of items) {
         await client.query(
@@ -734,10 +950,22 @@ export class DatabaseStorage implements IStorage {
         );
       }
 
+      console.log('[Storage] 주문 아이템 삽입 완료', { orderId, itemCount: items.length });
+
       await client.query("COMMIT");
+
+      console.log('[Storage] 트랜잭션 커밋 완료', { orderId });
+
       return orderId;
     } catch (error) {
       await client.query("ROLLBACK");
+
+      console.error('[Storage] 주문 생성 실패 (롤백)', {
+        error: error instanceof Error ? error.message : String(error),
+        userId: order.userId,
+        stack: error instanceof Error ? error.stack : undefined
+      });
+
       throw error;
     } finally {
       client.release();
@@ -862,6 +1090,11 @@ export class DatabaseStorage implements IStorage {
       .where(eq(orderItems.id, itemId))
       .returning();
     return updated;
+  }
+
+  async deleteOrder(orderId: string): Promise<void> {
+    // CASCADE로 인해 order_items도 자동 삭제됨
+    await db.delete(orders).where(eq(orders.id, orderId));
   }
 
   // ------------------------------------------------------------------

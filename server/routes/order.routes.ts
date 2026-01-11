@@ -61,6 +61,12 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
   let orderName: string;
   let isDirectPurchase = false;
 
+  // 🔍 디버깅: 주문 모드 확인
+  logger.info("주문 모드 확인", {
+    directPurchaseItem: !!directPurchaseItem,
+    userId
+  });
+
   // 바로 구매 모드
   if (directPurchaseItem) {
     isDirectPurchase = true;
@@ -94,11 +100,15 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
   }
   // 장바구니 모드
   else {
+    logger.info("장바구니 모드: 장바구니 조회 시작", { userId });
     const cartItems = await storage.getCartItems(userId);
 
     if (cartItems.length === 0) {
+      logger.warn("장바구니 비어있음", { userId });
       return res.status(400).json({ message: ORDER_MESSAGES.CART_EMPTY });
     }
+
+    logger.info("장바구니 조회 완료", { userId, itemCount: cartItems.length });
 
     subtotal = cartItems.reduce(
       (sum, item) => sum + parseFloat(item.product.price) * item.quantity,
@@ -123,10 +133,13 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
   const shippingFee = calculateShippingFee(subtotal, validatedBody.shippingPostalCode);
   const totalAmount = subtotal + shippingFee;
 
+  logger.info("주문 금액 계산 완료", { subtotal, shippingFee, totalAmount });
+
   // PG사 주문번호 생성
   const externalOrderId = generateExternalOrderId();
 
   // 주문 데이터 생성
+  logger.info("주문 데이터 검증 시작", { userId, externalOrderId });
   const orderData = insertOrderSchema.parse({
     userId,
     totalAmount: totalAmount.toString(),
@@ -143,7 +156,16 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
   });
 
   // 주문 생성 (트랜잭션 적용됨)
+  logger.info("주문 생성 시작 (DB 저장)", {
+    userId,
+    totalAmount,
+    itemCount: orderItemsData.length,
+    isStockReserved: !!reservationId
+  });
+
   const orderId = await storage.createOrder(orderData, orderItemsData);
+
+  logger.info("주문 생성 완료", { userId, orderId, externalOrderId });
 
   // 재고 선점 삭제 (주문 생성 성공 시)
   if (reservationId) {
@@ -315,6 +337,60 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
       refundableAmount: payment.cancels?.[0]?.refundableAmount,
       canceledAt: payment.cancels?.[0]?.canceledAt,
     },
+  });
+}));
+
+/**
+ * 주문 삭제
+ * DELETE /api/orders/:id
+ *
+ * - pending_payment 상태의 주문만 삭제 가능
+ * - 이미 결제된 주문은 삭제 불가 (취소만 가능)
+ * - CASCADE로 인해 order_items도 자동 삭제됨
+ * - 재고는 stock_reservation 해제로 이미 복구됨
+ */
+router.delete("/:id", isAuthenticated, asyncHandler(async (req, res) => {
+  const orderId = req.params.id; // UUID 문자열
+  const userId = req.session.userId!;
+
+  // 1. 주문 조회
+  const order = await storage.getOrder(orderId);
+  if (!order) {
+    return res.status(404).json({ message: "주문을 찾을 수 없습니다." });
+  }
+
+  // 2. 권한 검증 (본인만 삭제 가능)
+  if (order.userId !== userId) {
+    return res.status(403).json({ message: "권한이 없습니다." });
+  }
+
+  // 3. 삭제 가능 상태 확인 (pending_payment 상태만 삭제 가능)
+  if (order.status !== ORDER_STATUS.PENDING_PAYMENT) {
+    return res.status(400).json({
+      message: "입금 대기 상태의 주문만 삭제할 수 있습니다. 이미 결제된 주문은 취소를 이용해주세요.",
+      code: "CANNOT_DELETE_PAID_ORDER",
+    });
+  }
+
+  // 4. 재고 복구 (재고 선점 사용한 경우)
+  // @ts-ignore - isStockReserved는 새로 추가된 필드
+  if (order.isStockReserved) {
+    try {
+      await storage.restoreStockOnCancel(orderId);
+      logger.info("재고 복구 완료 (주문 삭제)", { orderId });
+    } catch (restoreError) {
+      // 재고 복구 실패 시 로그 남기고 계속 진행 (관리자 수동 처리 필요)
+      logger.error("재고 복구 실패 (주문 삭제)", { orderId, error: restoreError });
+    }
+  }
+
+  // 5. 주문 삭제 (CASCADE로 order_items도 자동 삭제됨)
+  await storage.deleteOrder(orderId);
+
+  logger.info("주문 삭제 완료", { orderId, userId });
+
+  res.json({
+    message: "주문이 삭제되었습니다.",
   });
 }));
 
