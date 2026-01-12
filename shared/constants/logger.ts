@@ -66,7 +66,7 @@ export const LOG_LEVEL_COLORS: Record<LogLevel, string> = {
  */
 export const LOGGER_DEFAULTS = {
   /** 프로덕션 환경 기본 로그 레벨 */
-  PROD_LOG_LEVEL: LogLevel.ERROR,
+  PROD_LOG_LEVEL: LogLevel.WARN,
   /** 개발 환경 기본 로그 레벨 */
   DEV_LOG_LEVEL: LogLevel.INFO,
   /** 프로덕션 환경 색상 사용 여부 */
