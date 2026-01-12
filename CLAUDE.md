@@ -25,7 +25,7 @@ npm run db:push
 
 ## Architecture
 
-### Directory Structure s
+### Directory Structure
 
 ```
 server/           # Express 백엔드
