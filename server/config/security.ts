@@ -9,7 +9,7 @@ import { RATE_LIMIT, HSTS, RATE_LIMIT_MESSAGES } from "../constants";
 
 const logger = createLogger("RateLimit");
 
-/**
+/** 보안 사항
  * Helmet 보안 헤더 설정
  * - XSS 공격 방지
  * - Clickjacking 방지
@@ -160,7 +160,11 @@ export const paymentRateLimiter = rateLimit({
   },
   validate: { xForwardedForHeader: false, keyGeneratorIpFallback: false },
   handler: (req, res, next, options) => {
-    logger.warn("Payment rate limit 초과", { ip: req.ip, url: req.originalUrl, userId: (req as any).user?.id });
+    logger.warn("Payment rate limit 초과", {
+      ip: req.ip,
+      url: req.originalUrl,
+      userId: (req as any).user?.id,
+    });
     res.status(429).json(options.message);
   },
   // 결제는 개발 환경에서도 제한 적용
