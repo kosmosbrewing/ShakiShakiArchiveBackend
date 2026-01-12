@@ -65,8 +65,9 @@ export const config = {
 
   // CORS (쉼표로 구분된 origin 목록)
   cors: {
-    allowedOrigins:
-      process.env.CORS_ORIGINS?.split(",").map((o) => o.trim()) || ["*"],
+    allowedOrigins: process.env.CORS_ORIGINS?.split(",").map((o) =>
+      o.trim()
+    ) || ["*"],
   },
 
   // 토스페이먼츠 설정
@@ -114,6 +115,14 @@ export const config = {
 
   // 프론트엔드 URL (OAuth 콜백 리다이렉트용)
   frontendUrl: process.env.FRONTEND_URL || "http://localhost:5173",
+
+  // SEO 설정
+  seo: {
+    siteName: process.env.SITE_NAME || "ShakiShaki Archive",
+    siteDescription:
+      process.env.SITE_DESCRIPTION || "ShakiShaki Archive - 빈티지 의류 쇼핑몰",
+    siteLogo: process.env.SITE_LOGO || "",
+  },
 
   // Resend 이메일 설정
   email: {

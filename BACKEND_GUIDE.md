@@ -1098,11 +1098,13 @@ kakaopay: {
 
 ### 🟢 SEO 설정 (선택)
 
-| 변수명             | 설명                       | 기본값                      |
-| ------------------ | -------------------------- | --------------------------- |
-| `SITE_NAME`        | 사이트 이름                | `ShakiShaki`                |
-| `SITE_DESCRIPTION` | 사이트 설명                | 기본 설명                   |
-| `SITE_LOGO`        | 사이트 로고 URL            | `{FRONTEND_URL}/logo.png`   |
+| 변수명             | 설명                       | 기본값                      | 사용 위치 |
+| ------------------ | -------------------------- | --------------------------- | --------- |
+| `SITE_NAME`        | 사이트 이름                | `ShakiShaki`                | `config.seo.siteName` |
+| `SITE_DESCRIPTION` | 사이트 설명                | `ShakiShaki Archive - 프리미엄 빈티지 의류 쇼핑몰` | `config.seo.siteDescription` |
+| `SITE_LOGO`        | 사이트 로고 URL (1200x630 권장) | `{FRONTEND_URL}/logo.png`   | `config.seo.siteLogo` |
+
+**참고**: SEO 환경변수는 `server/config/index.ts`의 `config.seo` 객체로 그룹화되어 관리됩니다.
 
 ---
 

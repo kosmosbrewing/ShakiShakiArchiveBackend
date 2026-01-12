@@ -3,17 +3,18 @@
 
 import { config } from "../config";
 import type { Product, Category } from "@shared/schema";
+import { optimizeForOg, optimizeForList } from "./cloudinary";
 
 // 사이트 기본 정보 (환경 변수로 설정 가능)
 const SITE_CONFIG = {
-  name: process.env.SITE_NAME || "ShakiShaki",
-  description:
-    process.env.SITE_DESCRIPTION ||
-    "ShakiShaki Archive - 프리미엄 빈티지 의류 쇼핑몰",
+  name: config.seo.siteName,
+  description: config.seo.siteDescription,
   url: config.frontendUrl,
   locale: "ko_KR",
   currency: "KRW",
-  logo: process.env.SITE_LOGO || `${config.frontendUrl}/logo.png`,
+  logo: optimizeForOg(
+    config.seo.siteLogo || `${config.frontendUrl}/logo.png`
+  ),
 };
 
 // ============================================
@@ -182,7 +183,7 @@ export function generateProductSeo(
     : product.imageUrl
       ? [product.imageUrl]
       : [];
-  const primaryImage = productImages[0] || SITE_CONFIG.logo;
+  const primaryImage = optimizeForOg(productImages[0] || SITE_CONFIG.logo);
   const description =
     product.description || `${product.name} - ${SITE_CONFIG.name}에서 구매하세요`;
 
@@ -218,7 +219,7 @@ export function generateProductSeo(
       "@type": "Product",
       name: product.name,
       description: product.description || undefined,
-      image: productImages.length > 0 ? productImages : undefined,
+      image: productImages.length > 0 ? productImages.map(optimizeForOg) : undefined,
       sku: product.id,
       brand: {
         "@type": "Brand",
@@ -290,19 +291,23 @@ export function generateCategorySeo(
     category.description ||
     `${category.name} 카테고리 - ${SITE_CONFIG.name}에서 다양한 상품을 만나보세요`;
 
+  const optimizedCategoryImage = optimizeForOg(
+    category.imageUrl || SITE_CONFIG.logo
+  );
+
   const openGraph: OpenGraphMeta = {
     title: `${category.name} | ${SITE_CONFIG.name}`,
     description,
     url: categoryUrl,
     type: "website",
-    image: category.imageUrl || SITE_CONFIG.logo,
+    image: optimizedCategoryImage,
     siteName: SITE_CONFIG.name,
     locale: SITE_CONFIG.locale,
     twitter: {
       card: "summary_large_image",
       title: `${category.name} | ${SITE_CONFIG.name}`,
       description,
-      image: category.imageUrl || SITE_CONFIG.logo,
+      image: optimizedCategoryImage,
     },
   };
 
@@ -321,7 +326,7 @@ export function generateCategorySeo(
         position: index + 1,
         url: `${SITE_CONFIG.url}/products/${product.slug}`,
         name: product.name,
-        image: product.imageUrl || undefined,
+        image: product.imageUrl ? optimizeForList(product.imageUrl) : undefined,
       })),
     });
   }
@@ -422,7 +427,7 @@ export function generateProductListSeo(products: Product[]): {
       position: index + 1,
       url: `${SITE_CONFIG.url}/products/${product.slug}`,
       name: product.name,
-      image: product.imageUrl || undefined,
+      image: product.imageUrl ? optimizeForList(product.imageUrl) : undefined,
     })),
   };
 
