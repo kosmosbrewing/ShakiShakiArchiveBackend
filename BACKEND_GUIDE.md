@@ -1074,11 +1074,13 @@ kakaopay: {
 
 ### 🟢 Resend (이메일 발송)
 
-| 변수명            | 설명                                               |
-| ----------------- | -------------------------------------------------- |
-| `RESEND_API_KEY`  | Resend API 키                                      |
-| `EMAIL_FROM`      | 발신자 이메일 주소 (기본값: `noreply@example.com`) |
-| `EMAIL_FROM_NAME` | 발신자 이름 (기본값: `ShakiShaki`)                 |
+| 변수명            | 설명                                               | 필수 여부 |
+| ----------------- | -------------------------------------------------- | --------- |
+| `RESEND_API_KEY`  | Resend API 키                                      | 선택 |
+| `EMAIL_FROM`      | 발신자 이메일 주소 (기본값: `noreply@example.com`) | 선택 |
+| `EMAIL_FROM_NAME` | 발신자 이름 (기본값: `SITE_NAME` 사용) | 선택 (거의 불필요) |
+
+**참고**: `EMAIL_FROM_NAME`은 `SITE_NAME`을 기본값으로 사용하므로 대부분의 경우 설정 불필요.
 
 ### 🟢 Cloudinary (이미지 업로드)
 

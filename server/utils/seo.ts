@@ -9,7 +9,8 @@ import { optimizeForOg, optimizeForList } from "./cloudinary";
 const SITE_CONFIG = {
   name: config.seo.siteName,
   description: config.seo.siteDescription,
-  url: config.frontendUrl,
+  // URL 끝의 슬래시 제거 (중복 방지)
+  url: config.frontendUrl.replace(/\/+$/, ""),
   locale: "ko_KR",
   currency: "KRW",
   logo: optimizeForOg(

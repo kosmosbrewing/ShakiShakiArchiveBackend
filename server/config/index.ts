@@ -128,7 +128,10 @@ export const config = {
   email: {
     resendApiKey: process.env.RESEND_API_KEY || "",
     fromEmail: process.env.EMAIL_FROM || "noreply@example.com",
-    fromName: process.env.EMAIL_FROM_NAME || "ShakiShaki",
+    // fromName은 SITE_NAME 재사용 (중복 제거)
+    // 개별 설정 필요 시 EMAIL_FROM_NAME 환경변수로 오버라이드 가능
+    fromName:
+      process.env.EMAIL_FROM_NAME || process.env.SITE_NAME || "ShakiShaki Archive",
     isEnabled: !!process.env.RESEND_API_KEY,
     verificationCodeExpiry: 10, // 인증코드 만료 시간 (분)
   },
