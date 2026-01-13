@@ -315,7 +315,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserByEmail(email: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.email, email));
+    // 이메일은 항상 소문자로 저장되므로 소문자로 검색 (인덱스 활용)
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, email.toLowerCase()));
     return user;
   }
 
