@@ -16,6 +16,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { DISPOSABLE_EMAIL_DOMAINS } from "./constants/disposable-emails";
 
 // Session storage table (required for Replit Auth)
 export const sessions = pgTable(
@@ -58,25 +59,226 @@ export const users = pgTable("users", {
 export type User = typeof users.$inferSelect;
 export type UpsertUser = typeof users.$inferInsert;
 
+// ------------------------------------------------------------------
+// 이메일 도메인 검증 (일회용 이메일 차단)
+// ------------------------------------------------------------------
+
+/**
+ * 이메일 도메인이 유효한지 검증
+ * - 일회용 이메일 차단
+ * - RFC 5322 기반 도메인 형식 검증
+ *
+ * 검증 규칙:
+ * 1. 최소 2개의 파트 필요 (domain.tld)
+ * 2. 각 파트는 영문자, 숫자, 하이픈만 허용
+ * 3. 하이픈은 시작/끝에 올 수 없음
+ * 4. 연속된 점 불가
+ * 5. TLD는 최소 2자 이상, 숫자만으로 구성 불가
+ */
+function validateEmailDomain(email: string): boolean {
+  const domain = email.split("@")[1]?.toLowerCase();
+  if (!domain) return false;
+
+  // 일회용 이메일 도메인 차단
+  if (DISPOSABLE_EMAIL_DOMAINS.has(domain)) {
+    return false;
+  }
+
+  // 도메인 검증
+  const parts = domain.split(".");
+
+  // 최소 2개 파트 필요 (예: example.com)
+  if (parts.length < 2) return false;
+
+  // 각 파트(라벨) 검증
+  for (const part of parts) {
+    // 빈 파트 차단 (연속된 점 방지)
+    if (part.length === 0) return false;
+
+    // 파트 길이 제한 (RFC 1035: 최대 63자)
+    if (part.length > 63) return false;
+
+    // 하이픈으로 시작하거나 끝나면 안됨
+    if (part.startsWith("-") || part.endsWith("-")) return false;
+
+    // 영문자, 숫자, 하이픈만 허용
+    if (!/^[a-z0-9-]+$/i.test(part)) return false;
+  }
+
+  // TLD(최상위 도메인) 검증
+  const tld = parts[parts.length - 1];
+
+  // TLD는 최소 2자 이상
+  if (tld.length < 2) return false;
+
+  // TLD는 숫자로만 이루어질 수 없음
+  if (/^\d+$/.test(tld)) return false;
+
+  // 도메인 전체 길이 제한 (RFC 1035: 최대 253자)
+  if (domain.length > 253) return false;
+
+  return true;
+}
+
+// ------------------------------------------------------------------
+// 비밀번호 복잡성 검증 함수 (OWASP 기준)
+// ------------------------------------------------------------------
+/**
+ * OWASP 권장 비밀번호 복잡성 규칙:
+ * - 최소 8자 이상
+ * - 영문 대/소문자, 숫자, 특수문자 중 최소 3가지 조합
+ */
+function validatePasswordComplexity(password: string): boolean {
+  if (password.length < 8) return false;
+
+  let complexity = 0;
+  if (/[a-z]/.test(password)) complexity++; // 영문 소문자
+  if (/[A-Z]/.test(password)) complexity++; // 영문 대문자
+  if (/[0-9]/.test(password)) complexity++; // 숫자
+  if (/[@$!%*?&#^()_+\-=\[\]{};':"\\|,.<>\/~`]/.test(password)) complexity++; // 특수문자
+
+  return complexity >= 3; // 최소 3가지 조합
+}
+
+// 비밀번호 검증 스키마 (재사용)
+const passwordSchema = z
+  .string()
+  .min(8, "비밀번호는 최소 8자 이상이어야 합니다")
+  .refine(validatePasswordComplexity, {
+    message: "비밀번호는 영문 대/소문자, 숫자, 특수문자 중 최소 3가지를 조합해야 합니다",
+  });
+
 // [수정] Auth schemas
 export const signupSchema = z.object({
-  email: z.string().email("유효한 이메일 주소를 입력해주세요"),
-  password: z.string().min(8, "비밀번호는 최소 8자 이상이어야 합니다"),
-  userName: z.string().min(1, "이름을 입력해주세요"), // 변경됨
+  email: z
+    .string()
+    .trim()
+    .toLowerCase() // 이메일 정규화: 소문자 변환
+    .email("유효한 이메일 주소를 입력해주세요")
+    .max(255, "이메일은 최대 255자까지 입력 가능합니다")
+    .refine(validateEmailDomain, {
+      message: "일회용 이메일 주소는 사용할 수 없습니다. 실제 이메일 주소를 입력해주세요",
+    }),
+  password: passwordSchema,
+  userName: z
+    .string()
+    .trim()
+    .min(1, "이름을 입력해주세요")
+    .max(100, "이름은 최대 100자까지 입력 가능합니다")
+    .refine(
+      (val) => !/<[^>]*>/g.test(val), // XSS 방지: HTML 태그 차단
+      { message: "이름에 HTML 태그를 사용할 수 없습니다" }
+    ),
   // 선택 정보 (회원가입 시 받을 수도, 나중에 수정할 수도 있음)
-  zipCode: z.string().optional(),
-  address: z.string().optional(),
-  detailAddress: z.string().optional(),
-  phone: z.string().optional(),
+  zipCode: z
+    .string()
+    .trim()
+    .max(20, "우편번호는 최대 20자까지 입력 가능합니다")
+    .optional(),
+  address: z
+    .string()
+    .trim()
+    .max(255, "주소는 최대 255자까지 입력 가능합니다")
+    .optional(),
+  detailAddress: z
+    .string()
+    .trim()
+    .max(255, "상세주소는 최대 255자까지 입력 가능합니다")
+    .optional(),
+  phone: z
+    .string()
+    .trim()
+    .regex(
+      /^01[0-9]-?[0-9]{3,4}-?[0-9]{4}$/,
+      "올바른 휴대폰 번호 형식이 아닙니다 (예: 010-1234-5678)"
+    )
+    .optional()
+    .or(z.literal("")), // 빈 문자열 허용
   emailOptIn: z.boolean().optional(),
 });
 export type SignupInput = z.infer<typeof signupSchema>;
 
 export const loginSchema = z.object({
-  email: z.string().email("유효한 이메일 주소를 입력해주세요"),
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .email("유효한 이메일 주소를 입력해주세요"),
   password: z.string().min(1, "비밀번호를 입력해주세요"),
 });
 export type LoginInput = z.infer<typeof loginSchema>;
+
+// 비밀번호 재설정 스키마 (비로그인 사용자용)
+export const resetPasswordSchema = z.object({
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .email("유효한 이메일 주소를 입력해주세요"),
+  newPassword: passwordSchema,
+});
+export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+
+// 비밀번호 변경 스키마 (로그인한 사용자용)
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, "현재 비밀번호를 입력해주세요"),
+  newPassword: passwordSchema,
+});
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+
+// 회원정보 수정 스키마 (로그인한 사용자용)
+export const updateUserSchema = z
+  .object({
+    userName: z
+      .string()
+      .trim()
+      .min(1, "이름을 입력해주세요")
+      .max(100, "이름은 최대 100자까지 입력 가능합니다")
+      .refine(
+        (val) => !/<[^>]*>/g.test(val), // XSS 방지: HTML 태그 차단
+        { message: "이름에 HTML 태그를 사용할 수 없습니다" }
+      )
+      .optional(),
+    zipCode: z
+      .union([
+        z.string().trim().max(20, "우편번호는 최대 20자까지 입력 가능합니다"),
+        z.literal(""),
+      ])
+      .optional(),
+    address: z
+      .union([
+        z.string().trim().max(255, "주소는 최대 255자까지 입력 가능합니다"),
+        z.literal(""),
+      ])
+      .optional(),
+    detailAddress: z
+      .union([
+        z.string().trim().max(255, "상세주소는 최대 255자까지 입력 가능합니다"),
+        z.literal(""),
+      ])
+      .optional(),
+    phone: z
+      .union([
+        z
+          .string()
+          .trim()
+          .regex(
+            /^01[0-9]-?[0-9]{3,4}-?[0-9]{4}$/,
+            "올바른 휴대폰 번호 형식이 아닙니다 (예: 010-1234-5678)"
+          ),
+        z.literal(""),
+      ])
+      .optional(),
+    emailOptIn: z.boolean().optional(),
+  })
+  .refine(
+    (data) => {
+      // 최소 하나 이상의 필드가 제공되어야 함
+      return Object.keys(data).length > 0;
+    },
+    { message: "수정할 정보를 최소 하나 이상 입력해주세요" }
+  );
+export type UpdateUserInput = z.infer<typeof updateUserSchema>;
 
 // Categories table (id 직접 입력 가능)
 export const categories = pgTable("categories", {
@@ -614,7 +816,14 @@ export type InsertEmailVerification = z.infer<
 
 // 이메일 인증코드 요청 스키마
 export const sendVerificationCodeSchema = z.object({
-  email: z.string().email("유효한 이메일 주소를 입력해주세요"),
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .email("유효한 이메일 주소를 입력해주세요")
+    .refine(validateEmailDomain, {
+      message: "일회용 이메일 주소는 사용할 수 없습니다. 실제 이메일 주소를 입력해주세요",
+    }),
   type: z.enum(["signup", "password_reset"]).default("signup"),
 });
 export type SendVerificationCodeInput = z.infer<
@@ -623,8 +832,12 @@ export type SendVerificationCodeInput = z.infer<
 
 // 이메일 인증코드 확인 스키마
 export const verifyEmailCodeSchema = z.object({
-  email: z.string().email("유효한 이메일 주소를 입력해주세요"),
-  code: z.string().length(6, "인증코드는 6자리입니다"),
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .email("유효한 이메일 주소를 입력해주세요"),
+  code: z.string().trim().length(6, "인증코드는 6자리입니다"),
   type: z.enum(["signup", "password_reset"]).default("signup"),
 });
 export type VerifyEmailCodeInput = z.infer<typeof verifyEmailCodeSchema>;

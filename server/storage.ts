@@ -262,6 +262,7 @@ export interface IStorage {
   markVerificationAsUsed(id: number): Promise<void>;
   deleteExpiredVerifications(): Promise<void>;
   isEmailVerified(email: string, type: string): Promise<boolean>;
+  clearEmailVerification(email: string, type: string): Promise<void>;
 
   // Site Image operations (Hero, Marquee)
   getSiteImages(type?: SiteImageType): Promise<SiteImage[]>;
@@ -2158,6 +2159,19 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(emailVerifications.createdAt))
       .limit(1);
     return !!verification;
+  }
+
+  async clearEmailVerification(email: string, type: string): Promise<void> {
+    // 보안: 사용 완료된 인증 레코드를 삭제하여 재사용 방지
+    await db
+      .delete(emailVerifications)
+      .where(
+        and(
+          eq(emailVerifications.email, email),
+          eq(emailVerifications.type, type),
+          eq(emailVerifications.verified, true)
+        )
+      );
   }
 
   // ------------------------------------------------------------------

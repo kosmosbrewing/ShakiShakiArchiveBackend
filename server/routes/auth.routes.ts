@@ -15,6 +15,9 @@ import {
   loginSchema,
   sendVerificationCodeSchema,
   verifyEmailCodeSchema,
+  resetPasswordSchema,
+  changePasswordSchema,
+  updateUserSchema,
 } from "@shared/schema";
 import {
   generateVerificationCode,
@@ -26,6 +29,25 @@ import { createLogger } from "../utils/logger";
 
 const router = Router();
 const logger = createLogger("Auth");
+
+// ------------------------------------------------------------------
+// 유틸리티 함수: 이메일 마스킹 (개인정보 보호)
+// ------------------------------------------------------------------
+/**
+ * 로그에서 이메일 주소를 마스킹 처리
+ * 예: test@example.com → t**t@example.com
+ */
+function maskEmail(email: string): string {
+  const [local, domain] = email.split("@");
+  if (!domain) return "***"; // 유효하지 않은 이메일
+
+  const maskedLocal =
+    local.length > 2
+      ? local[0] + "*".repeat(local.length - 2) + local[local.length - 1]
+      : local[0] + "*";
+
+  return `${maskedLocal}@${domain}`;
+}
 
 // 인증 관련 엔드포인트에 Rate Limiting 적용 (Brute Force 방지)
 
@@ -39,6 +61,7 @@ router.post("/signup", authRateLimiter, asyncHandler(async (req, res) => {
     "signup"
   );
   if (!isVerified) {
+    logger.warn(`Signup failed: Email not verified - email=${maskEmail(validatedData.email)}`);
     return res.status(400).json({
       message: "이메일 인증이 완료되지 않았습니다",
       code: "EMAIL_NOT_VERIFIED",
@@ -47,6 +70,7 @@ router.post("/signup", authRateLimiter, asyncHandler(async (req, res) => {
 
   const existingUser = await storage.getUserByEmail(validatedData.email);
   if (existingUser) {
+    logger.warn(`Signup failed: Email already exists - email=${maskEmail(validatedData.email)}`);
     return res.status(400).json({ message: "이미 사용 중인 이메일입니다" });
   }
 
@@ -63,7 +87,13 @@ router.post("/signup", authRateLimiter, asyncHandler(async (req, res) => {
     emailOptIn: validatedData.emailOptIn ?? false,
   });
 
+  // 보안: 인증 상태 초기화 (재사용 방지)
+  await storage.clearEmailVerification(validatedData.email, "signup");
+
   req.session.userId = user.id;
+
+  // 보안 로깅: 회원가입 성공
+  logger.info(`Signup successful - userId=${user.id}, email=${maskEmail(validatedData.email)}`);
 
   const { passwordHash: _, ...userWithoutPassword } = user;
   res.json(userWithoutPassword);
@@ -75,6 +105,8 @@ router.post("/login", authRateLimiter, asyncHandler(async (req, res) => {
 
   const user = await storage.getUserByEmail(validatedData.email);
   if (!user) {
+    // 보안 로깅: 실패한 로그인 시도 (존재하지 않는 이메일)
+    logger.warn(`Login failed: User not found - email=${maskEmail(validatedData.email)}`);
     return res
       .status(401)
       .json({ message: "이메일 또는 비밀번호가 올바르지 않습니다" });
@@ -82,6 +114,7 @@ router.post("/login", authRateLimiter, asyncHandler(async (req, res) => {
 
   // 소셜 로그인 사용자는 비밀번호로 로그인 불가
   if (!user.passwordHash) {
+    logger.warn(`Login failed: Social login account attempted password login - email=${maskEmail(validatedData.email)}`);
     return res.status(401).json({
       message: "소셜 로그인으로 가입한 계정입니다. 해당 소셜 서비스로 로그인해주세요.",
     });
@@ -92,12 +125,17 @@ router.post("/login", authRateLimiter, asyncHandler(async (req, res) => {
     user.passwordHash
   );
   if (!isValidPassword) {
+    // 보안 로깅: 실패한 로그인 시도 (비밀번호 불일치)
+    logger.warn(`Login failed: Invalid password - email=${maskEmail(validatedData.email)}, userId=${user.id}`);
     return res
       .status(401)
       .json({ message: "이메일 또는 비밀번호가 올바르지 않습니다" });
   }
 
   req.session.userId = user.id;
+
+  // 보안 로깅: 성공한 로그인
+  logger.info(`Login successful - userId=${user.id}, email=${maskEmail(validatedData.email)}`);
 
   const { passwordHash: _, ...userWithoutPassword } = user;
   res.json(userWithoutPassword);
@@ -135,16 +173,17 @@ router.get("/user", isAuthenticated, asyncHandler(async (req, res) => {
 // 사용자 정보 수정 핸들러 (PATCH, PUT 공통 사용)
 const updateUserHandler = asyncHandler(async (req, res) => {
   const userId = req.session.userId!;
-  const { userName, zipCode, address, detailAddress, phone, emailOptIn } =
-    req.body;
+
+  // Zod 스키마로 입력 검증 (XSS, 길이 제한, 형식 검증)
+  const validatedData = updateUserSchema.parse(req.body);
 
   const updateData: Record<string, unknown> = {};
-  if (userName) updateData.userName = userName;
-  if (phone !== undefined) updateData.phone = phone;
-  if (zipCode !== undefined) updateData.zipCode = zipCode;
-  if (address !== undefined) updateData.address = address;
-  if (detailAddress !== undefined) updateData.detailAddress = detailAddress;
-  if (emailOptIn !== undefined) updateData.emailOptIn = emailOptIn;
+  if (validatedData.userName !== undefined) updateData.userName = validatedData.userName;
+  if (validatedData.phone !== undefined) updateData.phone = validatedData.phone;
+  if (validatedData.zipCode !== undefined) updateData.zipCode = validatedData.zipCode;
+  if (validatedData.address !== undefined) updateData.address = validatedData.address;
+  if (validatedData.detailAddress !== undefined) updateData.detailAddress = validatedData.detailAddress;
+  if (validatedData.emailOptIn !== undefined) updateData.emailOptIn = validatedData.emailOptIn;
 
   const updatedUser = await storage.updateUser(userId, updateData);
 
@@ -155,6 +194,8 @@ const updateUserHandler = asyncHandler(async (req, res) => {
   // 캐시 무효화
   invalidateUserCache(userId);
 
+  logger.info(`User profile updated: userId=${userId}`);
+
   res.json({ message: "정보가 수정되었습니다", user: updatedUser });
 });
 
@@ -162,18 +203,21 @@ const updateUserHandler = asyncHandler(async (req, res) => {
 router.patch("/user", isAuthenticated, updateUserHandler);
 router.put("/user", isAuthenticated, updateUserHandler);
 
-// 비밀번호 변경
+// 비밀번호 변경 (로그인한 사용자)
 router.put("/password", authRateLimiter, isAuthenticated, asyncHandler(async (req, res) => {
-  const { currentPassword, newPassword } = req.body;
+  const validatedData = changePasswordSchema.parse(req.body);
+  const { currentPassword, newPassword } = validatedData;
   const userId = req.session.userId!;
 
   const user = await storage.getUser(userId);
   if (!user) {
+    logger.error(`Password change failed: User not found - userId=${userId}`);
     return res.status(404).json({ message: "사용자를 찾을 수 없습니다" });
   }
 
   // 소셜 로그인 사용자는 비밀번호 변경 불가
   if (!user.passwordHash) {
+    logger.warn(`Password change failed: Social login account - userId=${userId}, email=${maskEmail(user.email)}`);
     return res.status(400).json({
       message: "소셜 로그인으로 가입한 계정은 비밀번호를 변경할 수 없습니다",
     });
@@ -181,15 +225,76 @@ router.put("/password", authRateLimiter, isAuthenticated, asyncHandler(async (re
 
   const isValid = await verifyPassword(currentPassword, user.passwordHash);
   if (!isValid) {
+    // 보안 로깅: 현재 비밀번호 불일치 (계정 탈취 시도 가능)
+    logger.warn(`Password change failed: Current password mismatch - userId=${userId}, email=${maskEmail(user.email)}`);
     return res
       .status(401)
       .json({ message: "현재 비밀번호가 일치하지 않습니다" });
   }
 
+  // 동일 비밀번호 제한: 기존 비밀번호와 동일한지 확인
+  const isSamePassword = await verifyPassword(newPassword, user.passwordHash);
+  if (isSamePassword) {
+    logger.warn(`Password change failed: Same as current password - userId=${userId}`);
+    return res.status(400).json({
+      message: "새 비밀번호는 현재 비밀번호와 달라야 합니다",
+    });
+  }
+
   const newPasswordHash = await hashPassword(newPassword);
   await storage.updateUser(userId, { passwordHash: newPasswordHash });
 
+  // 보안 로깅: 비밀번호 변경 성공
+  logger.info(`Password changed successfully - userId=${userId}, email=${maskEmail(user.email)}`);
+
   res.json({ message: "비밀번호가 변경되었습니다" });
+}));
+
+// 비밀번호 재설정 (비로그인 사용자)
+router.post("/reset-password", authRateLimiter, asyncHandler(async (req, res) => {
+  const validatedData = resetPasswordSchema.parse(req.body);
+  const { email, newPassword } = validatedData;
+
+  // 이메일 인증 완료 여부 확인
+  const isVerified = await storage.isEmailVerified(email, "password_reset");
+  if (!isVerified) {
+    return res.status(400).json({
+      message: "이메일 인증이 완료되지 않았습니다",
+      code: "EMAIL_NOT_VERIFIED",
+    });
+  }
+
+  // 사용자 조회
+  const user = await storage.getUserByEmail(email);
+  if (!user) {
+    return res.status(404).json({ message: "사용자를 찾을 수 없습니다" });
+  }
+
+  // 소셜 로그인 사용자는 비밀번호 재설정 불가
+  if (!user.passwordHash) {
+    return res.status(400).json({
+      message: "소셜 로그인으로 가입한 계정은 비밀번호를 재설정할 수 없습니다",
+    });
+  }
+
+  // 동일 비밀번호 제한: 기존 비밀번호와 동일한지 확인
+  const isSamePassword = await verifyPassword(newPassword, user.passwordHash);
+  if (isSamePassword) {
+    return res.status(400).json({
+      message: "새 비밀번호는 이전 비밀번호와 달라야 합니다",
+    });
+  }
+
+  // 새 비밀번호 해시화 및 업데이트
+  const newPasswordHash = await hashPassword(newPassword);
+  await storage.updateUser(user.id, { passwordHash: newPasswordHash });
+
+  // 보안: 인증 상태 초기화 (재사용 방지)
+  await storage.clearEmailVerification(email, "password_reset");
+
+  logger.info(`Password reset successful - userId=${user.id}, email=${maskEmail(email)}`);
+
+  res.json({ message: "비밀번호가 재설정되었습니다" });
 }));
 
 // ------------------------------------------------------------------

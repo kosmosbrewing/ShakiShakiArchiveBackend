@@ -41,8 +41,7 @@ function getSslConfig(): pg.PoolConfig["ssl"] {
   // 1. DB_SSL_CA (사용자 지정)
   // 2. RDS_CA_BUNDLE (Docker 환경, Dockerfile에서 설정)
   // 3. certs/rds-ca-bundle.pem (로컬 기본 경로)
-  const caCertPath =
-    process.env.DB_SSL_CA || process.env.RDS_CA_BUNDLE || null;
+  const caCertPath = process.env.DB_SSL_CA || process.env.RDS_CA_BUNDLE || null;
 
   if (caCertPath) {
     // 절대 경로 또는 상대 경로 처리
@@ -64,7 +63,9 @@ function getSslConfig(): pg.PoolConfig["ssl"] {
   // 기본 인증서 경로 확인 (로컬 개발용)
   const defaultCaPath = path.resolve(process.cwd(), "certs/rds-ca-bundle.pem");
   if (fs.existsSync(defaultCaPath)) {
-    logger.info("SSL 활성화 - 기본 CA 인증서 사용", { certPath: defaultCaPath });
+    logger.info("SSL 활성화 - 기본 CA 인증서 사용", {
+      certPath: defaultCaPath,
+    });
     return {
       rejectUnauthorized: true,
       ca: fs.readFileSync(defaultCaPath, "utf-8"),
@@ -99,7 +100,8 @@ const poolConfig: pg.PoolConfig = {
 
   // 연결 수 설정
   max: parseInt(
-    process.env.DB_POOL_MAX || String(isProduction ? DB_POOL.MAX_PROD : DB_POOL.MAX_DEV),
+    process.env.DB_POOL_MAX ||
+      String(isProduction ? DB_POOL.MAX_PROD : DB_POOL.MAX_DEV),
     10
   ),
   min: parseInt(process.env.DB_POOL_MIN || String(DB_POOL.MIN), 10),
@@ -163,7 +165,7 @@ pool.on("release", () => {
 });
 
 pool.on("remove", () => {
-  logger.info("연결 제거됨", {
+  logger.debug("연결 제거됨", {
     totalCount: pool.totalCount,
     idleCount: pool.idleCount,
   });
