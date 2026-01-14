@@ -7,6 +7,8 @@ import { isAuthenticated, isAdmin } from "../../middleware/auth.middleware";
 import { asyncHandler } from "../../middleware/error.middleware";
 import { z } from "zod";
 import { createLogger } from "../../utils/logger";
+import { maskUserObject } from "../../utils/masking";
+import { isValidUUID } from "../../utils/validation";
 
 const router = Router();
 const logger = createLogger("AdminUserRoutes");
@@ -49,14 +51,11 @@ router.get(
       sortOrder,
     });
 
-    // 비밀번호 해시 제거 (이미 storage에서 제거되어 있지만 안전을 위해 확인)
-    const sanitizedUsers = result.users.map((user) => {
-      const { passwordHash, ...safeUser } = user;
-      return safeUser;
-    });
+    // 개인정보 마스킹 (유틸리티 함수 사용)
+    const maskedUsers = result.users.map(maskUserObject);
 
     res.json({
-      users: sanitizedUsers,
+      users: maskedUsers,
       pagination: result.pagination,
     });
   })
@@ -74,9 +73,7 @@ router.get(
     const { userId } = req.params;
 
     // UUID 형식 검증
-    const uuidRegex =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(userId)) {
+    if (!isValidUUID(userId)) {
       return res.status(400).json({
         message: "잘못된 사용자 ID 형식입니다.",
       });
@@ -91,16 +88,18 @@ router.get(
       });
     }
 
-    // 비밀번호 해시 제거 및 응답 구조 분리
-    const { passwordHash, stats, ...userData } = userDetail;
+    // 응답 구조 분리 (user와 stats)
+    const { stats, ...userData } = userDetail;
 
-    // 가이드 문서 형식에 맞게 응답 (user와 stats 분리)
+    // 개인정보 마스킹 (유틸리티 함수 사용)
+    const maskedUserData = maskUserObject(userData);
+
     res.json({
-      user: userData,
+      user: maskedUserData,
       stats: {
         totalOrders: stats.totalOrders,
         totalSpent: stats.totalSpent,
-        lastOrderDate: stats.lastOrderDate, // 항상 ISO 문자열 또는 null
+        lastOrderDate: stats.lastOrderDate,
         totalInquiries: stats.totalInquiries,
       },
     });

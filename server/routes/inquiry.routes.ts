@@ -3,15 +3,25 @@
 
 import { Router } from "express";
 import { storage } from "../storage";
-import { isAuthenticated, isAdmin } from "../middleware/auth.middleware";
+import { isAuthenticated, isAdmin, populateUser } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
 import {
   createInquirySchema,
   createInquiryReplySchema,
   type InquiryType,
 } from "@shared/schema";
+import { sanitizeUserObject, maskUserForPublicView, maskUserForInquiryView } from "../utils/masking";
+import { isValidUUID, optionalUuidSchema } from "../utils/validation";
+import { z } from "zod";
 
 const router = Router();
+
+// 문의 목록 조회 Query Parameters 검증 스키마
+const getInquiriesQuerySchema = z.object({
+  productId: optionalUuidSchema,
+  type: z.enum(["product", "shipping", "exchange", "other"]).optional(),
+  status: z.enum(["pending", "answered", "closed"]).optional(),
+});
 
 // ------------------------------------------------------------------
 // 공개 API (비밀글 제외)
@@ -19,8 +29,18 @@ const router = Router();
 
 // 문의 목록 조회 (공개 문의만, 비밀글은 본인만 조회 가능)
 router.get("/", asyncHandler(async (req, res) => {
-  const { productId, type, status } = req.query;
   const userId = req.session?.userId;
+
+  // Query Parameters 검증
+  const validationResult = getInquiriesQuerySchema.safeParse(req.query);
+  if (!validationResult.success) {
+    return res.status(400).json({
+      message: "잘못된 요청 파라미터입니다.",
+      errors: validationResult.error.errors,
+    });
+  }
+
+  const { productId, type, status } = validationResult.data;
 
   const filters: {
     productId?: string;
@@ -28,43 +48,31 @@ router.get("/", asyncHandler(async (req, res) => {
     status?: string;
   } = {};
 
-  if (productId && typeof productId === "string") {
-    filters.productId = productId;
-  }
-  if (type && typeof type === "string") {
-    filters.type = type as InquiryType;
-  }
-  if (status && typeof status === "string") {
-    filters.status = status;
-  }
+  if (productId) filters.productId = productId;
+  if (type) filters.type = type;
+  if (status) filters.status = status;
 
   const allInquiries = await storage.getInquiries(filters);
 
-  // 비밀글 필터링: 비밀글은 작성자 본인만 볼 수 있음
+  // 비밀글 필터링 및 개인정보 마스킹: 비밀글은 작성자 본인만 볼 수 있음
   const visibleInquiries = allInquiries.map((inquiry) => {
+    // 사용자 정보 마스킹 (관리자는 이름만 공개, 일반 사용자는 모두 마스킹)
+    const maskedUser = maskUserForPublicView(inquiry.user);
+
     if (inquiry.isPrivate && inquiry.userId !== userId) {
       // 비밀글인 경우 제목과 내용을 숨김
       return {
         ...inquiry,
         title: "비밀글입니다",
         content: "비밀글입니다",
-        user: {
-          ...inquiry.user,
-          email: inquiry.user.email.slice(0, 3) + "***",
-          userName: inquiry.user.userName.slice(0, 1) + "**",
-        },
+        user: maskedUser,
       };
     }
-    // 공개글이거나 본인 글인 경우 원본 반환
+
+    // 공개글이거나 본인 글인 경우
     return {
       ...inquiry,
-      user: {
-        ...inquiry.user,
-        // 이메일은 일부만 공개
-        email: inquiry.user.email.slice(0, 3) + "***",
-        // 패스워드 해시 제거
-        passwordHash: undefined,
-      },
+      user: maskedUser,
     };
   });
 
@@ -72,9 +80,14 @@ router.get("/", asyncHandler(async (req, res) => {
 }));
 
 // 문의 상세 조회
-router.get("/:id", asyncHandler(async (req, res) => {
+router.get("/:id", populateUser, asyncHandler(async (req, res) => {
   const { id } = req.params;
   const userId = req.session?.userId;
+
+  // UUID 형식 검증
+  if (!isValidUUID(id)) {
+    return res.status(400).json({ message: "잘못된 문의 ID 형식입니다" });
+  }
 
   const inquiry = await storage.getInquiry(id);
 
@@ -84,32 +97,28 @@ router.get("/:id", asyncHandler(async (req, res) => {
 
   // 비밀글 접근 권한 체크
   if (inquiry.isPrivate && inquiry.userId !== userId) {
-    // 관리자인지 확인
-    if (userId) {
-      const user = await storage.getUser(userId);
-      if (!user?.isAdmin) {
-        return res.status(403).json({ message: "비밀글은 작성자만 조회할 수 있습니다" });
-      }
-    } else {
+    // 관리자인지 확인 (캐시된 정보 사용)
+    if (!req.user?.isAdmin) {
       return res.status(403).json({ message: "비밀글은 작성자만 조회할 수 있습니다" });
     }
   }
 
-  // 민감한 정보 제거
+  // 본인 여부 확인
+  const isOwner = inquiry.userId === userId;
+
+  // 문의 작성자 정보 마스킹 (본인/관리자/일반 사용자 구분)
+  const maskedInquiryUser = maskUserForInquiryView(inquiry.user, isOwner);
+
+  // 답변 작성자 정보 (관리자는 이름만 공개)
+  const sanitizedReplies = inquiry.replies.map((reply) => ({
+    ...reply,
+    user: maskUserForPublicView(reply.user),
+  }));
+
   const sanitizedInquiry = {
     ...inquiry,
-    user: {
-      ...inquiry.user,
-      passwordHash: undefined,
-      email: inquiry.userId === userId ? inquiry.user.email : inquiry.user.email.slice(0, 3) + "***",
-    },
-    replies: inquiry.replies.map((reply) => ({
-      ...reply,
-      user: {
-        ...reply.user,
-        passwordHash: undefined,
-      },
-    })),
+    user: maskedInquiryUser,
+    replies: sanitizedReplies,
   };
 
   res.json(sanitizedInquiry);
@@ -125,7 +134,13 @@ router.get("/my/list", isAuthenticated, asyncHandler(async (req, res) => {
 
   const myInquiries = await storage.getInquiries({ userId });
 
-  res.json(myInquiries);
+  // 본인의 문의이므로 개인정보는 원본 반환 (passwordHash만 제거)
+  const sanitizedInquiries = myInquiries.map((inquiry) => ({
+    ...inquiry,
+    user: sanitizeUserObject(inquiry.user),
+  }));
+
+  res.json(sanitizedInquiries);
 }));
 
 // 문의 등록
@@ -168,6 +183,11 @@ router.delete("/:id", isAuthenticated, asyncHandler(async (req, res) => {
   const userId = req.session.userId!;
   const { id } = req.params;
 
+  // UUID 형식 검증
+  if (!isValidUUID(id)) {
+    return res.status(400).json({ message: "잘못된 문의 ID 형식입니다" });
+  }
+
   const inquiry = await storage.getInquiry(id);
 
   if (!inquiry) {
@@ -193,6 +213,11 @@ router.delete("/:id", isAuthenticated, asyncHandler(async (req, res) => {
 router.post("/:id/replies", isAdmin, asyncHandler(async (req, res) => {
   const userId = req.session.userId!;
   const { id: inquiryId } = req.params;
+
+  // UUID 형식 검증
+  if (!isValidUUID(inquiryId)) {
+    return res.status(400).json({ message: "잘못된 문의 ID 형식입니다" });
+  }
 
   // 문의 존재 확인
   const inquiry = await storage.getInquiry(inquiryId);
@@ -225,6 +250,11 @@ router.patch("/:id/status", isAdmin, asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
 
+  // UUID 형식 검증
+  if (!isValidUUID(id)) {
+    return res.status(400).json({ message: "잘못된 문의 ID 형식입니다" });
+  }
+
   if (!status || !["pending", "answered", "closed"].includes(status)) {
     return res.status(400).json({ message: "유효한 상태값을 입력해주세요" });
   }
@@ -242,6 +272,11 @@ router.patch("/:id/status", isAdmin, asyncHandler(async (req, res) => {
 router.delete("/:inquiryId/replies/:replyId", isAdmin, asyncHandler(async (req, res) => {
   const { inquiryId, replyId } = req.params;
   const replyIdNum = parseInt(replyId);
+
+  // UUID 형식 검증
+  if (!isValidUUID(inquiryId)) {
+    return res.status(400).json({ message: "잘못된 문의 ID 형식입니다" });
+  }
 
   // 답변 ID 유효성 검사
   if (isNaN(replyIdNum)) {

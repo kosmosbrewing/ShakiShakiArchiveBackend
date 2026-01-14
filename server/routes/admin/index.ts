@@ -10,6 +10,7 @@ import paymentRoutes from "./payment.routes";
 import imageRoutes from "./image.routes";
 import siteImageRoutes from "./siteImage.routes";
 import userRoutes from "./user.routes";
+import inquiryRoutes from "./inquiry.routes";
 
 const router = Router();
 
@@ -36,5 +37,8 @@ router.use("/site-images", siteImageRoutes);
 
 // 회원 관리
 router.use("/users", userRoutes);
+
+// 문의 관리
+router.use("/inquiries", inquiryRoutes);
 
 export default router;

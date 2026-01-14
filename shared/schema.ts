@@ -626,13 +626,13 @@ export const productSizeMeasurements = pgTable(
     productVariantId: uuid("product_variant_id")
       .references(() => productVariants.id, { onDelete: "cascade" })
       .notNull(),
-    totalLength: decimal("total_length", { precision: 8, scale: 2 }),
-    shoulderWidth: decimal("shoulder_width", { precision: 8, scale: 2 }),
-    chestSection: decimal("chest_section", { precision: 8, scale: 2 }),
-    sleeveLength: decimal("sleeve_length", { precision: 8, scale: 2 }),
-    waistSection: decimal("waist_section", { precision: 8, scale: 2 }),
-    hipSection: decimal("hip_section", { precision: 8, scale: 2 }),
-    thighSection: decimal("thigh_section", { precision: 8, scale: 2 }),
+    totalLength: varchar("total_length", { length: 20 }), // "95" 또는 "95-100" 형식
+    shoulderWidth: varchar("shoulder_width", { length: 20 }),
+    chestSection: varchar("chest_section", { length: 20 }),
+    sleeveLength: varchar("sleeve_length", { length: 20 }),
+    waistSection: varchar("waist_section", { length: 20 }),
+    hipSection: varchar("hip_section", { length: 20 }),
+    thighSection: varchar("thigh_section", { length: 20 }),
     displayOrder: integer("display_order").default(0).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
@@ -653,11 +653,48 @@ export const productSizeMeasurementsRelations = relations(
 
 export type ProductSizeMeasurement =
   typeof productSizeMeasurements.$inferSelect;
+
+// 사이즈 측정값 검증 정규식 (개선)
+// - 1~999 범위의 숫자 (소수점 포함)
+// - "숫자-숫자" 범위 형식
+// - 0으로 시작하는 값 방지
+const sizeValueRegex = /^([1-9]\d{0,2}(\.\d+)?(-[1-9]\d{0,2}(\.\d+)?)?)$/;
+
+/**
+ * 사이즈 측정값 Zod 스키마 생성 헬퍼 함수
+ * - 정규식 검증: 1~999 또는 "1-999" 형식
+ * - 범위 검증: 시작값 <= 끝값
+ * - Nullable & Optional
+ */
+const createSizeMeasurementSchema = () =>
+  z
+    .string()
+    .regex(sizeValueRegex, "올바른 형식이 아닙니다 (예: 95 또는 95-100)")
+    .max(20)
+    .refine((val) => {
+      // 범위 형식인 경우 시작값 <= 끝값 검증
+      const match = val.match(/^(\d+\.?\d*)-(\d+\.?\d*)$/);
+      if (match) {
+        const [, start, end] = match;
+        return parseFloat(start) <= parseFloat(end);
+      }
+      return true;
+    }, "시작값이 끝값보다 클 수 없습니다")
+    .nullable()
+    .optional();
+
 // drizzle-zod가 UUID 컬럼을 올바르게 처리하지 못하므로 명시적으로 오버라이드
 export const insertProductSizeMeasurementSchema = createInsertSchema(
   productSizeMeasurements,
   {
     productVariantId: z.string().uuid(),
+    totalLength: createSizeMeasurementSchema(),
+    shoulderWidth: createSizeMeasurementSchema(),
+    chestSection: createSizeMeasurementSchema(),
+    sleeveLength: createSizeMeasurementSchema(),
+    waistSection: createSizeMeasurementSchema(),
+    hipSection: createSizeMeasurementSchema(),
+    thighSection: createSizeMeasurementSchema(),
   }
 ).omit({
   id: true,
