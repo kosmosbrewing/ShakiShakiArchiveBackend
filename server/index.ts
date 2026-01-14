@@ -3,6 +3,7 @@
 
 import express from "express";
 import { createServer } from "http";
+import compression from "compression";
 import { config } from "./config";
 import { corsMiddleware } from "./config/cors";
 import { createSessionMiddleware } from "./config/session";
@@ -56,6 +57,23 @@ app.use(createSessionMiddleware());
 
 // 사용자 정보 주입
 app.use(populateUser);
+
+// 응답 압축 (Brotli 우선, Gzip 대체)
+app.use(
+  compression({
+    // 압축 레벨 (0-9, 기본값: 6)
+    level: 6,
+    // 1KB 이상 응답만 압축
+    threshold: 1024,
+    // 텍스트 기반 콘텐츠만 압축 (JSON, HTML, CSS, JS, XML, 텍스트)
+    filter: (req, res) => {
+      if (req.headers["x-no-compression"]) {
+        return false;
+      }
+      return compression.filter(req, res);
+    },
+  })
+);
 
 // 요청 로깅
 app.use(loggerMiddleware);

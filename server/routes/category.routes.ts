@@ -4,13 +4,14 @@
 import { Router } from "express";
 import { storage } from "../storage";
 import { asyncHandler } from "../middleware/error.middleware";
+import { cacheStrategies, etagMiddleware } from "../middleware";
 import { createLogger } from "../utils/logger";
 
 const router = Router();
 const logger = createLogger("Category");
 
 // 카테고리 목록 조회
-router.get("/", asyncHandler(async (req, res) => {
+router.get("/", etagMiddleware(), cacheStrategies.staticData, asyncHandler(async (req, res) => {
   const categories = await storage.getCategories();
   res.json(categories);
 }));

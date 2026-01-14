@@ -6,6 +6,7 @@ import { z } from "zod";
 import { storage } from "../../storage";
 import { isAuthenticated, isAdmin } from "../../middleware/auth.middleware";
 import { asyncHandler } from "../../middleware/error.middleware";
+import { cacheStrategies } from "../../middleware";
 import {
   insertProductVariantSchema,
   insertProductSizeMeasurementSchema,
@@ -32,6 +33,7 @@ router.get(
   "/products/:productId/variants",
   isAuthenticated,
   isAdmin,
+  cacheStrategies.admin,
   asyncHandler(async (req, res) => {
     const validation = validateUuid(req.params.productId, "productId");
     if (!validation.valid) {
@@ -108,6 +110,7 @@ router.get(
   "/variants/:variantId/measurements",
   isAuthenticated,
   isAdmin,
+  cacheStrategies.admin,
   asyncHandler(async (req, res) => {
     const validation = validateUuid(req.params.variantId, "variantId");
     if (!validation.valid) {

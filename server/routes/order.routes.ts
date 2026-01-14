@@ -6,6 +6,7 @@ import { storage } from "../storage";
 import { db, pool } from "../db";
 import { isAuthenticated } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
+import { cacheStrategies } from "../middleware";
 import { insertOrderSchema, createOrderRequestSchema, stockReservations, orders } from "@shared/schema";
 import {
   calculateShippingFee,
@@ -307,14 +308,14 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
 }));
 
 // 주문 목록 조회
-router.get("/", isAuthenticated, asyncHandler(async (req, res) => {
+router.get("/", isAuthenticated, cacheStrategies.private, asyncHandler(async (req, res) => {
   const userId = req.session.userId!;
   const orders = await storage.getOrders(userId);
   res.json(orders);
 }));
 
 // 주문 상세 조회 (UUID 기반)
-router.get("/:id", isAuthenticated, asyncHandler(async (req, res) => {
+router.get("/:id", isAuthenticated, cacheStrategies.private, asyncHandler(async (req, res) => {
   const order = await storage.getOrder(req.params.id); // UUID 문자열
   if (!order) {
     return res.status(404).json({ message: "Order not found" });

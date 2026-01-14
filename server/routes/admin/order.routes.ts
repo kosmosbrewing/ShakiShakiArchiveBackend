@@ -5,11 +5,12 @@ import { Router } from "express";
 import { storage } from "../../storage";
 import { isAuthenticated, isAdmin } from "../../middleware/auth.middleware";
 import { asyncHandler } from "../../middleware/error.middleware";
+import { cacheStrategies } from "../../middleware";
 
 const router = Router();
 
 // 전체 주문 목록 조회 (관리자)
-router.get("/orders", isAuthenticated, isAdmin, asyncHandler(async (req, res) => {
+router.get("/orders", isAuthenticated, isAdmin, cacheStrategies.admin, asyncHandler(async (req, res) => {
   const orders = await storage.getAllOrdersWithItems();
   res.json(orders);
 }));

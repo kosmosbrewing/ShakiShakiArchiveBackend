@@ -5,6 +5,7 @@ import { Router } from "express";
 import { storage } from "../../storage";
 import { isAuthenticated, isAdmin } from "../../middleware/auth.middleware";
 import { asyncHandler } from "../../middleware/error.middleware";
+import { cacheStrategies } from "../../middleware";
 import { type InquiryType } from "@shared/schema";
 import { maskUserForPublicView } from "../../utils/masking";
 import { isValidUUID, optionalUuidSchema } from "../../utils/validation";
@@ -32,6 +33,7 @@ router.get(
   "/",
   isAuthenticated,
   isAdmin,
+  cacheStrategies.admin,
   asyncHandler(async (req, res) => {
     // Query Parameters 검증
     const validationResult = getInquiriesQuerySchema.safeParse(req.query);
@@ -79,6 +81,7 @@ router.get(
   "/:id",
   isAuthenticated,
   isAdmin,
+  cacheStrategies.admin,
   asyncHandler(async (req, res) => {
     const { id } = req.params;
 

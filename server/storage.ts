@@ -43,7 +43,7 @@ import {
   type InquiryType,
 } from "@shared/schema";
 import { db, pool } from "./db";
-import { eq, and, like, desc, isNull, gt, lt, count, sql, inArray } from "drizzle-orm";
+import { eq, and, like, desc, isNull, gt, lt, count, sum, sql, inArray } from "drizzle-orm";
 import { createLogger } from "./utils/logger";
 import type {
   OrderItemCreateData,
@@ -566,8 +566,8 @@ export class DatabaseStorage implements IStorage {
     search?: string;
     categoryId?: number;
   }): Promise<(Product & { totalStock: number })[]> {
-    let query = db.select().from(products);
-
+    // LEFT JOIN + SUM을 사용하여 N+1 문제 해결
+    // 한 번의 쿼리로 각 상품의 총 재고를 계산
     const conditions = [];
     if (filters?.search) {
       conditions.push(like(products.name, `%${filters.search}%`));
@@ -576,6 +576,30 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(products.categoryId, filters.categoryId));
     }
 
+    // products와 productVariants를 LEFT JOIN하여 총 재고 계산
+    let query = db
+      .select({
+        id: products.id,
+        name: products.name,
+        slug: products.slug,
+        description: products.description,
+        imageUrl: products.imageUrl,
+        price: products.price,
+        originalPrice: products.originalPrice,
+        categoryId: products.categoryId,
+        images: products.images,
+        detailImages: products.detailImages,
+        isAvailable: products.isAvailable,
+        createdAt: products.createdAt,
+        updatedAt: products.updatedAt,
+        // SUM을 사용하여 모든 variants의 stockQuantity 합산
+        // COALESCE를 사용하여 NULL을 0으로 처리
+        totalStock: sql<number>`COALESCE(SUM(${productVariants.stockQuantity}), 0)`,
+      })
+      .from(products)
+      .leftJoin(productVariants, eq(products.id, productVariants.productId))
+      .groupBy(products.id);
+
     if (conditions.length > 0) {
       // @ts-ignore: Drizzle query builder type complexity
       query = query.where(and(...conditions));
@@ -583,28 +607,7 @@ export class DatabaseStorage implements IStorage {
 
     const results = await query.orderBy(desc(products.updatedAt));
 
-    // 각 상품의 variants 재고를 합산하여 totalStock 계산
-    const productsWithStock = await Promise.all(
-      results.map(async (product) => {
-        const variants = await db
-          .select()
-          .from(productVariants)
-          .where(eq(productVariants.productId, product.id));
-
-        // 모든 variants의 stockQuantity 합산
-        const totalStock = variants.reduce(
-          (sum, variant) => sum + (variant.stockQuantity || 0),
-          0
-        );
-
-        return {
-          ...product,
-          totalStock,
-        };
-      })
-    );
-
-    return productsWithStock;
+    return results;
   }
 
   async getProduct(id: string): Promise<Product | undefined> {

@@ -5,6 +5,7 @@ import { Router } from "express";
 import { storage } from "../../storage";
 import { isAuthenticated, isAdmin } from "../../middleware/auth.middleware";
 import { asyncHandler } from "../../middleware/error.middleware";
+import { cacheStrategies } from "../../middleware";
 import { z } from "zod";
 import { createLogger } from "../../utils/logger";
 import { maskUserObject } from "../../utils/masking";
@@ -30,6 +31,7 @@ router.get(
   "/",
   isAuthenticated,
   isAdmin,
+  cacheStrategies.admin,
   asyncHandler(async (req, res) => {
     // Query Parameters 검증
     const validationResult = getUsersQuerySchema.safeParse(req.query);
@@ -69,6 +71,7 @@ router.get(
   "/:userId",
   isAuthenticated,
   isAdmin,
+  cacheStrategies.admin,
   asyncHandler(async (req, res) => {
     const { userId } = req.params;
 

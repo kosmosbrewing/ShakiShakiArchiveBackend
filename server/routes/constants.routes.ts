@@ -2,6 +2,7 @@
 // 프론트엔드 공용 상수 API (공개 정보만 노출)
 
 import { Router } from "express";
+import { cacheStrategies, etagMiddleware } from "../middleware";
 import {
   // 배송비 관련
   SHIPPING,
@@ -26,7 +27,7 @@ const router = Router();
  * GET /api/constants
  * 프론트엔드 Pinia 스토어용 전체 상수 조회
  */
-router.get("/", (_req, res) => {
+router.get("/", etagMiddleware(), cacheStrategies.staticData, (_req, res) => {
   res.json({
     shipping: SHIPPING,
     order: {
@@ -53,7 +54,7 @@ router.get("/", (_req, res) => {
  * GET /api/constants/shipping
  * 배송비 설정 조회
  */
-router.get("/shipping", (_req, res) => {
+router.get("/shipping", etagMiddleware(), cacheStrategies.staticData, (_req, res) => {
   res.json(SHIPPING);
 });
 
@@ -61,7 +62,7 @@ router.get("/shipping", (_req, res) => {
  * GET /api/constants/order
  * 주문 상태 상수 조회
  */
-router.get("/order", (_req, res) => {
+router.get("/order", etagMiddleware(), cacheStrategies.staticData, (_req, res) => {
   res.json({
     status: ORDER_STATUS,
     statusEnum: ORDER_STATUS_ENUM,
@@ -73,7 +74,7 @@ router.get("/order", (_req, res) => {
  * GET /api/constants/payment
  * 결제 수단 조회
  */
-router.get("/payment", (_req, res) => {
+router.get("/payment", etagMiddleware(), cacheStrategies.staticData, (_req, res) => {
   res.json({
     provider: PAYMENT_PROVIDER,
   });
@@ -83,7 +84,7 @@ router.get("/payment", (_req, res) => {
  * GET /api/constants/validation
  * 폼 검증 규칙 조회
  */
-router.get("/validation", (_req, res) => {
+router.get("/validation", etagMiddleware(), cacheStrategies.staticData, (_req, res) => {
   res.json({
     quantity: QUANTITY,
     price: PRICE,
@@ -96,7 +97,7 @@ router.get("/validation", (_req, res) => {
  * GET /api/constants/messages
  * 검증 에러 메시지 조회
  */
-router.get("/messages", (_req, res) => {
+router.get("/messages", etagMiddleware(), cacheStrategies.staticData, (_req, res) => {
   res.json({
     validation: VALIDATION_MESSAGES,
   });

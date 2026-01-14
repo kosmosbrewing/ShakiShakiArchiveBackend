@@ -5,6 +5,7 @@
 import { Router, Request, Response } from "express";
 import { isAuthenticated, isAdmin } from "../../middleware/auth.middleware";
 import { asyncHandler } from "../../middleware/error.middleware";
+import { cacheStrategies } from "../../middleware";
 import { storage } from "../../storage";
 import {
   createSiteImageSchema,
@@ -30,6 +31,7 @@ router.get(
   "/",
   isAuthenticated,
   isAdmin,
+  cacheStrategies.admin,
   asyncHandler(async (req: Request, res: Response) => {
     const typeQuery = req.query.type as string | undefined;
 
@@ -61,6 +63,7 @@ router.get(
   "/:id",
   isAuthenticated,
   isAdmin,
+  cacheStrategies.admin,
   asyncHandler(async (req: Request, res: Response) => {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) {

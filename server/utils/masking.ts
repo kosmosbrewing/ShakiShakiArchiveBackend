@@ -231,7 +231,11 @@ export function maskUserForInquiryView(
   kakaoId: null;
 } {
   if (isOwner) {
-    return sanitizeUserObject(user);
+    return {
+      ...sanitizeUserObject(user),
+      naverId: null,
+      kakaoId: null,
+    };
   }
   return maskUserForPublicView(user);
 }

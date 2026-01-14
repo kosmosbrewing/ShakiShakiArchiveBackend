@@ -5,6 +5,7 @@ import { Router } from "express";
 import { storage } from "../../storage";
 import { isAuthenticated, isAdmin } from "../../middleware/auth.middleware";
 import { asyncHandler } from "../../middleware/error.middleware";
+import { cacheStrategies } from "../../middleware";
 import { insertProductSchema } from "@shared/schema";
 import { meilisearchService } from "../../services/meilisearch.service";
 import { createLogger } from "../../utils/logger";
@@ -34,7 +35,7 @@ async function tryMeilisearchIndex(
 }
 
 // 상품 목록 조회 (관리자)
-router.get("/", isAuthenticated, isAdmin, asyncHandler(async (req, res) => {
+router.get("/", isAuthenticated, isAdmin, cacheStrategies.admin, asyncHandler(async (req, res) => {
   const products = await storage.getProducts();
   res.json(products);
 }));

@@ -5,6 +5,7 @@ import { Router } from "express";
 import { storage } from "../../storage";
 import { isAuthenticated, isAdmin } from "../../middleware/auth.middleware";
 import { asyncHandler } from "../../middleware/error.middleware";
+import { cacheStrategies } from "../../middleware";
 import {
   cancelPayment,
   getPayment,
@@ -19,7 +20,7 @@ const logger = createLogger("AdminPayment");
  * 관리자: 결제 상세 조회
  * GET /api/admin/payments/:orderId
  */
-router.get("/:orderId", isAuthenticated, isAdmin, asyncHandler(async (req, res) => {
+router.get("/:orderId", isAuthenticated, isAdmin, cacheStrategies.admin, asyncHandler(async (req, res) => {
   const order = await storage.getOrder(req.params.orderId); // UUID 문자열
   if (!order) {
     return res.status(404).json({ message: "주문을 찾을 수 없습니다" });

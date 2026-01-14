@@ -5,11 +5,12 @@ import { Router } from "express";
 import { storage } from "../storage";
 import { isAuthenticated } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
+import { cacheStrategies } from "../middleware";
 
 const router = Router();
 
 // 위시리스트 목록 조회
-router.get("/", isAuthenticated, asyncHandler(async (req, res) => {
+router.get("/", isAuthenticated, cacheStrategies.userDependent, asyncHandler(async (req, res) => {
   const userId = req.session.userId!;
   const items = await storage.getWishlistItems(userId);
   res.json(items);

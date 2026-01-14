@@ -5,12 +5,13 @@ import { Router } from "express";
 import { storage } from "../storage";
 import { isAuthenticated } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
+import { cacheStrategies } from "../middleware";
 import { insertCartItemSchema } from "@shared/schema";
 
 const router = Router();
 
 // 장바구니 조회
-router.get("/", isAuthenticated, asyncHandler(async (req, res) => {
+router.get("/", isAuthenticated, cacheStrategies.private, asyncHandler(async (req, res) => {
   const userId = req.session.userId!;
   const cartItems = await storage.getCartItems(userId);
   res.json(cartItems);

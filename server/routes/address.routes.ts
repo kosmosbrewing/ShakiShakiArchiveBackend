@@ -5,12 +5,13 @@ import { Router } from "express";
 import { storage } from "../storage";
 import { isAuthenticated } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
+import { cacheStrategies } from "../middleware";
 import { insertDeliveryAddressSchema } from "@shared/schema";
 
 const router = Router();
 
 // 배송지 목록 조회
-router.get("/", isAuthenticated, asyncHandler(async (req, res) => {
+router.get("/", isAuthenticated, cacheStrategies.userDependent, asyncHandler(async (req, res) => {
   const userId = req.session.userId!;
   const addresses = await storage.getDeliveryAddresses(userId);
   res.json(addresses);

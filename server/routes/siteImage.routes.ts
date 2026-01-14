@@ -5,6 +5,7 @@
 import { Router, Request, Response } from "express";
 import { storage } from "../storage";
 import { asyncHandler } from "../middleware/error.middleware";
+import { cacheStrategies, etagMiddleware } from "../middleware";
 import { siteImageTypeEnum, type SiteImageType } from "@shared/schema";
 
 const router = Router();
@@ -13,7 +14,7 @@ const router = Router();
 // GET /api/site-images
 // 활성화된 이미지 목록 조회 (type 쿼리로 필터링 가능)
 // ------------------------------------------------------------------
-router.get("/", asyncHandler(async (req: Request, res: Response) => {
+router.get("/", etagMiddleware(), cacheStrategies.siteImages, asyncHandler(async (req: Request, res: Response) => {
   const typeQuery = req.query.type as string | undefined;
 
   // type 파라미터 검증
@@ -41,7 +42,7 @@ router.get("/", asyncHandler(async (req: Request, res: Response) => {
 // GET /api/site-images/hero
 // Hero 이미지만 조회 (활성화된 것만)
 // ------------------------------------------------------------------
-router.get("/hero", asyncHandler(async (_req: Request, res: Response) => {
+router.get("/hero", etagMiddleware(), cacheStrategies.siteImages, asyncHandler(async (_req: Request, res: Response) => {
   const images = await storage.getSiteImages("hero");
   const activeImages = images.filter((img) => img.isActive);
 
@@ -54,7 +55,7 @@ router.get("/hero", asyncHandler(async (_req: Request, res: Response) => {
 // GET /api/site-images/marquee
 // Marquee 이미지만 조회 (활성화된 것만)
 // ------------------------------------------------------------------
-router.get("/marquee", asyncHandler(async (_req: Request, res: Response) => {
+router.get("/marquee", etagMiddleware(), cacheStrategies.siteImages, asyncHandler(async (_req: Request, res: Response) => {
   const images = await storage.getSiteImages("marquee");
   const activeImages = images.filter((img) => img.isActive);
 

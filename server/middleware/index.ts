@@ -17,3 +17,9 @@ export {
   slowRequestLogger,
   log,
 } from "./logger.middleware";
+export {
+  cacheControl,
+  cacheStrategies,
+  type CacheOptions,
+} from "./cache.middleware";
+export { etagMiddleware } from "./etag.middleware";
