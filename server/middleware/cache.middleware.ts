@@ -10,6 +10,8 @@ export interface CacheOptions {
   isPrivate?: boolean;
   noCache?: boolean;
   noStore?: boolean;
+  mustRevalidate?: boolean;
+  proxyRevalidate?: boolean;
   varyOn?: string[];
 }
 
@@ -48,6 +50,16 @@ export const cacheControl = (options: CacheOptions) => {
       }
     }
 
+    // must-revalidate (캐시 만료 시 반드시 재검증)
+    if (options.mustRevalidate) {
+      directives.push("must-revalidate");
+    }
+
+    // proxy-revalidate (공유 캐시에만 적용되는 must-revalidate)
+    if (options.proxyRevalidate) {
+      directives.push("proxy-revalidate");
+    }
+
     res.set("Cache-Control", directives.join(", "));
 
     // Vary 헤더 설정 (중요: 사용자별 데이터 캐시 분리)
@@ -83,29 +95,45 @@ export const cacheStrategies = {
   /**
    * 정적 데이터 (카테고리, 상수)
    * - 브라우저: 5분 (300초)
-   * - CDN: 1시간 (3600초)
-   * - stale: 1일 (86400초)
+   * - CDN: 10분 (600초)
+   * - stale: 1시간 (3600초)
    *
    * 사용처: /api/categories, /api/constants
    */
   staticData: cacheControl({
     maxAge: 300,
-    sMaxage: 3600,
-    staleWhileRevalidate: 86400,
+    sMaxage: 600,
+    staleWhileRevalidate: 3600,
   }),
 
   /**
    * 동적 데이터 (상품 목록)
-   * - 브라우저: 1분 (60초)
-   * - CDN: 5분 (300초)
-   * - stale: 10분 (600초)
+   * - 브라우저: 10초
+   * - CDN: 1분 (60초)
+   * - stale: 5분 (300초)
    *
-   * 사용처: /api/products, /api/search/products
+   * 사용처: /api/products (목록), /api/search/products
    */
-  products: cacheControl({
-    maxAge: 60,
-    sMaxage: 300,
-    staleWhileRevalidate: 600,
+  productList: cacheControl({
+    maxAge: 10,
+    sMaxage: 60,
+    staleWhileRevalidate: 300,
+  }),
+
+  /**
+   * 상품 상세 데이터
+   * - 캐시 저장 금지 (no-store)
+   * - 재검증 필수 (no-cache, must-revalidate, proxy-revalidate)
+   * - 항상 최신 상태 보장
+   *
+   * 사용처: /api/products/:id (상세), /api/products/:id/variants
+   */
+  productDetail: cacheControl({
+    maxAge: 0,
+    noCache: true,
+    noStore: true,
+    mustRevalidate: true,
+    proxyRevalidate: true,
   }),
 
   /**
@@ -125,6 +153,7 @@ export const cacheStrategies = {
   /**
    * 사용자별 데이터 (장바구니, 주문)
    * - private + no-cache + no-store
+   * - must-revalidate + proxy-revalidate (캐시 만료 시 반드시 재검증)
    * - Vary: Cookie, Authorization (사용자별 캐시 분리)
    * - s-maxage 없음 (CDN 캐싱 방지)
    *
@@ -139,6 +168,8 @@ export const cacheStrategies = {
     isPrivate: true,
     noCache: true,
     noStore: true,
+    mustRevalidate: true,
+    proxyRevalidate: true,
     varyOn: ["Cookie", "Authorization"],
   }),
 
@@ -165,6 +196,7 @@ export const cacheStrategies = {
   /**
    * 관리자 API
    * - private + no-cache + no-store
+   * - must-revalidate + proxy-revalidate (캐시 만료 시 반드시 재검증)
    * - Vary: Cookie, Authorization (관리자별 캐시 분리)
    * - 캐싱 없음 (항상 최신 데이터)
    *
@@ -179,6 +211,8 @@ export const cacheStrategies = {
     isPrivate: true,
     noCache: true,
     noStore: true,
+    mustRevalidate: true,
+    proxyRevalidate: true,
     varyOn: ["Cookie", "Authorization"],
   }),
 };

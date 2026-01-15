@@ -4,7 +4,7 @@
 import { Router } from "express";
 import { meilisearchService, type SearchOptions } from "../services/meilisearch.service";
 import { storage } from "../storage";
-import { isAdmin } from "../middleware";
+import { isAdmin, cacheStrategies, etagMiddleware } from "../middleware";
 import { asyncHandler } from "../middleware/error.middleware";
 import { createLogger } from "../utils/logger";
 
@@ -25,7 +25,7 @@ const logger = createLogger("Search");
  * @query inStock - 재고 있는 상품만 (true/false)
  * @query sort - 정렬 (price_asc, price_desc, newest, oldest)
  */
-router.get("/", asyncHandler(async (req, res) => {
+router.get("/", etagMiddleware(), cacheStrategies.productList, asyncHandler(async (req, res) => {
   const query = (req.query.q as string) || "";
   const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
   const offset = parseInt(req.query.offset as string) || 0;
@@ -85,7 +85,7 @@ router.get("/", asyncHandler(async (req, res) => {
  * @query q - 검색어 (필수)
  * @query limit - 결과 수 (기본값: 5, 최대: 10)
  */
-router.get("/autocomplete", asyncHandler(async (req, res) => {
+router.get("/autocomplete", etagMiddleware(), cacheStrategies.productList, asyncHandler(async (req, res) => {
   const query = (req.query.q as string) || "";
   const limit = Math.min(parseInt(req.query.limit as string) || 5, 10);
 
@@ -107,7 +107,7 @@ router.get("/autocomplete", asyncHandler(async (req, res) => {
  * GET /api/search/products/stats
  * 검색 인덱스 상태 조회 (관리자 전용)
  */
-router.get("/stats", isAdmin, asyncHandler(async (_req, res) => {
+router.get("/stats", isAdmin, cacheStrategies.admin, asyncHandler(async (_req, res) => {
   if (!meilisearchService.isEnabled()) {
     return res.json({
       enabled: false,

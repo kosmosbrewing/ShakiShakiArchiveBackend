@@ -655,33 +655,44 @@ export type ProductSizeMeasurement =
   typeof productSizeMeasurements.$inferSelect;
 
 // 사이즈 측정값 검증 정규식 (개선)
-// - 1~999 범위의 숫자 (소수점 포함)
+// - 0~999 범위의 숫자 (소수점 포함)
 // - "숫자-숫자" 범위 형식
-// - 0으로 시작하는 값 방지
-const sizeValueRegex = /^([1-9]\d{0,2}(\.\d+)?(-[1-9]\d{0,2}(\.\d+)?)?)$/;
+// - 빈 문자열 허용 (null로 변환됨)
+const sizeValueRegex = /^(\d{1,3}(\.\d+)?(-\d{1,3}(\.\d+)?)?)$/;
 
 /**
  * 사이즈 측정값 Zod 스키마 생성 헬퍼 함수
- * - 정규식 검증: 1~999 또는 "1-999" 형식
+ * - 빈 문자열 → null 자동 변환
+ * - 정규식 검증: 0~999 또는 "0-999" 형식
  * - 범위 검증: 시작값 <= 끝값
  * - Nullable & Optional
  */
 const createSizeMeasurementSchema = () =>
-  z
-    .string()
-    .regex(sizeValueRegex, "올바른 형식이 아닙니다 (예: 95 또는 95-100)")
-    .max(20)
-    .refine((val) => {
-      // 범위 형식인 경우 시작값 <= 끝값 검증
-      const match = val.match(/^(\d+\.?\d*)-(\d+\.?\d*)$/);
-      if (match) {
-        const [, start, end] = match;
-        return parseFloat(start) <= parseFloat(end);
+  z.preprocess(
+    // 빈 문자열, 공백만 있는 문자열 → null로 변환
+    (val) => {
+      if (typeof val === "string") {
+        const trimmed = val.trim();
+        return trimmed === "" ? null : trimmed;
       }
-      return true;
-    }, "시작값이 끝값보다 클 수 없습니다")
-    .nullable()
-    .optional();
+      return val;
+    },
+    z
+      .string()
+      .regex(sizeValueRegex, "올바른 형식이 아닙니다 (예: 95 또는 95-100)")
+      .max(20)
+      .refine((val) => {
+        // 범위 형식인 경우 시작값 <= 끝값 검증
+        const match = val.match(/^(\d+\.?\d*)-(\d+\.?\d*)$/);
+        if (match) {
+          const [, start, end] = match;
+          return parseFloat(start) <= parseFloat(end);
+        }
+        return true;
+      }, "시작값이 끝값보다 클 수 없습니다")
+      .nullable()
+      .optional()
+  );
 
 // drizzle-zod가 UUID 컬럼을 올바르게 처리하지 못하므로 명시적으로 오버라이드
 export const insertProductSizeMeasurementSchema = createInsertSchema(

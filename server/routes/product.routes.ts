@@ -11,7 +11,7 @@ const router = Router();
 const logger = createLogger("Product");
 
 // 상품 목록 조회
-router.get("/", etagMiddleware(), cacheStrategies.products, asyncHandler(async (req, res) => {
+router.get("/", etagMiddleware(), cacheStrategies.productList, asyncHandler(async (req, res) => {
   const search = req.query.search as string | undefined;
   const categoryIdParam = req.query.categoryId as string | undefined;
   const categorySlugParam = req.query.category as string | undefined;
@@ -42,7 +42,7 @@ router.get("/", etagMiddleware(), cacheStrategies.products, asyncHandler(async (
 }));
 
 // 상품 상세 조회 (UUID 기반)
-router.get("/:id", etagMiddleware(), cacheStrategies.products, asyncHandler(async (req, res) => {
+router.get("/:id", cacheStrategies.productDetail, asyncHandler(async (req, res) => {
   const product = await storage.getProduct(req.params.id); // UUID 문자열
   if (!product) {
     return res.status(404).json({ message: "Product not found" });
@@ -51,7 +51,7 @@ router.get("/:id", etagMiddleware(), cacheStrategies.products, asyncHandler(asyn
 }));
 
 // 상품 옵션(variants) 조회 (UUID 기반)
-router.get("/:id/variants", etagMiddleware(), cacheStrategies.products, asyncHandler(async (req, res) => {
+router.get("/:id/variants", cacheStrategies.productDetail, asyncHandler(async (req, res) => {
   const variants = await storage.getProductVariants(req.params.id); // UUID 문자열
   res.json(variants);
 }));
