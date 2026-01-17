@@ -1066,10 +1066,12 @@ export class DatabaseStorage implements IStorage {
       });
 
       const orderResult = await client.query(
-        `INSERT INTO orders (user_id, total_amount, status, shipping_name, shipping_phone, shipping_postal_code, shipping_address, shipping_detail_address, shipping_request_note, external_order_id, is_stock_reserved)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+        `INSERT INTO orders (user_id, items_amount, shipping_fee, total_amount, status, shipping_name, shipping_phone, shipping_postal_code, shipping_address, shipping_detail_address, shipping_request_note, external_order_id, is_stock_reserved)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
         [
           order.userId,
+          order.itemsAmount,
+          order.shippingFee,
           order.totalAmount,
           order.status,
           order.shippingName,

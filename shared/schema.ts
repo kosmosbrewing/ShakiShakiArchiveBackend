@@ -445,7 +445,10 @@ export const orders = pgTable(
     userId: uuid("user_id")
       .references(() => users.id)
       .notNull(),
-    totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
+    // [수정] 배송비 정보 추가
+    itemsAmount: decimal("items_amount", { precision: 10, scale: 2 }).default("0").notNull(), // 상품 금액
+    shippingFee: decimal("shipping_fee", { precision: 10, scale: 2 }).default("0").notNull(), // 배송비
+    totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(), // itemsAmount + shippingFee
     status: varchar("status", { length: 50 })
       .default("pending_payment")
       .notNull(),

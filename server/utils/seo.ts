@@ -290,7 +290,7 @@ export function generateCategorySeo(
   const categoryUrl = `${SITE_CONFIG.url}/category/${category.slug}`;
   const description =
     category.description ||
-    `${category.name} 카테고리 - ${SITE_CONFIG.name}에서 다양한 상품을 만나보세요`;
+    `샤키샤키가 엄선한 ${category.name} 빈티지 컬렉션`;
 
   const optimizedCategoryImage = optimizeForOg(
     category.imageUrl || SITE_CONFIG.logo

@@ -249,7 +249,9 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
   logger.info("주문 데이터 검증 시작", { userId, externalOrderId });
   const orderData = insertOrderSchema.parse({
     userId,
-    totalAmount: totalAmount.toString(),
+    itemsAmount: subtotal.toString(), // 상품 금액
+    shippingFee: shippingFee.toString(), // 배송비
+    totalAmount: totalAmount.toString(), // 총 금액 (상품 금액 + 배송비)
     status: ORDER_STATUS.PENDING_PAYMENT,
     shippingName: validatedBody.shippingName,
     shippingPhone: validatedBody.shippingPhone,

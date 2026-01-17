@@ -122,14 +122,19 @@ export const cacheStrategies = {
 
   /**
    * 상품 상세 데이터
-   * - 캐시 저장 금지 (no-store)
-   * - 재검증 필수 (no-cache, must-revalidate, proxy-revalidate)
-   * - 항상 최신 상태 보장
+   * - private + no-cache + no-store
+   * - must-revalidate + proxy-revalidate (캐시 만료 시 반드시 재검증)
+   * - 항상 최신 상태 보장 (재고 변동 즉시 반영)
    *
    * 사용처: /api/products/:id (상세), /api/products/:id/variants
+   *
+   * ⚠️ 중요:
+   * - 상품 상세는 실시간 재고 반영이 중요하므로 캐시 저장 금지
+   * - 여러 사용자가 동시에 보는 상품의 재고 정보가 달라지지 않도록 방지
    */
   productDetail: cacheControl({
     maxAge: 0,
+    isPrivate: true,
     noCache: true,
     noStore: true,
     mustRevalidate: true,
