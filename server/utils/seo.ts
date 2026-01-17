@@ -288,9 +288,11 @@ export function generateCategorySeo(
   jsonLd: (JsonLdItemList | JsonLdBreadcrumb)[];
 } {
   const categoryUrl = `${SITE_CONFIG.url}/category/${category.slug}`;
-  const description =
-    category.description ||
-    `샤키샤키가 엄선한 ${category.name} 빈티지 컬렉션`;
+  // 🔒 SEO 최적화: description이 너무 짧으면(20자 미만) fallback 사용
+  const hasValidDescription = category.description && category.description.trim().length >= 20;
+  const description = hasValidDescription
+    ? category.description
+    : `샤키샤키가 엄선한 ${category.name} 빈티지 컬렉션`;
 
   const optimizedCategoryImage = optimizeForOg(
     category.imageUrl || SITE_CONFIG.logo

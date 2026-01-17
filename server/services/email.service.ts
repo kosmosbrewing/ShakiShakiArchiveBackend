@@ -61,19 +61,21 @@ export async function sendVerificationEmail(
     const { data, error } = await resend.emails.send({
       from: `${config.email.fromName} <${config.email.fromEmail}>`,
       to: email,
-      subject: "[ShakiShaki] 이메일 인증코드",
+      subject: "샤키샤키 아카이브 이메일 인증코드",
       html: `
         <div style="font-family: 'Noto Sans KR', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
           <h1 style="color: #333; font-size: 24px; margin-bottom: 20px;">이메일 인증</h1>
           <p style="color: #666; font-size: 16px; line-height: 1.6;">
-            안녕하세요, ShakiShaki입니다.<br/>
+            안녕하세요, 샤키샤키 아카이브(ShakiShaki Archive)입니다.<br/>
             회원가입을 완료하려면 아래 인증코드를 입력해주세요.
           </p>
           <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; text-align: center; margin: 30px 0;">
             <span style="font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #333;">${code}</span>
           </div>
           <p style="color: #999; font-size: 14px;">
-            이 인증코드는 ${config.email.verificationCodeExpiry}분 후에 만료됩니다.<br/>
+            이 인증코드는 ${
+              config.email.verificationCodeExpiry
+            }분 후에 만료됩니다.<br/>
             본인이 요청하지 않은 경우 이 이메일을 무시해주세요.
           </p>
           <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;" />
@@ -92,7 +94,9 @@ export async function sendVerificationEmail(
     logger.info("인증코드 발송 완료", { email, messageId: data?.id });
     return { success: true, messageId: data?.id };
   } catch (error) {
-    logger.error("발송 중 오류", { error: error instanceof Error ? error.message : String(error) });
+    logger.error("발송 중 오류", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     const message = error instanceof Error ? error.message : "이메일 발송 실패";
     return { success: false, error: message };
   }
@@ -117,19 +121,21 @@ export async function sendPasswordResetEmail(
     const { data, error } = await resend.emails.send({
       from: `${config.email.fromName} <${config.email.fromEmail}>`,
       to: email,
-      subject: "[ShakiShaki] 비밀번호 재설정 인증코드",
+      subject: "샤키샤키 아카이브 비밀번호 재설정 인증코드",
       html: `
         <div style="font-family: 'Noto Sans KR', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
           <h1 style="color: #333; font-size: 24px; margin-bottom: 20px;">비밀번호 재설정</h1>
           <p style="color: #666; font-size: 16px; line-height: 1.6;">
-            안녕하세요, ShakiShaki입니다.<br/>
+            안녕하세요, 샤키샤키 아카이브(ShakiShaki Archive)입니다.<br/>
             비밀번호를 재설정하려면 아래 인증코드를 입력해주세요.
           </p>
           <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; text-align: center; margin: 30px 0;">
             <span style="font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #333;">${code}</span>
           </div>
           <p style="color: #999; font-size: 14px;">
-            이 인증코드는 ${config.email.verificationCodeExpiry}분 후에 만료됩니다.<br/>
+            이 인증코드는 ${
+              config.email.verificationCodeExpiry
+            }분 후에 만료됩니다.<br/>
             본인이 요청하지 않은 경우 이 이메일을 무시해주세요.
           </p>
           <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;" />
@@ -148,7 +154,9 @@ export async function sendPasswordResetEmail(
     logger.info("비밀번호 재설정 코드 발송 완료", { email });
     return { success: true, messageId: data?.id };
   } catch (error) {
-    logger.error("발송 중 오류", { error: error instanceof Error ? error.message : String(error) });
+    logger.error("발송 중 오류", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     const message = error instanceof Error ? error.message : "이메일 발송 실패";
     return { success: false, error: message };
   }
