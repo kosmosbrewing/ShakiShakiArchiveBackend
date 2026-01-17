@@ -15,4 +15,4 @@ certs/
 backup*.sql
 migrate*.sql
 migrate*.ts
-MIGRAT*.md
+*MIGRAT*.md

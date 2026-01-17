@@ -4,7 +4,7 @@
 
 import { db } from "../db";
 import { orders } from "../../shared/schema";
-import { eq, and, lt, or } from "drizzle-orm";
+import { eq, and, lt, or, sql } from "drizzle-orm";
 import { storage } from "../storage";
 import { createLogger } from "./logger";
 
@@ -23,10 +23,12 @@ const ORDER_EXPIRY_MS = 5 * 60 * 1000;
  * - 재고 복구 수행 (브라우저 강제 종료 대응)
  */
 async function cleanupExpiredOrders(): Promise<void> {
-  const expiryThreshold = new Date(Date.now() - ORDER_EXPIRY_MS);
+  // SQL의 NOW()를 사용하여 DB 시간 기준으로 비교 (timezone 문제 해결)
+  const expirySeconds = ORDER_EXPIRY_MS / 1000;
 
   try {
     // 🔒 유령 주문만 조회 (cancelled 상태는 제외)
+    // NOW() - INTERVAL 사용으로 timezone 변환 문제 해결
     const expiredOrders = await db
       .select()
       .from(orders)
@@ -36,18 +38,21 @@ async function cleanupExpiredOrders(): Promise<void> {
             eq(orders.status, "pending_payment"),
             eq(orders.status, "paying")
           ),
-          lt(orders.createdAt, expiryThreshold)
+          sql`${orders.createdAt} < NOW() - INTERVAL '${sql.raw(expirySeconds.toString())} seconds'`
         )
       );
 
     if (expiredOrders.length === 0) {
-      logger.debug("정리할 만료된 주문 없음", { threshold: expiryThreshold });
+      logger.info("정리할 만료된 주문 없음", {
+        expiryMinutes: ORDER_EXPIRY_MS / 1000 / 60,
+        query: `created_at < NOW() - INTERVAL '${expirySeconds} seconds'`,
+      });
       return;
     }
 
     logger.info("만료된 유령 주문 발견", {
       count: expiredOrders.length,
-      threshold: expiryThreshold,
+      expiryMinutes: ORDER_EXPIRY_MS / 1000 / 60,
       statuses: expiredOrders.map(o => o.status),
     });
 

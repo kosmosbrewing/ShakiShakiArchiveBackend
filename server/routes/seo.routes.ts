@@ -4,6 +4,7 @@
 import { Router } from "express";
 import { storage } from "../storage";
 import { asyncHandler } from "../middleware/error.middleware";
+import { cacheStrategies } from "../middleware";
 import {
   generateHomeSeo,
   generateProductSeo,
@@ -17,8 +18,10 @@ const router = Router();
 /**
  * GET /api/seo/home
  * 홈페이지 SEO 메타데이터 조회
+ *
+ * 캐시: 브라우저 5분, CDN 10분
  */
-router.get("/home", (_req, res) => {
+router.get("/home", cacheStrategies.staticData, (_req, res) => {
   // 동기 함수이므로 에러 발생 시 Express가 자동으로 처리
   const seoData = generateHomeSeo();
   res.json(seoData);
@@ -27,8 +30,10 @@ router.get("/home", (_req, res) => {
 /**
  * GET /api/seo/products
  * 상품 목록 페이지 SEO 메타데이터 조회
+ *
+ * 캐시: 브라우저 10초, CDN 1분
  */
-router.get("/products", asyncHandler(async (_req, res) => {
+router.get("/products", cacheStrategies.productList, asyncHandler(async (_req, res) => {
   const products = await storage.getProducts({});
   const seoData = generateProductListSeo(products);
   res.json(seoData);
@@ -38,8 +43,10 @@ router.get("/products", asyncHandler(async (_req, res) => {
  * GET /api/seo/products/:idOrSlug
  * 상품 상세 페이지 SEO 메타데이터 조회
  * - UUID 또는 slug로 조회 가능
+ *
+ * 캐시: 브라우저 5분, CDN 10분
  */
-router.get("/products/:idOrSlug", asyncHandler(async (req, res) => {
+router.get("/products/:idOrSlug", cacheStrategies.staticData, asyncHandler(async (req, res) => {
   const { idOrSlug } = req.params;
 
   // UUID 형식인지 확인 (기본 UUID 패턴)
@@ -75,8 +82,10 @@ router.get("/products/:idOrSlug", asyncHandler(async (req, res) => {
  * GET /api/seo/categories/:idOrSlug
  * 카테고리 페이지 SEO 메타데이터 조회
  * - ID(숫자) 또는 slug로 조회 가능
+ *
+ * 캐시: 브라우저 5분, CDN 10분
  */
-router.get("/categories/:idOrSlug", asyncHandler(async (req, res) => {
+router.get("/categories/:idOrSlug", cacheStrategies.staticData, asyncHandler(async (req, res) => {
   const { idOrSlug } = req.params;
 
   // 숫자인지 확인
@@ -104,8 +113,10 @@ router.get("/categories/:idOrSlug", asyncHandler(async (req, res) => {
  * GET /api/seo/search
  * 검색 결과 페이지 SEO 메타데이터 조회
  * @query q - 검색어 (필수)
+ *
+ * 캐시: 브라우저 10초, CDN 1분
  */
-router.get("/search", asyncHandler(async (req, res) => {
+router.get("/search", cacheStrategies.productList, asyncHandler(async (req, res) => {
   const query = req.query.q as string;
 
   if (!query || query.trim() === "") {
@@ -123,8 +134,10 @@ router.get("/search", asyncHandler(async (req, res) => {
  * GET /api/seo/sitemap-data
  * 사이트맵 생성용 데이터 조회
  * - 프론트엔드에서 sitemap.xml 생성 시 사용
+ *
+ * 캐시: 브라우저 5분, CDN 10분
  */
-router.get("/sitemap-data", asyncHandler(async (_req, res) => {
+router.get("/sitemap-data", cacheStrategies.staticData, asyncHandler(async (_req, res) => {
   const [products, categories] = await Promise.all([
     storage.getProducts({}),
     storage.getCategories(),

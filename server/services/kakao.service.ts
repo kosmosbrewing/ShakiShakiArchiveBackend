@@ -80,8 +80,8 @@ export function getAuthorizationUrl(state: string): string {
     client_id: config.kakao.clientId,
     redirect_uri: config.kakao.callbackUrl,
     state: state,
-    // 요청할 동의 항목 (프로필, 이메일, 이름, 전화번호)
-    scope: "profile_nickname profile_image account_email name phone_number",
+    // 요청할 동의 항목 (닉네임, 이메일만 사용)
+    scope: "profile_nickname account_email",
   });
 
   return `${KAKAO_AUTH_URL}/oauth/authorize?${params.toString()}`;
