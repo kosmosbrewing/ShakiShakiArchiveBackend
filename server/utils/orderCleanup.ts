@@ -10,8 +10,8 @@ import { createLogger } from "./logger";
 
 const logger = createLogger("OrderCleanup");
 
-// 정리 간격: 3분 (180000ms) - 브라우저 강제 종료 대응
-const CLEANUP_INTERVAL_MS = 3 * 60 * 1000;
+// 정리 간격: 1분 (60000ms) - 빠른 재고 복구
+const CLEANUP_INTERVAL_MS = 1 * 60 * 1000;
 
 // 주문 만료 시간: 5분 (300000ms) - 빠른 재고 복구
 const ORDER_EXPIRY_MS = 5 * 60 * 1000;
@@ -135,7 +135,7 @@ export function startOrderCleanup(): void {
     expiryMs: ORDER_EXPIRY_MS,
     intervalMinutes: CLEANUP_INTERVAL_MS / 1000 / 60,
     expiryMinutes: ORDER_EXPIRY_MS / 1000 / 60,
-    note: "브라우저 강제 종료 대응 - 3분 간격, 5분 만료",
+    note: "브라우저 강제 종료 대응 - 1분 간격, 5분 만료",
   });
 }
 
