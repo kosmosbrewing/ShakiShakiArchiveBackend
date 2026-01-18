@@ -162,7 +162,9 @@ export interface IStorage {
     order: InsertOrder,
     items: OrderItemCreateData[]
   ): Promise<string>; // UUID 반환
-  getOrders(userId: string): Promise<Order[]>;
+  getOrders(userId: string): Promise<
+    (Order & { orderItems: (OrderItem & { product: Product | null })[] })[]
+  >;
   getOrder(
     orderId: string
   ): Promise<
@@ -1130,12 +1132,43 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
-  async getOrders(userId: string): Promise<Order[]> {
-    return await db
+  async getOrders(userId: string): Promise<
+    (Order & { orderItems: (OrderItem & { product: Product | null })[] })[]
+  > {
+    // N+1 쿼리 개선: 단일 JOIN 쿼리로 주문과 주문 상품, 상품 정보를 함께 조회
+    const result = await db
       .select()
       .from(orders)
+      .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
+      .leftJoin(products, eq(orderItems.productId, products.id))
       .where(eq(orders.userId, userId))
       .orderBy(desc(orders.createdAt));
+
+    // 결과를 주문별로 그룹화 (UUID 기반)
+    const orderMap = new Map<
+      string, // UUID
+      Order & { orderItems: (OrderItem & { product: Product | null })[] }
+    >();
+
+    for (const row of result) {
+      const orderId = row.orders.id;
+
+      if (!orderMap.has(orderId)) {
+        orderMap.set(orderId, {
+          ...row.orders,
+          orderItems: [],
+        });
+      }
+
+      if (row.order_items) {
+        orderMap.get(orderId)!.orderItems.push({
+          ...row.order_items,
+          product: row.products,
+        });
+      }
+    }
+
+    return Array.from(orderMap.values());
   }
 
   async getOrder(

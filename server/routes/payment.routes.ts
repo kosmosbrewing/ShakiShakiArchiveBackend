@@ -359,7 +359,7 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
 
       // PG사 결제 취소 시도
       try {
-        await cancelPayment(payment.paymentKey, "재고 부족으로 인한 자동 취소");
+        await cancelTossPayment(payment.paymentKey, "재고 부족으로 인한 자동 취소");
         logger.info("재고 부족 - PG 결제 취소 완료", { orderId: order.id });
       } catch (cancelError) {
         // 결제 취소 실패 시 로그만 남기고 관리자 알림 필요
