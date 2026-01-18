@@ -120,7 +120,7 @@ const poolConfig: pg.PoolConfig = {
   allowExitOnIdle: false,
 };
 
-logger.info("Pool 설정 완료", {
+logger.debug("Pool 설정 완료", {
   max: poolConfig.max,
   min: poolConfig.min,
   idleTimeoutMillis: poolConfig.idleTimeoutMillis,
@@ -136,7 +136,7 @@ pool.on("connect", async (client) => {
   try {
     // 세션 타임존을 한국 시간(KST)으로 설정
     await client.query("SET timezone = 'Asia/Seoul'");
-    logger.info("새 연결 생성 - 타임존 KST 설정 완료", {
+    logger.debug("새 연결 생성 - 타임존 KST 설정 완료", {
       totalCount: pool.totalCount,
       idleCount: pool.idleCount,
       waitingCount: pool.waitingCount,

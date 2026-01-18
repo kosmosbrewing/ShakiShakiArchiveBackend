@@ -43,7 +43,7 @@ async function cleanupExpiredOrders(): Promise<void> {
       );
 
     if (expiredOrders.length === 0) {
-      logger.info("정리할 만료된 주문 없음", {
+      logger.debug("정리할 만료된 주문 없음", {
         expiryMinutes: ORDER_EXPIRY_MS / 1000 / 60,
         query: `created_at < NOW() - INTERVAL '${expirySeconds} seconds'`,
       });
@@ -64,7 +64,7 @@ async function cleanupExpiredOrders(): Promise<void> {
       try {
         // 🔒 Option A: 주문 생성 시 즉시 재고 차감하므로 항상 재고 복구 필요
         // 재고 복구 + 주문 삭제를 하나의 트랜잭션으로 처리 (중복 재고 복구 방지)
-        logger.info("유령 주문 처리 시작 (재고 복구 + 삭제)", {
+        logger.debug("유령 주문 처리 시작 (재고 복구 + 삭제)", {
           orderId: order.id,
           externalOrderId: order.externalOrderId,
           status: order.status,
@@ -76,7 +76,7 @@ async function cleanupExpiredOrders(): Promise<void> {
         // 원자적 트랜잭션: 재고 복구 성공 시에만 주문 삭제
         await storage.restoreStockAndDeleteOrder(order.id);
 
-        logger.info("유령 주문 처리 완료 (재고 복구 + 삭제)", {
+        logger.debug("유령 주문 처리 완료 (재고 복구 + 삭제)", {
           orderId: order.id,
           externalOrderId: order.externalOrderId,
         });

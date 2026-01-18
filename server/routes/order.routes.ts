@@ -42,7 +42,7 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
   let isDirectPurchase = false;
 
   // 🔍 디버깅: 주문 모드 확인
-  logger.info("주문 모드 확인", {
+  logger.debug("주문 모드 확인", {
     directPurchaseItem: !!directPurchaseItem,
     userId
   });
