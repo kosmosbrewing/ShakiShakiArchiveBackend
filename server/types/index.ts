@@ -45,6 +45,7 @@ export interface OrderStatusUpdate {
 export interface OrderItemStatusUpdate {
   status: string;
   trackingNumber?: string;
+  courierCompany?: string;
 }
 
 // 소프트 락 결제 승인 결과 타입

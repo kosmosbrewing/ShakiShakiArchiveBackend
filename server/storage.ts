@@ -184,7 +184,8 @@ export interface IStorage {
   updateOrderItemStatus(
     itemId: number, // serial
     status: string,
-    trackingNumber?: string
+    trackingNumber?: string,
+    courierCompany?: string
   ): Promise<OrderItem | undefined>;
 
   deleteOrder(orderId: string): Promise<void>;
@@ -1267,12 +1268,16 @@ export class DatabaseStorage implements IStorage {
   async updateOrderItemStatus(
     itemId: number,
     status: string,
-    trackingNumber?: string
+    trackingNumber?: string,
+    courierCompany?: string
   ): Promise<OrderItem | undefined> {
     // any 타입 제거: 명시적 타입 사용
     const updateData: OrderItemStatusUpdate = { status };
     if (trackingNumber !== undefined) {
       updateData.trackingNumber = trackingNumber;
+    }
+    if (courierCompany !== undefined) {
+      updateData.courierCompany = courierCompany;
     }
 
     const [updated] = await db

@@ -84,7 +84,17 @@ export const globalRateLimiter = rateLimit({
   // 성공한 요청만 카운트 (4xx, 5xx 제외)
   skipFailedRequests: false,
   // 개발 환경에서는 완화된 제한 적용
-  skip: () => config.isDev && !config.rateLimit?.enableInDev,
+  // 관리자 API는 전역 제한 우회 (별도 adminRateLimiter 적용)
+  skip: (req) => {
+    // 관리자 API는 전역 제한 우회 (정확한 경로 매칭)
+    // /api/admin 또는 /api/admin/으로 시작하는 경로만 매칭
+    // /api/administrator, /api/admins 등은 우회 불가
+    if (req.path === '/api/admin' || req.path.startsWith('/api/admin/')) {
+      return true;
+    }
+    // 개발 환경 스킵
+    return config.isDev && !config.rateLimit?.enableInDev;
+  },
 });
 
 /**
@@ -168,5 +178,43 @@ export const paymentRateLimiter = rateLimit({
     res.status(429).json(options.message);
   },
   // 결제는 개발 환경에서도 제한 적용
+  skip: () => false,
+});
+
+/**
+ * 관리자 전용 Rate Limiter (높은 제한)
+ * - 관리자 API에 적용
+ * - 5분당 300회 제한
+ * - userId 기반으로 제한 (IP 독립적)
+ * - 전역 Rate Limiter를 skip하고 이 제한만 적용됨
+ */
+export const adminRateLimiter = rateLimit({
+  windowMs: RATE_LIMIT.ADMIN.WINDOW_MS,
+  max: RATE_LIMIT.ADMIN.MAX_REQUESTS,
+  message: {
+    success: false,
+    error: RATE_LIMIT_MESSAGES.ADMIN,
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    // 세션에서 userId 가져오기 (인증된 경우)
+    const userId = (req as any).session?.userId;
+    if (userId) {
+      return `admin_user_${userId}`;
+    }
+    // 인증 전이면 IP 기반 (로그인 시도 등)
+    return `admin_ip_${req.ip || "unknown"}`;
+  },
+  validate: { xForwardedForHeader: false, keyGeneratorIpFallback: false },
+  handler: (req, res, next, options) => {
+    logger.warn("Admin rate limit 초과", {
+      ip: req.ip,
+      url: req.originalUrl,
+      userId: (req as any).session?.userId,
+    });
+    res.status(429).json(options.message);
+  },
+  // 관리자는 개발 환경에서도 제한 적용 (보안 강화)
   skip: () => false,
 });

@@ -31,11 +31,12 @@ router.patch("/orders/:id", isAuthenticated, isAdmin, asyncHandler(async (req, r
 
 // 주문 아이템 상태 수정 (관리자)
 router.patch("/order-items/:id", isAuthenticated, isAdmin, asyncHandler(async (req, res) => {
-  const { status, trackingNumber } = req.body;
+  const { status, trackingNumber, courierCompany } = req.body;
   const item = await storage.updateOrderItemStatus(
     Number(req.params.id),
     status,
-    trackingNumber
+    trackingNumber,
+    courierCompany
   );
   if (!item) {
     return res.status(404).json({ message: "Order item not found" });

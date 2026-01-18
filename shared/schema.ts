@@ -549,12 +549,15 @@ export const orderItems = pgTable(
       .default("pending_payment")
       .notNull(),
     trackingNumber: varchar("tracking_number", { length: 100 }),
+    // [추가] 택배사 정보
+    courierCompany: varchar("courier_company", { length: 50 }),
 
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [
     index("IDX_order_items_order_id").on(table.orderId),
     index("IDX_order_items_product_id").on(table.productId),
+    index("IDX_order_items_courier_company").on(table.courierCompany),
   ]
 );
 

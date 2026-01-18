@@ -2,6 +2,7 @@
 // 관리자 라우터 통합
 
 import { Router } from "express";
+import { adminRateLimiter } from "../../config/security";
 import productRoutes from "./product.routes";
 import orderRoutes from "./order.routes";
 import categoryRoutes from "./category.routes";
@@ -13,6 +14,10 @@ import userRoutes from "./user.routes";
 import inquiryRoutes from "./inquiry.routes";
 
 const router = Router();
+
+// 관리자 전용 Rate Limiter 적용 (5분당 300회)
+// 전역 Rate Limiter는 skip되고 이 제한만 적용됨
+router.use(adminRateLimiter);
 
 // 상품 관리
 router.use("/products", productRoutes);

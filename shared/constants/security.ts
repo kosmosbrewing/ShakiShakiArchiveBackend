@@ -50,6 +50,13 @@ export const RATE_LIMIT = {
     /** 최대 요청 수 */
     MAX_REQUESTS: 5,
   },
+  /** 관리자 Rate Limit (높은 제한) */
+  ADMIN: {
+    /** 윈도우 시간 (5분, 밀리초) */
+    WINDOW_MS: 5 * 60 * 1000,
+    /** 최대 요청 수 */
+    MAX_REQUESTS: 300,
+  },
 } as const;
 
 /**
