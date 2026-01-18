@@ -19,7 +19,15 @@ import {
   STOCK_MESSAGES,
 } from "../constants";
 import type { OrderItemCreateData } from "../types";
-import { cancelPayment, TossPaymentError } from "../services/toss.service";
+import {
+  cancelPayment as cancelTossPayment,
+  TossPaymentError
+} from "../services/toss.service";
+import {
+  cancelPayment as cancelNaverPayPayment,
+  NaverPayPaymentError,
+  normalizeNaverPayCancelResponse,
+} from "../services/naverpay.service";
 import { createLogger } from "../utils/logger";
 import { eq, and, gt } from "drizzle-orm";
 
@@ -613,10 +621,43 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
   logger.info("환불 진행 중 상태로 변경", { orderId });
 
   // 9. PG사별 결제 취소 API 호출 (전체 환불)
-  // TODO: 네이버페이 등 다른 PG사 추가 시 order.paymentProvider로 분기
-  let payment;
+  let payment: {
+    status: string;
+    cancels?: Array<{
+      cancelAmount: number;
+      refundableAmount: number;
+      canceledAt: string;
+    }>
+  };
+
   try {
-    payment = await cancelPayment(order.paymentKey, cancelReason, undefined);  // 전체 환불
+    const provider = order.paymentProvider || "toss";
+
+    logger.info("PG사 결제 취소 시작", {
+      orderId,
+      provider,
+      paymentKey: order.paymentKey,
+    });
+
+    if (provider === "naverpay") {
+      // 네이버페이 취소
+      const totalAmount = parseFloat(order.totalAmount);
+      const naverPayResponse = await cancelNaverPayPayment({
+        paymentId: order.paymentKey,
+        cancelAmount: totalAmount,
+        cancelReason,
+        cancelRequester: "2",  // 가맹점 관리자
+        taxScopeAmount: totalAmount,
+        taxExScopeAmount: 0,
+      });
+
+      payment = normalizeNaverPayCancelResponse(naverPayResponse, totalAmount);
+      logger.info("네이버페이 결제 취소 완료", { orderId });
+    } else {
+      // 토스페이먼츠 취소 (기본)
+      payment = await cancelTossPayment(order.paymentKey, cancelReason, undefined);
+      logger.info("토스페이먼츠 결제 취소 완료", { orderId });
+    }
   } catch (error) {
     // PG사 환불 실패 시 상태 되돌리기
     await storage.cancelOrderPayment(orderId, {
@@ -625,16 +666,24 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
       cancelReason: `환불 실패: ${error instanceof Error ? error.message : "알 수 없는 오류"}`,
     });
 
-    logger.error("PG사 환불 실패 - 주문 상태 복구", { orderId, originalStatus: order.status });
+    logger.error("PG사 환불 실패 - 주문 상태 복구", {
+      orderId,
+      provider: order.paymentProvider || "toss"
+    });
 
-    // 토스페이먼츠 에러 처리
+    // PG사별 에러 처리
     if (error instanceof TossPaymentError) {
-      logger.error("주문 취소 에러 (토스)", { code: error.code, message: error.message });
+      return res.status(error.statusCode).json({
+        message: error.message,
+        code: error.code,
+      });
+    } else if (error instanceof NaverPayPaymentError) {
       return res.status(error.statusCode).json({
         message: error.message,
         code: error.code,
       });
     }
+
     throw error; // 다른 에러는 글로벌 핸들러로 전달
   }
 

@@ -450,3 +450,49 @@ export function getNaverPaySDKConfig(): NaverPaySDKParams {
     payType: "normal",
   };
 }
+
+/**
+ * 네이버페이 취소 응답을 토스페이먼츠 호환 형식으로 변환
+ * order.routes.ts, payment.routes.ts의 취소 로직에서 통일된 응답 형식 사용
+ */
+export function normalizeNaverPayCancelResponse(
+  naverPayResponse: NaverPayCancelResponse,
+  originalTotalAmount: number
+): {
+  status: string;
+  cancels: Array<{
+    cancelAmount: number;
+    refundableAmount: number;
+    canceledAt: string;
+  }>;
+} {
+  if (!naverPayResponse.body) {
+    throw new NaverPayPaymentError(
+      naverPayResponse.code,
+      naverPayResponse.message
+    );
+  }
+
+  const { body } = naverPayResponse;
+
+  // 취소 일시 변환: yyyyMMddHHmmss → ISO 8601
+  const year = body.cancelYmdt.substring(0, 4);
+  const month = body.cancelYmdt.substring(4, 6);
+  const day = body.cancelYmdt.substring(6, 8);
+  const hour = body.cancelYmdt.substring(8, 10);
+  const minute = body.cancelYmdt.substring(10, 12);
+  const second = body.cancelYmdt.substring(12, 14);
+  const canceledAtIso = `${year}-${month}-${day}T${hour}:${minute}:${second}+09:00`;
+
+  // 토스페이먼츠 호환 형식으로 변환
+  return {
+    status: body.totalRestAmount === 0 ? "CANCELED" : "PARTIAL_CANCELED",
+    cancels: [
+      {
+        cancelAmount: body.primaryPayCancelAmount,
+        refundableAmount: body.totalRestAmount,
+        canceledAt: canceledAtIso,
+      }
+    ]
+  };
+}

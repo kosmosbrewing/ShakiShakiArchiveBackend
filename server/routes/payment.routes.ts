@@ -10,10 +10,15 @@ import { paymentRateLimiter } from "../config/security";
 import { config } from "../config";
 import {
   confirmPayment,
-  cancelPayment,
-  getPayment,
+  cancelPayment as cancelTossPayment,
+  getPayment as getTossPayment,
   TossPaymentError,
 } from "../services/toss.service";
+import {
+  cancelPayment as cancelNaverPayPayment,
+  NaverPayPaymentError,
+  normalizeNaverPayCancelResponse,
+} from "../services/naverpay.service";
 import { confirmPaymentSchema, cancelPaymentSchema, stockReservations } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { createLogger } from "../utils/logger";
@@ -440,45 +445,72 @@ router.post("/:orderId/cancel", paymentRateLimiter, isAuthenticated, asyncHandle
     });
   }
 
-  // 6. PG사별 결제 취소 API 호출 (현재 토스페이먼츠만 지원)
-  // TODO: 네이버페이 등 다른 PG사 추가 시 order.paymentProvider로 분기
-  let payment;
+  // 6. PG사별 결제 취소 API 호출
+  let payment: {
+    status: string;
+    cancels?: Array<{
+      cancelAmount: number;
+      refundableAmount: number;
+      canceledAt: string;
+    }>
+  };
+
   try {
-    payment = await cancelPayment(
-      order.paymentKey,
-      cancelReason,
+    const provider = order.paymentProvider || "toss";
+
+    logger.info("PG사 결제 취소 시작 (payment API)", {
+      orderId,
+      provider,
       cancelAmount,
-      refundReceiveAccount
-    );
-  } catch (error) {
-    // 디버깅: 에러 타입 확인
-    logger.error("결제 취소 에러 (토스) - 상세", {
-      errorType: error?.constructor?.name,
-      isTossPaymentError: error instanceof TossPaymentError,
-      error: error instanceof Error ? error.message : String(error),
-      errorCode: (error as any)?.code,
-      errorObject: error,
     });
 
-    if (error instanceof TossPaymentError) {
-      const userMessage = tossErrorMessages[error.code] || error.message;
+    if (provider === "naverpay") {
+      // 네이버페이는 부분 취소 지원 여부 확인 필요
+      if (cancelAmount !== undefined) {
+        logger.warn("네이버페이 부분 취소 시도 차단", { orderId, cancelAmount });
+        return res.status(400).json({
+          message: "네이버페이는 부분 취소를 지원하지 않습니다. 전체 환불만 가능합니다.",
+          code: "NAVERPAY_PARTIAL_CANCEL_NOT_SUPPORTED",
+        });
+      }
 
-      logger.info("토스페이먼츠 에러 메시지 변환 (취소)", {
-        code: error.code,
-        original: error.message,
-        converted: userMessage
+      const totalAmount = parseFloat(order.totalAmount);
+      const naverPayResponse = await cancelNaverPayPayment({
+        paymentId: order.paymentKey,
+        cancelAmount: totalAmount,
+        cancelReason,
+        cancelRequester: "2",
+        taxScopeAmount: totalAmount,
+        taxExScopeAmount: 0,
       });
 
+      payment = normalizeNaverPayCancelResponse(naverPayResponse, totalAmount);
+      logger.info("네이버페이 결제 취소 완료 (payment API)", { orderId });
+    } else {
+      // 토스페이먼츠 취소 (부분 취소 지원)
+      payment = await cancelTossPayment(
+        order.paymentKey,
+        cancelReason,
+        cancelAmount,
+        refundReceiveAccount
+      );
+      logger.info("토스페이먼츠 결제 취소 완료 (payment API)", { orderId });
+    }
+  } catch (error) {
+    // PG사별 에러 처리
+    if (error instanceof TossPaymentError) {
+      const userMessage = tossErrorMessages[error.code] || error.message;
       return res.status(error.statusCode).json({
         message: userMessage,
         code: error.code,
       });
+    } else if (error instanceof NaverPayPaymentError) {
+      return res.status(error.statusCode).json({
+        message: error.message,
+        code: error.code,
+      });
     }
 
-    // TossPaymentError가 아닌 일반 에러
-    logger.warn("일반 Error로 처리됨 (TossPaymentError 아님)", {
-      errorMessage: error instanceof Error ? error.message : String(error)
-    });
     throw error;
   }
 
@@ -551,7 +583,7 @@ router.get("/:orderId/status", isAuthenticated, asyncHandler(async (req, res) =>
   // TODO: 네이버페이 등 다른 PG사 추가 시 order.paymentProvider로 분기
   let payment;
   try {
-    payment = await getPayment(order.paymentKey);
+    payment = await getTossPayment(order.paymentKey);
   } catch (error) {
     // 디버깅: 에러 타입 확인
     logger.error("결제 상태 조회 에러 (토스) - 상세", {

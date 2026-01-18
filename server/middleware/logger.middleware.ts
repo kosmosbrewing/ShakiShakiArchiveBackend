@@ -109,8 +109,8 @@ export function loggerMiddleware(
   res: Response,
   next: NextFunction
 ) {
-  // API 경로만 상세 로깅
-  if (!req.path.startsWith("/api")) {
+  // API 경로만 상세 로깅 (헬스 체크 제외)
+  if (!req.path.startsWith("/api") || req.path === "/api/health") {
     return next();
   }
 
