@@ -400,4 +400,53 @@ router.get("/check-verification", asyncHandler(async (req, res) => {
   res.json({ email, type, verified: isVerified });
 }));
 
+/**
+ * 비밀번호 확인 (관리자 인증용)
+ * POST /api/auth/verify-password
+ *
+ * - 인증된 사용자만 사용 가능
+ * - 현재 로그인한 사용자의 비밀번호 확인
+ * - Rate Limiting 적용 (Brute Force 방지)
+ */
+router.post("/verify-password", isAuthenticated, authRateLimiter, asyncHandler(async (req, res) => {
+  const { password } = req.body;
+  const userId = req.session.userId!; // isAuthenticated에서 검증됨
+
+  // 비밀번호 입력 확인
+  if (!password) {
+    return res.status(400).json({
+      message: "비밀번호를 입력해주세요"
+    });
+  }
+
+  // 사용자 조회
+  const user = await storage.getUser(userId);
+  if (!user) {
+    logger.warn(`Password verification failed: User not found - userId=${userId}`);
+    return res.status(404).json({
+      message: "사용자를 찾을 수 없습니다"
+    });
+  }
+
+  // 소셜 로그인 사용자 처리
+  if (!user.passwordHash) {
+    logger.warn(`Password verification failed: Social login account - userId=${userId}`);
+    return res.status(400).json({
+      message: "소셜 로그인으로 가입한 계정은 비밀번호가 없습니다",
+      verified: false
+    });
+  }
+
+  // 비밀번호 확인
+  const isValidPassword = await verifyPassword(password, user.passwordHash);
+
+  if (isValidPassword) {
+    logger.info(`Password verification successful - userId=${userId}`);
+    res.json({ verified: true });
+  } else {
+    logger.warn(`Password verification failed: Invalid password - userId=${userId}`);
+    res.json({ verified: false });
+  }
+}));
+
 export default router;

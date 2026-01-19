@@ -463,7 +463,7 @@ export const orders = pgTable(
     // 결제 정보 (PG사 통합 대응: 토스페이먼츠, 네이버페이 등)
     paymentProvider: varchar("payment_provider", { length: 50 }), // 'toss', 'naverpay', 'kakaopay' 등
     paymentKey: varchar("payment_key", { length: 200 }), // PG사 결제 고유 키
-    externalOrderId: varchar("external_order_id", { length: 64 }), // PG사 주문 ID
+    externalOrderId: varchar("external_order_id", { length: 64 }).unique(), // PG사 주문 ID (중복 방지)
     paymentMethod: varchar("payment_method", { length: 50 }), // 'card', 'transfer', 'naverpay' 등
     paidAt: timestamp("paid_at"),
     canceledAt: timestamp("canceled_at"),
@@ -483,7 +483,7 @@ export const orders = pgTable(
     index("IDX_orders_user_id").on(table.userId),
     index("IDX_orders_created_at").on(table.createdAt),
     index("IDX_orders_status").on(table.status),
-    index("IDX_orders_external_order_id").on(table.externalOrderId),
+    // externalOrderId는 .unique()로 UNIQUE 제약조건 추가 (자동으로 인덱스 생성됨)
   ]
 );
 

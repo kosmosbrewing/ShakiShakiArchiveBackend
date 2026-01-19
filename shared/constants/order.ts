@@ -56,32 +56,46 @@ export const NON_CANCELABLE_STATUSES = [
 export const ORDER_ID_CONFIG = {
   /** 주문번호 접두사 */
   PREFIX: "SHAKI",
-  /** timestamp 변환 진법 */
+  /** 랜덤 문자열 변환 진법 (36진수: 0-9, A-Z) */
   RADIX: 36,
   /** 랜덤 문자열 시작 인덱스 */
   RANDOM_START: 2,
-  /** 랜덤 문자열 끝 인덱스 */
-  RANDOM_END: 8,
+  /** 랜덤 문자열 끝 인덱스 (4자리: 2~6) */
+  RANDOM_END: 6,
 } as const;
 
 /**
- * PG사 주문번호 생성
- * 형식: YYYYMMDD_SHAKI_{timestamp}_{random}
+ * PG사 주문번호 생성 (시분초 + 4자리 난수)
+ * 형식: YYYYMMDD_SHAKI_HHMMSS_{random4}
+ * 예시: 20260119_SHAKI_143052_A3F9
+ *
+ * 특징:
+ * - 주문 생성 시각(년월일시분초)을 주문번호에서 바로 확인 가능
+ * - 4자리 난수(36^4 = 1,679,616)로 같은 초 내 충돌 방지
+ * - UNIQUE 제약조건으로 혹시 모를 중복 차단
  */
 export function generateExternalOrderId(): string {
   const now = new Date();
+
+  // 날짜: YYYYMMDD
   const dateStr =
     now.getFullYear().toString() +
     String(now.getMonth() + 1).padStart(2, "0") +
     String(now.getDate()).padStart(2, "0");
-  const timestamp = Date.now()
-    .toString(ORDER_ID_CONFIG.RADIX)
-    .toUpperCase();
+
+  // 시분초: HHMMSS
+  const timeStr =
+    String(now.getHours()).padStart(2, "0") +
+    String(now.getMinutes()).padStart(2, "0") +
+    String(now.getSeconds()).padStart(2, "0");
+
+  // 랜덤 4자리 (36^4 = 1,679,616 경우의 수)
   const random = Math.random()
     .toString(ORDER_ID_CONFIG.RADIX)
-    .substring(ORDER_ID_CONFIG.RANDOM_START, ORDER_ID_CONFIG.RANDOM_END)
+    .substring(2, 6) // 4자리
     .toUpperCase();
-  return `${dateStr}_${ORDER_ID_CONFIG.PREFIX}_${timestamp}_${random}`;
+
+  return `${dateStr}_${ORDER_ID_CONFIG.PREFIX}_${timeStr}_${random}`;
 }
 
 /**
