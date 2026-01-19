@@ -11,7 +11,8 @@
     "db:push": "echo '❌ 경고: db:push는 데이터 손실 위험이 있습니다! db:generate와 db:migrate를 사용하세요.' && exit 1",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "migrate:stock": "tsx server/scripts/migrate-stock-to-variants.ts"
+    "migrate:stock": "tsx server/scripts/migrate-stock-to-variants.ts",
+    "admin:create": "tsx server/scripts/create-admin-interactive.ts"
   },
   "dependencies": {
     "@headlessui/vue": "^1.7.23",

@@ -17,4 +17,3 @@ migrate*.sql
 migrate*.ts
 *MIGRAT*.md
 migrations/*
-docs/*
