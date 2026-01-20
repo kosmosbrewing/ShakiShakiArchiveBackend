@@ -216,9 +216,23 @@ router.get("/callback", asyncHandler(async (req, res) => {
       currentStatus: order.status,
       payableStatuses,
     });
-    return res.redirect(
-      `${config.frontendUrl}/orders/${orderId}?already_paid=true`
-    );
+
+    // ✅ 이미 결제된 주문: /checkout/success로 리다이렉트 (result=success 필수)
+    const alreadyPaidUrl = new URL('/checkout/success', config.frontendUrl);
+    alreadyPaidUrl.searchParams.set('result', 'success');
+    alreadyPaidUrl.searchParams.set('orderId', orderId);
+    alreadyPaidUrl.searchParams.set('provider', 'naverpay');
+    alreadyPaidUrl.searchParams.set('externalOrderId', order.externalOrderId || '');
+    alreadyPaidUrl.searchParams.set('amount', order.totalAmount);
+    alreadyPaidUrl.searchParams.set('alreadyPaid', 'true');
+
+    logger.info("이미 결제된 주문 - 프론트엔드로 리다이렉트", {
+      redirectUrl: alreadyPaidUrl.toString(),
+      orderId,
+      currentStatus: order.status,
+    });
+
+    return res.redirect(alreadyPaidUrl.toString());
   }
 
   try {
