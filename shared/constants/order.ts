@@ -77,17 +77,21 @@ export const ORDER_ID_CONFIG = {
 export function generateExternalOrderId(): string {
   const now = new Date();
 
-  // 날짜: YYYYMMDD
+  // KST(UTC+9) 변환 - 서버 타임존과 무관하게 항상 한국 시간 적용
+  const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+  const kst = new Date(now.getTime() + KST_OFFSET_MS);
+
+  // 날짜: YYYYMMDD (UTC 메서드 사용 - KST 오프셋이 이미 적용됨)
   const dateStr =
-    now.getFullYear().toString() +
-    String(now.getMonth() + 1).padStart(2, "0") +
-    String(now.getDate()).padStart(2, "0");
+    kst.getUTCFullYear().toString() +
+    String(kst.getUTCMonth() + 1).padStart(2, "0") +
+    String(kst.getUTCDate()).padStart(2, "0");
 
   // 시분초: HHMMSS
   const timeStr =
-    String(now.getHours()).padStart(2, "0") +
-    String(now.getMinutes()).padStart(2, "0") +
-    String(now.getSeconds()).padStart(2, "0");
+    String(kst.getUTCHours()).padStart(2, "0") +
+    String(kst.getUTCMinutes()).padStart(2, "0") +
+    String(kst.getUTCSeconds()).padStart(2, "0");
 
   // 랜덤 4자리 (36^4 = 1,679,616 경우의 수)
   const random = Math.random()
