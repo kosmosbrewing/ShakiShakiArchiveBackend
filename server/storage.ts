@@ -608,7 +608,17 @@ export class DatabaseStorage implements IStorage {
       query = query.where(and(...conditions));
     }
 
-    const results = await query.orderBy(desc(products.updatedAt));
+    // 정렬 우선순위:
+    // 1. isAvailable: true (판매중) 먼저
+    // 2. isAvailable: true + totalStock > 0 (재고 있음) 먼저
+    // 3. isAvailable: true + totalStock = 0 (SOLD OUT)
+    // 4. isAvailable: false (판매중단) - 마지막
+    // 참고: PostgreSQL에서 ORDER BY에 SELECT 별칭("totalStock") 직접 사용 가능
+    const results = await query.orderBy(
+      desc(products.isAvailable), // true(판매중)가 false(판매중단)보다 먼저
+      desc(sql`CASE WHEN "totalStock" > 0 THEN 1 ELSE 0 END`), // 재고 있는 상품 먼저 (SELECT 별칭 재사용)
+      desc(products.updatedAt) // 같은 조건 내에서는 최신 업데이트 순
+    );
 
     return results;
   }
