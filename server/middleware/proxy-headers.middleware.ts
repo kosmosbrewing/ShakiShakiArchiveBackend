@@ -54,6 +54,13 @@ export function proxyHeadersMiddleware(
     req.originalHost = originalHost as string;
   }
 
+  // 3. X-Original-Cookie 처리 (Cookie 헤더가 막힌 경우)
+  // API Gateway가 Cookie 헤더를 전달하지 않으면 X-Original-Cookie로 우회
+  const originalCookie = req.headers["x-original-cookie"];
+  if (originalCookie && !req.headers["cookie"]) {
+    req.headers["cookie"] = originalCookie as string;
+  }
+
   next();
 }
 
