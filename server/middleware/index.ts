@@ -23,3 +23,7 @@ export {
   type CacheOptions,
 } from "./cache.middleware";
 export { etagMiddleware } from "./etag.middleware";
+export {
+  proxyHeadersMiddleware,
+  debugHeadersMiddleware,
+} from "./proxy-headers.middleware";

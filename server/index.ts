@@ -12,6 +12,8 @@ import {
   errorHandler,
   loggerMiddleware,
   populateUser,
+  proxyHeadersMiddleware,
+  debugHeadersMiddleware,
 } from "./middleware";
 import routes from "./routes";
 import { meilisearchService } from "./services/meilisearch.service";
@@ -37,6 +39,15 @@ app.use(helmetMiddleware);
 
 // 전역 Rate Limiting
 app.use(globalRateLimiter);
+
+// API Gateway 커스텀 헤더 처리 (trust proxy 전에 실행 필수!)
+// X-Original-Proto → X-Forwarded-Proto로 변환하여 req.secure 판단에 사용
+app.use(proxyHeadersMiddleware);
+
+// 헤더 디버깅 (문제 진단 시 활성화)
+if (process.env.DEBUG_PROXY_HEADERS === "true") {
+  app.use(debugHeadersMiddleware);
+}
 
 // Body 파싱
 app.use(
