@@ -75,7 +75,9 @@ export const globalRateLimiter = rateLimit({
   },
   standardHeaders: true, // RateLimit-* 헤더 포함
   legacyHeaders: false, // X-RateLimit-* 헤더 비활성화
-  // 기본 keyGenerator 사용 (IPv6 자동 처리)
+  // 프록시 환경에서 X-Forwarded-For 경고 비활성화
+  // Express trust proxy 설정으로 req.ip가 이미 클라이언트 IP를 반환함
+  validate: { xForwardedForHeader: false },
   // 제한 초과 시 로깅
   handler: (req, res, next, options) => {
     logger.warn("Rate limit 초과", { ip: req.ip, url: req.originalUrl });
@@ -111,7 +113,8 @@ export const authRateLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  // 기본 keyGenerator 사용 (IPv6 자동 처리)
+  // 프록시 환경에서 X-Forwarded-For 경고 비활성화
+  validate: { xForwardedForHeader: false },
   handler: (req, res, next, options) => {
     logger.warn("Auth rate limit 초과", { ip: req.ip, url: req.originalUrl });
     res.status(429).json(options.message);
