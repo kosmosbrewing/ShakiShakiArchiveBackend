@@ -110,7 +110,7 @@ jobs:
           cache-to: type=gha,mode=max
           platforms: linux/amd64
 
-      # 8. 빌드 결과 출력
+      # 8. 빌드 결과 출력!
       - name: Output image info
         run: |
           echo "### 🐳 Docker Image Pushed!" >> $GITHUB_STEP_SUMMARY
