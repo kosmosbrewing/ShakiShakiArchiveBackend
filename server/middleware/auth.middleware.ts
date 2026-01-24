@@ -50,19 +50,18 @@ export function isAuthenticated(
   res: Response,
   next: NextFunction
 ) {
-  // 디버깅: 세션 상태 확인 (DEBUG_AUTH=true 환경변수로 활성화)
-  if (process.env.DEBUG_AUTH === "true") {
-    logger.error("[DEBUG] 인증 체크", {
-      path: req.path,
-      hasSession: !!req.session,
-      sessionId: req.session?.id?.slice(0, 8) + "...",
-      userId: req.session?.userId || "(없음)",
-      hasCookie: !!req.headers.cookie,
-      cookieHeader: req.headers.cookie ? "[존재]" : "(없음)",
-      secure: req.secure,
-      protocol: req.protocol,
-    });
-  }
+  // 디버깅: 세션 상태 확인 (임시 - 문제 해결 후 제거)
+  logger.error("[DEBUG] 인증 체크", {
+    path: req.path,
+    hasSession: !!req.session,
+    sessionId: req.session?.id ? req.session.id.slice(0, 8) + "..." : "(없음)",
+    userId: req.session?.userId || "(없음)",
+    hasCookie: !!req.headers.cookie,
+    cookiePreview: req.headers.cookie ? req.headers.cookie.slice(0, 50) + "..." : "(없음)",
+    secure: req.secure,
+    protocol: req.protocol,
+    xForwardedProto: req.headers["x-forwarded-proto"] || "(없음)",
+  });
 
   if (req.session?.userId) {
     return next();
