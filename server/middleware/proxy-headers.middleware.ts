@@ -21,13 +21,14 @@ declare global {
  * API Gateway 커스텀 헤더 처리 미들웨어
  *
  * API Gateway + VPC Link 환경에서:
- * - X-Forwarded-Proto: API Gateway가 자동 전달 (처리 불필요)
- * - Cookie: API Gateway가 자동 전달 (처리 불필요)
- * - Host: API Gateway가 덮어씀 → X-Original-Host로 복원 필요
+ * - X-Original-Proto: HTTPS 판단용 → X-Forwarded-Proto로 복사
+ * - X-Original-Host: Host 헤더 복원
+ * - Cookie: API Gateway가 자동 전달
  *
  * Terraform 설정:
  * request_parameters = {
  *   "overwrite:header.X-Original-Host" = var.frontend_domain
+ *   "overwrite:header.X-Original-Proto" = "https"
  * }
  */
 export function proxyHeadersMiddleware(
@@ -35,13 +36,21 @@ export function proxyHeadersMiddleware(
   res: Response,
   next: NextFunction
 ) {
-  // X-Original-Host만 처리 (API Gateway에서 전달)
-  const originalHost = req.headers["x-original-host"];
+  // 1. X-Original-Proto 처리 (HTTPS 판단용) - 가장 중요!
+  // X-Original-Proto → X-Forwarded-Proto로 복사
+  // Express의 trust proxy가 X-Forwarded-Proto를 읽어 req.secure 판단
+  const originalProto = req.headers["x-original-proto"];
+  if (originalProto) {
+    const proto = (originalProto as string).toLowerCase();
+    if (proto === "https" || proto === "http") {
+      req.headers["x-forwarded-proto"] = proto;
+    }
+  }
 
+  // 2. X-Original-Host 처리 (Host 헤더 복원)
+  const originalHost = req.headers["x-original-host"];
   if (originalHost) {
-    // Host 헤더 복원 (Express의 req.hostname 등에서 사용됨)
     req.headers["host"] = originalHost as string;
-    // 참조용으로도 저장
     req.originalHost = originalHost as string;
   }
 
@@ -65,13 +74,13 @@ export function debugHeadersMiddleware(
   logger.info("=== 요청 헤더 디버그 ===", {
     path: req.path,
     method: req.method,
-    // Host 관련
-    host: req.headers["host"] || "(없음)",
+    // 커스텀 헤더 (API Gateway에서 전달)
+    "x-original-proto": req.headers["x-original-proto"] || "(없음)",
     "x-original-host": req.headers["x-original-host"] || "(없음)",
-    // 프록시 관련 (API Gateway 자동 전달)
+    // 변환된 헤더
     "x-forwarded-proto": req.headers["x-forwarded-proto"] || "(없음)",
-    "x-forwarded-for": req.headers["x-forwarded-for"] || "(없음)",
-    // 쿠키 (API Gateway 자동 전달)
+    host: req.headers["host"] || "(없음)",
+    // 쿠키
     cookie: req.headers["cookie"] ? "[존재]" : "(없음)",
     // Express 판단 결과
     "req.secure": req.secure,

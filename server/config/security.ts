@@ -75,9 +75,9 @@ export const globalRateLimiter = rateLimit({
   },
   standardHeaders: true, // RateLimit-* 헤더 포함
   legacyHeaders: false, // X-RateLimit-* 헤더 비활성화
-  // 프록시 환경에서 X-Forwarded-For 경고 비활성화
+  // 프록시 환경에서 Forwarded/X-Forwarded-For 경고 비활성화
   // Express trust proxy 설정으로 req.ip가 이미 클라이언트 IP를 반환함
-  validate: { xForwardedForHeader: false },
+  validate: { xForwardedForHeader: false, forwardedHeader: false },
   // 제한 초과 시 로깅
   handler: (req, res, next, options) => {
     logger.warn("Rate limit 초과", { ip: req.ip, url: req.originalUrl });
@@ -113,8 +113,8 @@ export const authRateLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  // 프록시 환경에서 X-Forwarded-For 경고 비활성화
-  validate: { xForwardedForHeader: false },
+  // 프록시 환경에서 Forwarded/X-Forwarded-For 경고 비활성화
+  validate: { xForwardedForHeader: false, forwardedHeader: false },
   handler: (req, res, next, options) => {
     logger.warn("Auth rate limit 초과", { ip: req.ip, url: req.originalUrl });
     res.status(429).json(options.message);
@@ -145,7 +145,7 @@ export const apiRateLimiter = rateLimit({
     }
     return req.ip || "unknown";
   },
-  validate: { xForwardedForHeader: false, keyGeneratorIpFallback: false },
+  validate: { xForwardedForHeader: false, forwardedHeader: false, keyGeneratorIpFallback: false },
   // 개발 환경에서는 스킵
   skip: () => config.isDev && !config.rateLimit?.enableInDev,
 });
@@ -171,7 +171,7 @@ export const paymentRateLimiter = rateLimit({
     }
     return `payment_ip_${req.ip || "unknown"}`;
   },
-  validate: { xForwardedForHeader: false, keyGeneratorIpFallback: false },
+  validate: { xForwardedForHeader: false, forwardedHeader: false, keyGeneratorIpFallback: false },
   handler: (req, res, next, options) => {
     logger.warn("Payment rate limit 초과", {
       ip: req.ip,
@@ -209,7 +209,7 @@ export const adminRateLimiter = rateLimit({
     // 인증 전이면 IP 기반 (로그인 시도 등)
     return `admin_ip_${req.ip || "unknown"}`;
   },
-  validate: { xForwardedForHeader: false, keyGeneratorIpFallback: false },
+  validate: { xForwardedForHeader: false, forwardedHeader: false, keyGeneratorIpFallback: false },
   handler: (req, res, next, options) => {
     logger.warn("Admin rate limit 초과", {
       ip: req.ip,
