@@ -26,6 +26,10 @@ import {
   sendPasswordResetEmail,
 } from "../services/email.service";
 import { createLogger } from "../utils/logger";
+import {
+  AUTH_MESSAGES,
+  SUCCESS_MESSAGES,
+} from "@shared/constants/messages";
 
 const router = Router();
 const logger = createLogger("Auth");
@@ -63,7 +67,7 @@ router.post("/signup", authRateLimiter, asyncHandler(async (req, res) => {
   if (!isVerified) {
     logger.warn(`Signup failed: Email not verified - email=${maskEmail(validatedData.email)}`);
     return res.status(400).json({
-      message: "이메일 인증이 완료되지 않았습니다",
+      message: AUTH_MESSAGES.EMAIL_NOT_VERIFIED,
       code: "EMAIL_NOT_VERIFIED",
     });
   }
@@ -71,7 +75,7 @@ router.post("/signup", authRateLimiter, asyncHandler(async (req, res) => {
   const existingUser = await storage.getUserByEmail(validatedData.email);
   if (existingUser) {
     logger.warn(`Signup failed: Email already exists - email=${maskEmail(validatedData.email)}`);
-    return res.status(400).json({ message: "이미 사용 중인 이메일입니다" });
+    return res.status(400).json({ message: AUTH_MESSAGES.EMAIL_EXISTS });
   }
 
   const passwordHash = await hashPassword(validatedData.password);
@@ -109,14 +113,14 @@ router.post("/login", authRateLimiter, asyncHandler(async (req, res) => {
     logger.warn(`Login failed: User not found - email=${maskEmail(validatedData.email)}`);
     return res
       .status(401)
-      .json({ message: "이메일 또는 비밀번호가 올바르지 않습니다" });
+      .json({ message: AUTH_MESSAGES.INVALID_CREDENTIALS });
   }
 
   // 소셜 로그인 사용자는 비밀번호로 로그인 불가
   if (!user.passwordHash) {
     logger.warn(`Login failed: Social login account attempted password login - email=${maskEmail(validatedData.email)}`);
     return res.status(401).json({
-      message: "소셜 로그인으로 가입한 계정입니다. 해당 소셜 서비스로 로그인해주세요.",
+      message: AUTH_MESSAGES.SOCIAL_LOGIN_ACCOUNT,
     });
   }
 
@@ -129,7 +133,7 @@ router.post("/login", authRateLimiter, asyncHandler(async (req, res) => {
     logger.warn(`Login failed: Invalid password - email=${maskEmail(validatedData.email)}, userId=${user.id}`);
     return res
       .status(401)
-      .json({ message: "이메일 또는 비밀번호가 올바르지 않습니다" });
+      .json({ message: AUTH_MESSAGES.INVALID_CREDENTIALS });
   }
 
   req.session.userId = user.id;
@@ -148,14 +152,14 @@ router.post("/logout", (req, res) => {
     if (err) {
       return res
         .status(500)
-        .json({ message: "로그아웃 중 오류가 발생했습니다" });
+        .json({ message: AUTH_MESSAGES.LOGOUT_ERROR });
     }
     // 캐시 무효화
     if (userId) {
       invalidateUserCache(userId);
     }
     res.clearCookie("connect.sid");
-    res.json({ message: "로그아웃되었습니다" });
+    res.json({ message: SUCCESS_MESSAGES.LOGOUT });
   });
 });
 
@@ -164,7 +168,7 @@ router.get("/user", isAuthenticated, asyncHandler(async (req, res) => {
   const userId = req.session.userId!;
   const user = await storage.getUser(userId);
   if (!user) {
-    return res.status(404).json({ message: "사용자를 찾을 수 없습니다" });
+    return res.status(404).json({ message: AUTH_MESSAGES.USER_NOT_FOUND });
   }
   const { passwordHash: _, ...userWithoutPassword } = user;
   res.json(userWithoutPassword);
@@ -188,7 +192,7 @@ const updateUserHandler = asyncHandler(async (req, res) => {
   const updatedUser = await storage.updateUser(userId, updateData);
 
   if (!updatedUser) {
-    return res.status(404).json({ message: "사용자를 찾을 수 없습니다" });
+    return res.status(404).json({ message: AUTH_MESSAGES.USER_NOT_FOUND });
   }
 
   // 캐시 무효화
@@ -196,7 +200,7 @@ const updateUserHandler = asyncHandler(async (req, res) => {
 
   logger.info(`User profile updated: userId=${userId}`);
 
-  res.json({ message: "정보가 수정되었습니다", user: updatedUser });
+  res.json({ message: SUCCESS_MESSAGES.INFO_UPDATED, user: updatedUser });
 });
 
 // 사용자 정보 수정 (PATCH, PUT 둘 다 지원)
@@ -212,14 +216,14 @@ router.put("/password", authRateLimiter, isAuthenticated, asyncHandler(async (re
   const user = await storage.getUser(userId);
   if (!user) {
     logger.error(`Password change failed: User not found - userId=${userId}`);
-    return res.status(404).json({ message: "사용자를 찾을 수 없습니다" });
+    return res.status(404).json({ message: AUTH_MESSAGES.USER_NOT_FOUND });
   }
 
   // 소셜 로그인 사용자는 비밀번호 변경 불가
   if (!user.passwordHash) {
     logger.warn(`Password change failed: Social login account - userId=${userId}, email=${maskEmail(user.email)}`);
     return res.status(400).json({
-      message: "소셜 로그인으로 가입한 계정은 비밀번호를 변경할 수 없습니다",
+      message: AUTH_MESSAGES.SOCIAL_PASSWORD_CHANGE_FORBIDDEN,
     });
   }
 
@@ -229,7 +233,7 @@ router.put("/password", authRateLimiter, isAuthenticated, asyncHandler(async (re
     logger.warn(`Password change failed: Current password mismatch - userId=${userId}, email=${maskEmail(user.email)}`);
     return res
       .status(401)
-      .json({ message: "현재 비밀번호가 일치하지 않습니다" });
+      .json({ message: AUTH_MESSAGES.CURRENT_PASSWORD_MISMATCH });
   }
 
   // 동일 비밀번호 제한: 기존 비밀번호와 동일한지 확인
@@ -237,7 +241,7 @@ router.put("/password", authRateLimiter, isAuthenticated, asyncHandler(async (re
   if (isSamePassword) {
     logger.warn(`Password change failed: Same as current password - userId=${userId}`);
     return res.status(400).json({
-      message: "새 비밀번호는 현재 비밀번호와 달라야 합니다",
+      message: AUTH_MESSAGES.SAME_PASSWORD,
     });
   }
 
@@ -247,7 +251,7 @@ router.put("/password", authRateLimiter, isAuthenticated, asyncHandler(async (re
   // 보안 로깅: 비밀번호 변경 성공
   logger.info(`Password changed successfully - userId=${userId}, email=${maskEmail(user.email)}`);
 
-  res.json({ message: "비밀번호가 변경되었습니다" });
+  res.json({ message: SUCCESS_MESSAGES.PASSWORD_CHANGED });
 }));
 
 // 비밀번호 재설정 (비로그인 사용자)
@@ -259,7 +263,7 @@ router.post("/reset-password", authRateLimiter, asyncHandler(async (req, res) =>
   const isVerified = await storage.isEmailVerified(email, "password_reset");
   if (!isVerified) {
     return res.status(400).json({
-      message: "이메일 인증이 완료되지 않았습니다",
+      message: AUTH_MESSAGES.EMAIL_NOT_VERIFIED,
       code: "EMAIL_NOT_VERIFIED",
     });
   }
@@ -267,13 +271,13 @@ router.post("/reset-password", authRateLimiter, asyncHandler(async (req, res) =>
   // 사용자 조회
   const user = await storage.getUserByEmail(email);
   if (!user) {
-    return res.status(404).json({ message: "사용자를 찾을 수 없습니다" });
+    return res.status(404).json({ message: AUTH_MESSAGES.USER_NOT_FOUND });
   }
 
   // 소셜 로그인 사용자는 비밀번호 재설정 불가
   if (!user.passwordHash) {
     return res.status(400).json({
-      message: "소셜 로그인으로 가입한 계정은 비밀번호를 재설정할 수 없습니다",
+      message: AUTH_MESSAGES.SOCIAL_PASSWORD_RESET_FORBIDDEN,
     });
   }
 
@@ -281,7 +285,7 @@ router.post("/reset-password", authRateLimiter, asyncHandler(async (req, res) =>
   const isSamePassword = await verifyPassword(newPassword, user.passwordHash);
   if (isSamePassword) {
     return res.status(400).json({
-      message: "새 비밀번호는 이전 비밀번호와 달라야 합니다",
+      message: AUTH_MESSAGES.SAME_PASSWORD_RESET,
     });
   }
 
@@ -294,7 +298,7 @@ router.post("/reset-password", authRateLimiter, asyncHandler(async (req, res) =>
 
   logger.info(`Password reset successful - userId=${user.id}, email=${maskEmail(email)}`);
 
-  res.json({ message: "비밀번호가 재설정되었습니다" });
+  res.json({ message: SUCCESS_MESSAGES.PASSWORD_RESET });
 }));
 
 // ------------------------------------------------------------------
@@ -313,7 +317,7 @@ router.post("/send-verification", authRateLimiter, asyncHandler(async (req, res)
   if (type === "signup") {
     const existingUser = await storage.getUserByEmail(email);
     if (existingUser) {
-      return res.status(400).json({ message: "이미 사용 중인 이메일입니다" });
+      return res.status(400).json({ message: AUTH_MESSAGES.EMAIL_EXISTS });
     }
   }
 
@@ -322,12 +326,12 @@ router.post("/send-verification", authRateLimiter, asyncHandler(async (req, res)
     const existingUser = await storage.getUserByEmail(email);
     if (!existingUser) {
       // 보안상 존재 여부를 노출하지 않고 성공 응답
-      return res.json({ message: "인증코드가 발송되었습니다" });
+      return res.json({ message: SUCCESS_MESSAGES.EMAIL_SENT });
     }
     // 소셜 로그인 사용자는 비밀번호 재설정 불가
     if (!existingUser.passwordHash) {
       return res.status(400).json({
-        message: "소셜 로그인으로 가입한 계정입니다. 해당 소셜 서비스로 로그인해주세요.",
+        message: AUTH_MESSAGES.SOCIAL_LOGIN_ACCOUNT,
       });
     }
   }
@@ -351,10 +355,10 @@ router.post("/send-verification", authRateLimiter, asyncHandler(async (req, res)
       : await sendPasswordResetEmail(email, code);
 
   if (!emailResult.success) {
-    return res.status(500).json({ message: "이메일 발송에 실패했습니다" });
+    return res.status(500).json({ message: AUTH_MESSAGES.EMAIL_SEND_FAILED });
   }
 
-  res.json({ message: "인증코드가 발송되었습니다" });
+  res.json({ message: SUCCESS_MESSAGES.EMAIL_SENT });
 }));
 
 /**
@@ -370,7 +374,7 @@ router.post("/verify-email", authRateLimiter, asyncHandler(async (req, res) => {
 
   if (!verification) {
     return res.status(400).json({
-      message: "인증코드가 유효하지 않거나 만료되었습니다",
+      message: AUTH_MESSAGES.VERIFICATION_INVALID,
     });
   }
 
@@ -378,7 +382,7 @@ router.post("/verify-email", authRateLimiter, asyncHandler(async (req, res) => {
   await storage.markVerificationAsUsed(verification.id);
 
   res.json({
-    message: "이메일이 인증되었습니다",
+    message: SUCCESS_MESSAGES.EMAIL_VERIFIED,
     verified: true,
   });
 }));
@@ -392,7 +396,7 @@ router.get("/check-verification", asyncHandler(async (req, res) => {
   const type = (req.query.type as string) || "signup";
 
   if (!email) {
-    return res.status(400).json({ message: "이메일을 입력해주세요" });
+    return res.status(400).json({ message: AUTH_MESSAGES.EMAIL_REQUIRED });
   }
 
   const isVerified = await storage.isEmailVerified(email, type);
@@ -415,7 +419,7 @@ router.post("/verify-password", isAuthenticated, authRateLimiter, asyncHandler(a
   // 비밀번호 입력 확인
   if (!password) {
     return res.status(400).json({
-      message: "비밀번호를 입력해주세요"
+      message: AUTH_MESSAGES.PASSWORD_REQUIRED
     });
   }
 
@@ -424,7 +428,7 @@ router.post("/verify-password", isAuthenticated, authRateLimiter, asyncHandler(a
   if (!user) {
     logger.warn(`Password verification failed: User not found - userId=${userId}`);
     return res.status(404).json({
-      message: "사용자를 찾을 수 없습니다"
+      message: AUTH_MESSAGES.USER_NOT_FOUND
     });
   }
 
@@ -432,7 +436,7 @@ router.post("/verify-password", isAuthenticated, authRateLimiter, asyncHandler(a
   if (!user.passwordHash) {
     logger.warn(`Password verification failed: Social login account - userId=${userId}`);
     return res.status(400).json({
-      message: "소셜 로그인으로 가입한 계정은 비밀번호가 없습니다",
+      message: AUTH_MESSAGES.SOCIAL_NO_PASSWORD,
       verified: false
     });
   }

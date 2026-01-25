@@ -6,6 +6,7 @@ import { storage } from "../../storage";
 import { isAuthenticated, isAdmin } from "../../middleware/auth.middleware";
 import { asyncHandler } from "../../middleware/error.middleware";
 import { cacheStrategies } from "../../middleware";
+import { ORDER_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 
@@ -24,7 +25,7 @@ router.patch("/orders/:id", isAuthenticated, isAdmin, asyncHandler(async (req, r
     trackingNumber
   );
   if (!order) {
-    return res.status(404).json({ message: "Order not found" });
+    return res.status(404).json({ message: ORDER_MESSAGES.NOT_FOUND });
   }
   res.json(order);
 }));
@@ -39,7 +40,7 @@ router.patch("/order-items/:id", isAuthenticated, isAdmin, asyncHandler(async (r
     courierCompany
   );
   if (!item) {
-    return res.status(404).json({ message: "Order item not found" });
+    return res.status(404).json({ message: ORDER_MESSAGES.ITEM_NOT_FOUND });
   }
   res.json(item);
 }));

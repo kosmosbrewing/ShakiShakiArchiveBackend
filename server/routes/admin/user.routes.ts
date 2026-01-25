@@ -10,6 +10,7 @@ import { z } from "zod";
 import { createLogger } from "../../utils/logger";
 import { maskUserObject } from "../../utils/masking";
 import { isValidUUID } from "../../utils/validation";
+import { AUTH_MESSAGES, COMMON_MESSAGES, VALIDATION_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 const logger = createLogger("AdminUserRoutes");
@@ -37,7 +38,7 @@ router.get(
     const validationResult = getUsersQuerySchema.safeParse(req.query);
     if (!validationResult.success) {
       return res.status(400).json({
-        message: "잘못된 요청 파라미터입니다.",
+        message: VALIDATION_MESSAGES.INVALID_REQUEST_PARAMS,
         errors: validationResult.error.errors,
       });
     }
@@ -78,7 +79,7 @@ router.get(
     // UUID 형식 검증
     if (!isValidUUID(userId)) {
       return res.status(400).json({
-        message: "잘못된 사용자 ID 형식입니다.",
+        message: COMMON_MESSAGES.INVALID_ID,
       });
     }
 
@@ -87,7 +88,7 @@ router.get(
 
     if (!userDetail) {
       return res.status(404).json({
-        message: "사용자를 찾을 수 없습니다.",
+        message: AUTH_MESSAGES.USER_NOT_FOUND,
       });
     }
 

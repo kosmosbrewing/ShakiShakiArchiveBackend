@@ -7,6 +7,7 @@ import { isAuthenticated } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
 import { cacheStrategies } from "../middleware";
 import { insertDeliveryAddressSchema } from "@shared/schema";
+import { ADDRESS_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 
@@ -39,7 +40,7 @@ router.patch("/:id", isAuthenticated, asyncHandler(async (req, res) => {
     req.body
   );
   if (!updated) {
-    return res.status(404).json({ message: "Address not found" });
+    return res.status(404).json({ message: ADDRESS_MESSAGES.NOT_FOUND });
   }
   res.json(updated);
 }));
@@ -50,7 +51,7 @@ router.delete("/:id", isAuthenticated, asyncHandler(async (req, res) => {
   const addressId = req.params.id; // UUID 문자열
 
   await storage.deleteDeliveryAddress(addressId, userId);
-  res.json({ message: "Address deleted" });
+  res.json({ message: ADDRESS_MESSAGES.DELETED });
 }));
 
 export default router;

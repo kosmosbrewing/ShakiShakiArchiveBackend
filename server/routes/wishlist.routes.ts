@@ -6,6 +6,7 @@ import { storage } from "../storage";
 import { isAuthenticated } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
 import { cacheStrategies } from "../middleware";
+import { WISHLIST_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 
@@ -22,7 +23,7 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
   const { productId } = req.body;
 
   if (!productId) {
-    return res.status(400).json({ message: "Product ID is required" });
+    return res.status(400).json({ message: WISHLIST_MESSAGES.PRODUCT_ID_REQUIRED });
   }
 
   const item = await storage.addWishlistItem(userId, productId); // UUID 문자열
@@ -35,7 +36,7 @@ router.delete("/:productId", isAuthenticated, asyncHandler(async (req, res) => {
   const productId = req.params.productId; // UUID 문자열
 
   await storage.deleteWishlistItem(userId, productId);
-  res.json({ message: "Removed from wishlist" });
+  res.json({ message: WISHLIST_MESSAGES.REMOVED });
 }));
 
 export default router;

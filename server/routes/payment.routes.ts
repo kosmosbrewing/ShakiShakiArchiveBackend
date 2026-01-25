@@ -22,6 +22,7 @@ import {
 import { confirmPaymentSchema, cancelPaymentSchema, stockReservations } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { createLogger } from "../utils/logger";
+import { ORDER_MESSAGES, AUTH_MESSAGES, PAYMENT_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 const logger = createLogger("Payment");
@@ -128,7 +129,7 @@ router.get("/client-key", (_req, res) => {
   if (!config.toss.isEnabled) {
     return res
       .status(503)
-      .json({ message: "결제 서비스가 비활성화되어 있습니다" });
+      .json({ message: PAYMENT_MESSAGES.SERVICE_DISABLED });
   }
   res.json({ clientKey: config.toss.clientKey });
 });
@@ -148,7 +149,7 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
   const validationResult = confirmPaymentSchema.safeParse(req.body);
   if (!validationResult.success) {
     return res.status(400).json({
-      message: "잘못된 요청 데이터입니다",
+      message: PAYMENT_MESSAGES.INVALID_REQUEST,
       errors: validationResult.error.flatten().fieldErrors,
     });
   }
@@ -200,7 +201,7 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
       hint: "주문 생성 API (POST /api/orders)가 호출되었는지 확인하세요",
     });
     return res.status(404).json({
-      message: "주문을 찾을 수 없습니다",
+      message: ORDER_MESSAGES.NOT_FOUND,
       code: "ORDER_NOT_FOUND",
       details: !config.isProd ? "주문 생성 API (POST /api/orders)가 호출되지 않았거나 실패했을 수 있습니다. 프론트엔드 네트워크 탭을 확인하세요." : undefined,
     });
@@ -208,14 +209,14 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
 
   // 3. 주문 소유자 검증
   if (order.userId !== userId) {
-    return res.status(403).json({ message: "권한이 없습니다" });
+    return res.status(403).json({ message: AUTH_MESSAGES.FORBIDDEN });
   }
 
   // 4. 결제 금액 검증 (중요: 클라이언트 조작 방지)
   const serverAmount = parseFloat(order.totalAmount);
   if (serverAmount !== amount) {
     logger.error("금액 불일치", { serverAmount, clientAmount: amount });
-    return res.status(400).json({ message: "결제 금액이 일치하지 않습니다" });
+    return res.status(400).json({ message: PAYMENT_MESSAGES.AMOUNT_MISMATCH });
   }
 
   // 5. 결제 가능 상태 확인
@@ -234,7 +235,7 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
     // 취소된 주문에 대한 명확한 메시지
     if (order.status === "cancelled") {
       return res.status(400).json({
-        message: "취소된 주문입니다. 새로운 주문을 생성해주세요.",
+        message: PAYMENT_MESSAGES.ORDER_CANCELLED,
         code: "ORDER_CANCELLED",
         currentStatus: order.status,
         hint: "프론트엔드에서 새로운 주문을 생성하고 결제를 다시 시도하세요.",
@@ -244,7 +245,7 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
     // 이미 결제 완료된 주문
     if (order.status === "payment_confirmed") {
       return res.status(400).json({
-        message: "이미 결제가 완료된 주문입니다.",
+        message: PAYMENT_MESSAGES.ALREADY_PAID,
         code: "ALREADY_PAID",
         currentStatus: order.status,
       });
@@ -252,7 +253,7 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
 
     // 기타 상태
     return res.status(400).json({
-      message: "결제할 수 없는 주문 상태입니다.",
+      message: PAYMENT_MESSAGES.INVALID_ORDER_STATUS,
       code: "INVALID_ORDER_STATUS",
       currentStatus: order.status,
     });
@@ -372,7 +373,7 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
 
       return res.status(409).json({
         success: false,
-        message: stockResult.error || "재고가 부족합니다",
+        message: stockResult.error || PAYMENT_MESSAGES.OUT_OF_STOCK,
         code: "INSUFFICIENT_STOCK",
         insufficientStock: stockResult.insufficientStock,
       });
@@ -389,7 +390,7 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
 
   res.json({
     success: true,
-    message: "결제가 완료되었습니다",
+    message: PAYMENT_MESSAGES.SUCCESS,
     order: updatedOrder,
     payment: {
       paymentKey: payment.paymentKey,
@@ -412,7 +413,7 @@ router.post("/:orderId/cancel", paymentRateLimiter, isAuthenticated, asyncHandle
   const validationResult = cancelPaymentSchema.safeParse(req.body);
   if (!validationResult.success) {
     return res.status(400).json({
-      message: "잘못된 요청 데이터입니다",
+      message: PAYMENT_MESSAGES.INVALID_REQUEST,
       errors: validationResult.error.flatten().fieldErrors,
     });
   }
@@ -423,18 +424,18 @@ router.post("/:orderId/cancel", paymentRateLimiter, isAuthenticated, asyncHandle
   // 2. 주문 조회 (UUID 기반)
   const order = await storage.getOrder(orderId);
   if (!order) {
-    return res.status(404).json({ message: "주문을 찾을 수 없습니다" });
+    return res.status(404).json({ message: ORDER_MESSAGES.NOT_FOUND });
   }
 
   // 3. 권한 검증 (본인 또는 관리자)
   const user = await storage.getUser(userId);
   if (order.userId !== userId && !user?.isAdmin) {
-    return res.status(403).json({ message: "권한이 없습니다" });
+    return res.status(403).json({ message: AUTH_MESSAGES.FORBIDDEN });
   }
 
   // 4. 결제 키 확인
   if (!order.paymentKey) {
-    return res.status(400).json({ message: "결제 정보가 없습니다" });
+    return res.status(400).json({ message: ORDER_MESSAGES.NO_PAYMENT_INFO });
   }
 
   // 5. 취소 가능 상태 확인
@@ -469,7 +470,7 @@ router.post("/:orderId/cancel", paymentRateLimiter, isAuthenticated, asyncHandle
       if (cancelAmount !== undefined) {
         logger.warn("네이버페이 부분 취소 시도 차단", { orderId, cancelAmount });
         return res.status(400).json({
-          message: "네이버페이는 부분 취소를 지원하지 않습니다. 전체 환불만 가능합니다.",
+          message: PAYMENT_MESSAGES.NAVERPAY_NO_PARTIAL,
           code: "NAVERPAY_PARTIAL_CANCEL_NOT_SUPPORTED",
         });
       }
@@ -540,7 +541,7 @@ router.post("/:orderId/cancel", paymentRateLimiter, isAuthenticated, asyncHandle
   logger.info("결제 취소 완료", { orderId });
 
   res.json({
-    message: "결제가 취소되었습니다",
+    message: PAYMENT_MESSAGES.CANCEL_SUCCESS,
     order: updatedOrder,
     refund: {
       cancelAmount: payment.cancels?.[0]?.cancelAmount,
@@ -561,13 +562,13 @@ router.get("/:orderId/status", isAuthenticated, asyncHandler(async (req, res) =>
   // 주문 조회 (UUID 기반)
   const order = await storage.getOrder(orderId);
   if (!order) {
-    return res.status(404).json({ message: "주문을 찾을 수 없습니다" });
+    return res.status(404).json({ message: ORDER_MESSAGES.NOT_FOUND });
   }
 
   // 권한 검증
   const user = await storage.getUser(userId);
   if (order.userId !== userId && !user?.isAdmin) {
-    return res.status(403).json({ message: "권한이 없습니다" });
+    return res.status(403).json({ message: AUTH_MESSAGES.FORBIDDEN });
   }
 
   // 결제 키가 없으면 DB 상태만 반환

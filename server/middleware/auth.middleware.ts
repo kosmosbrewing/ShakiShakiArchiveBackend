@@ -48,16 +48,18 @@ export function invalidateUserCache(userId: string): void {
 export function isAuthenticated(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   // 디버깅: 세션 상태 확인 (임시 - 문제 해결 후 제거)
-  logger.error("[DEBUG] 인증 체크", {
+  logger.debug("인증 체크", {
     path: req.path,
     hasSession: !!req.session,
     sessionId: req.session?.id ? req.session.id.slice(0, 8) + "..." : "(없음)",
     userId: req.session?.userId || "(없음)",
     hasCookie: !!req.headers.cookie,
-    cookiePreview: req.headers.cookie ? req.headers.cookie.slice(0, 50) + "..." : "(없음)",
+    cookiePreview: req.headers.cookie
+      ? req.headers.cookie.slice(0, 50) + "..."
+      : "(없음)",
     secure: req.secure,
     protocol: req.protocol,
     xForwardedProto: req.headers["x-forwarded-proto"] || "(없음)",
@@ -73,11 +75,7 @@ export function isAuthenticated(
  * 관리자 권한 체크 미들웨어
  * - 캐싱 적용으로 DB 조회 최소화
  */
-export async function isAdmin(
-  req: Request,
-  res: Response,
-  next: NextFunction
-) {
+export async function isAdmin(req: Request, res: Response, next: NextFunction) {
   try {
     const userId = req.session?.userId;
     if (!userId) {
@@ -107,7 +105,9 @@ export async function isAdmin(
     req.user = cachedUser;
     next();
   } catch (error) {
-    logger.error("관리자 권한 확인 실패", { error: error instanceof Error ? error.message : String(error) });
+    logger.error("관리자 권한 확인 실패", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     res.status(500).json({ message: AUTH_MESSAGES.SERVER_ERROR });
   }
 }
@@ -119,7 +119,7 @@ export async function isAdmin(
 export async function populateUser(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   try {
     const userId = req.session?.userId;

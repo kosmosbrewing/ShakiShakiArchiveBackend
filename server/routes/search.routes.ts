@@ -5,6 +5,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../middleware/error.middleware";
 import { createLogger } from "../utils/logger";
+import { SEARCH_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 const logger = createLogger("AddressSearch");
@@ -49,7 +50,7 @@ router.get("/address", asyncHandler(async (req, res) => {
   const KAKAO_API_KEY = process.env.KAKAO_REST_API_KEY;
   if (!KAKAO_API_KEY) {
     return res.status(500).json({
-      message: "카카오 API 키가 설정되지 않았습니다",
+      message: SEARCH_MESSAGES.KAKAO_API_NOT_CONFIGURED,
     });
   }
 
@@ -79,7 +80,7 @@ router.get("/address", asyncHandler(async (req, res) => {
     const errorText = await response.text();
     logger.error("카카오 API 오류", { status: response.status, error: errorText });
     return res.status(response.status).json({
-      message: "주소 검색에 실패했습니다",
+      message: SEARCH_MESSAGES.ADDRESS_SEARCH_FAILED,
     });
   }
 
@@ -126,7 +127,7 @@ router.get("/keyword", asyncHandler(async (req, res) => {
   const KAKAO_API_KEY = process.env.KAKAO_REST_API_KEY;
   if (!KAKAO_API_KEY) {
     return res.status(500).json({
-      message: "카카오 API 키가 설정되지 않았습니다",
+      message: SEARCH_MESSAGES.KAKAO_API_NOT_CONFIGURED,
     });
   }
 
@@ -160,7 +161,7 @@ router.get("/keyword", asyncHandler(async (req, res) => {
     const errorText = await response.text();
     logger.error("카카오 API 오류 (키워드)", { status: response.status, error: errorText });
     return res.status(response.status).json({
-      message: "장소 검색에 실패했습니다",
+      message: SEARCH_MESSAGES.PLACE_SEARCH_FAILED,
     });
   }
 

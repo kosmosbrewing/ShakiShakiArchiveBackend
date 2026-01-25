@@ -20,6 +20,7 @@ import {
   KakaoOAuthError,
 } from "../services/kakao.service";
 import { createLogger } from "../utils/logger";
+import { AUTH_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 const logger = createLogger("OAuth");
@@ -48,7 +49,7 @@ router.get(["/naver", "/naver/login"], asyncHandler(async (req, res) => {
   // 네이버 OAuth가 비활성화된 경우
   if (!config.naver.isEnabled) {
     return res.status(503).json({
-      message: "네이버 로그인이 설정되지 않았습니다",
+      message: AUTH_MESSAGES.NAVER_LOGIN_NOT_CONFIGURED,
     });
   }
 
@@ -194,7 +195,7 @@ router.get(["/kakao", "/kakao/login"], asyncHandler(async (req, res) => {
   // 카카오 OAuth가 비활성화된 경우
   if (!config.kakao.isEnabled) {
     return res.status(503).json({
-      message: "카카오 로그인이 설정되지 않았습니다",
+      message: AUTH_MESSAGES.KAKAO_LOGIN_NOT_CONFIGURED,
     });
   }
 

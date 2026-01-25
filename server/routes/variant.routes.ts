@@ -5,6 +5,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
 import { asyncHandler } from "../middleware/error.middleware";
+import { VALIDATION_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 
@@ -19,7 +20,7 @@ router.get(
     const parseResult = uuidSchema.safeParse(req.params.id);
     if (!parseResult.success) {
       return res.status(400).json({
-        message: "유효하지 않은 variant ID 형식입니다",
+        message: VALIDATION_MESSAGES.VARIANT_ID_FORMAT_INVALID,
         error: parseResult.error.errors[0].message,
       });
     }

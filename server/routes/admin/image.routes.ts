@@ -12,6 +12,7 @@ import {
   isCloudinaryConfigured,
 } from "../../config/cloudinary";
 import { z } from "zod";
+import { IMAGE_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 
@@ -36,7 +37,7 @@ const deleteMultipleSchema = z.object({
 const checkCloudinaryConfig = (req: Request, res: Response, next: Function) => {
   if (!isCloudinaryConfigured) {
     return res.status(503).json({
-      message: "이미지 업로드 서비스가 설정되지 않았습니다.",
+      message: IMAGE_MESSAGES.SERVICE_NOT_CONFIGURED,
       error: "CLOUDINARY_NOT_CONFIGURED",
     });
   }
@@ -53,7 +54,7 @@ router.post(
   upload.single("image"),
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.file) {
-      return res.status(400).json({ message: "이미지 파일이 필요합니다." });
+      return res.status(400).json({ message: IMAGE_MESSAGES.FILE_REQUIRED });
     }
 
     const result = await uploadToCloudinary(req.file.buffer, {
@@ -61,7 +62,7 @@ router.post(
     });
 
     res.json({
-      message: "이미지 업로드 성공",
+      message: IMAGE_MESSAGES.UPLOAD_SUCCESS,
       image: result,
     });
   })
@@ -79,7 +80,7 @@ router.post(
     const files = req.files as Express.Multer.File[];
 
     if (!files || files.length === 0) {
-      return res.status(400).json({ message: "이미지 파일이 필요합니다." });
+      return res.status(400).json({ message: IMAGE_MESSAGES.FILE_REQUIRED });
     }
 
     // 병렬로 모든 이미지 업로드
@@ -110,7 +111,7 @@ router.post(
     const files = req.files as Express.Multer.File[];
 
     if (!files || files.length === 0) {
-      return res.status(400).json({ message: "이미지 파일이 필요합니다." });
+      return res.status(400).json({ message: IMAGE_MESSAGES.FILE_REQUIRED });
     }
 
     // 병렬로 모든 이미지 업로드 (상세 이미지용 폴더)
@@ -141,7 +142,7 @@ router.delete(
 
     await deleteFromCloudinary(publicId);
 
-    res.json({ message: "이미지 삭제 성공" });
+    res.json({ message: IMAGE_MESSAGES.DELETE_SUCCESS });
   })
 );
 

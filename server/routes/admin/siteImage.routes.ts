@@ -14,6 +14,7 @@ import {
   type SiteImageType,
 } from "@shared/schema";
 import { z } from "zod";
+import { IMAGE_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 
@@ -40,7 +41,7 @@ router.get(
     if (typeQuery) {
       if (!siteImageTypeEnum.includes(typeQuery as SiteImageType)) {
         return res.status(400).json({
-          message: "유효하지 않은 이미지 타입입니다. (hero 또는 marquee)",
+          message: IMAGE_MESSAGES.INVALID_TYPE,
         });
       }
       type = typeQuery as SiteImageType;
@@ -67,12 +68,12 @@ router.get(
   asyncHandler(async (req: Request, res: Response) => {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) {
-      return res.status(400).json({ message: "유효하지 않은 이미지 ID입니다." });
+      return res.status(400).json({ message: IMAGE_MESSAGES.INVALID_ID });
     }
 
     const image = await storage.getSiteImage(id);
     if (!image) {
-      return res.status(404).json({ message: "이미지를 찾을 수 없습니다." });
+      return res.status(404).json({ message: IMAGE_MESSAGES.NOT_FOUND });
     }
 
     res.json(image);
@@ -91,7 +92,7 @@ router.post(
     const result = createSiteImageSchema.safeParse(req.body);
     if (!result.success) {
       return res.status(400).json({
-        message: "입력값이 유효하지 않습니다.",
+        message: IMAGE_MESSAGES.INVALID_INPUT,
         errors: result.error.errors,
       });
     }
@@ -116,7 +117,7 @@ router.post(
     });
 
     res.status(201).json({
-      message: "이미지가 추가되었습니다.",
+      message: IMAGE_MESSAGES.ADDED,
       image: newImage,
     });
   })
@@ -133,19 +134,19 @@ router.put(
   asyncHandler(async (req: Request, res: Response) => {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) {
-      return res.status(400).json({ message: "유효하지 않은 이미지 ID입니다." });
+      return res.status(400).json({ message: IMAGE_MESSAGES.INVALID_ID });
     }
 
     // 이미지 존재 여부 확인
     const existing = await storage.getSiteImage(id);
     if (!existing) {
-      return res.status(404).json({ message: "이미지를 찾을 수 없습니다." });
+      return res.status(404).json({ message: IMAGE_MESSAGES.NOT_FOUND });
     }
 
     const result = updateSiteImageSchema.safeParse(req.body);
     if (!result.success) {
       return res.status(400).json({
-        message: "입력값이 유효하지 않습니다.",
+        message: IMAGE_MESSAGES.INVALID_INPUT,
         errors: result.error.errors,
       });
     }
@@ -154,7 +155,7 @@ router.put(
     const updated = await storage.updateSiteImage(id, data);
 
     res.json({
-      message: "이미지가 수정되었습니다.",
+      message: IMAGE_MESSAGES.UPDATED,
       image: updated,
     });
   })
@@ -171,18 +172,18 @@ router.delete(
   asyncHandler(async (req: Request, res: Response) => {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) {
-      return res.status(400).json({ message: "유효하지 않은 이미지 ID입니다." });
+      return res.status(400).json({ message: IMAGE_MESSAGES.INVALID_ID });
     }
 
     // 이미지 존재 여부 확인
     const existing = await storage.getSiteImage(id);
     if (!existing) {
-      return res.status(404).json({ message: "이미지를 찾을 수 없습니다." });
+      return res.status(404).json({ message: IMAGE_MESSAGES.NOT_FOUND });
     }
 
     await storage.deleteSiteImage(id);
 
-    res.json({ message: "이미지가 삭제되었습니다." });
+    res.json({ message: IMAGE_MESSAGES.DELETED });
   })
 );
 
@@ -203,7 +204,7 @@ router.patch(
     const result = reorderSchema.safeParse(req.body);
     if (!result.success) {
       return res.status(400).json({
-        message: "입력값이 유효하지 않습니다.",
+        message: IMAGE_MESSAGES.INVALID_INPUT,
         errors: result.error.errors,
       });
     }
@@ -220,7 +221,7 @@ router.patch(
     const images = await storage.getSiteImages(type);
 
     res.json({
-      message: "이미지 순서가 변경되었습니다.",
+      message: IMAGE_MESSAGES.ORDER_CHANGED,
       images,
     });
   })

@@ -15,6 +15,8 @@ import {
   ORDER_STATUS,
   ORDER_MESSAGES,
   AUTH_MESSAGES,
+  SUCCESS_MESSAGES,
+  PRODUCT_MESSAGES,
   TOSS_PAYMENT_STATUS,
   STOCK_MESSAGES,
 } from "../constants";
@@ -70,7 +72,7 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
     if (!product.isAvailable) {
       logger.warn("비활성화된 상품 주문 시도", { userId, productId, productName: product.name });
       return res.status(400).json({
-        message: "현재 판매하지 않는 상품입니다",
+        message: PRODUCT_MESSAGES.NOT_AVAILABLE,
         code: "PRODUCT_NOT_AVAILABLE"
       });
     }
@@ -80,7 +82,7 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
     if (price <= 0) {
       logger.error("잘못된 상품 가격 감지", { userId, productId, price });
       return res.status(400).json({
-        message: "상품 가격 오류가 발생했습니다",
+        message: PRODUCT_MESSAGES.INVALID_PRICE,
         code: "INVALID_PRODUCT_PRICE"
       });
     }
@@ -97,7 +99,7 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
       if (!variant.isAvailable) {
         logger.warn("비활성화된 옵션 주문 시도", { userId, productId, variantId, size: variant.size });
         return res.status(400).json({
-          message: "선택하신 옵션은 현재 판매하지 않습니다",
+          message: PRODUCT_MESSAGES.VARIANT_NOT_AVAILABLE,
           code: "VARIANT_NOT_AVAILABLE"
         });
       }
@@ -173,7 +175,7 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
           price
         });
         return res.status(400).json({
-          message: "일부 상품의 가격 오류가 발생했습니다. 장바구니를 다시 확인해주세요.",
+          message: ORDER_MESSAGES.PRICE_ERROR_CHECK_CART,
           code: "INVALID_CART_ITEM_PRICE"
         });
       }
@@ -243,7 +245,7 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
       itemCount: orderItemsData.length
     });
     return res.status(400).json({
-      message: "주문 금액이 올바르지 않습니다",
+      message: ORDER_MESSAGES.AMOUNT_INVALID,
       code: "INVALID_TOTAL_AMOUNT"
     });
   }
@@ -328,14 +330,14 @@ router.get("/", isAuthenticated, cacheStrategies.private, asyncHandler(async (re
 router.get("/:id", isAuthenticated, cacheStrategies.private, asyncHandler(async (req, res) => {
   const order = await storage.getOrder(req.params.id); // UUID 문자열
   if (!order) {
-    return res.status(404).json({ message: "Order not found" });
+    return res.status(404).json({ message: ORDER_MESSAGES.NOT_FOUND });
   }
 
   // 본인 주문 확인
   const userId = req.session.userId!;
   const user = await storage.getUser(userId);
   if (order.userId !== userId && !user?.isAdmin) {
-    return res.status(403).json({ message: "Forbidden" });
+    return res.status(403).json({ message: AUTH_MESSAGES.FORBIDDEN });
   }
 
   res.json(order);
@@ -372,7 +374,7 @@ router.put("/:id/status/paying", isAuthenticated, asyncHandler(async (req, res) 
       targetStatus: ORDER_STATUS.PAYING,
     });
     return res.status(400).json({
-      message: "결제 진행 상태로 변경할 수 없습니다.",
+      message: ORDER_MESSAGES.CANNOT_CHANGE_TO_PAYING,
       code: "INVALID_STATUS_TRANSITION",
       currentStatus: order.status,
     });
@@ -397,7 +399,7 @@ router.put("/:id/status/paying", isAuthenticated, asyncHandler(async (req, res) 
       await client.query("ROLLBACK");
       logger.warn("원자적 상태 업데이트 실패 (경쟁 조건)", { orderId, userId });
       return res.status(409).json({
-        message: "주문 상태가 이미 변경되었습니다.",
+        message: ORDER_MESSAGES.STATUS_ALREADY_CHANGED,
         code: "CONCURRENT_UPDATE_CONFLICT",
       });
     }
@@ -415,7 +417,7 @@ router.put("/:id/status/paying", isAuthenticated, asyncHandler(async (req, res) 
     logger.info("주문 상태 변경: paying (주문 + 아이템)", { orderId, userId });
 
     res.json({
-      message: "결제 진행 상태로 변경되었습니다.",
+      message: ORDER_MESSAGES.CHANGED_TO_PAYING,
       order: orderResult.rows[0],
     });
   } catch (error) {
@@ -444,7 +446,7 @@ router.post("/:id/cleanup", isAuthenticated, asyncHandler(async (req, res) => {
     const order = await storage.getOrder(orderId);
     if (!order) {
       // 주문이 없어도 성공 응답 (이미 정리되었거나 없는 경우)
-      return res.json({ success: true, message: "주문이 존재하지 않습니다" });
+      return res.json({ success: true, message: ORDER_MESSAGES.NOT_EXISTS });
     }
 
     // 2. 권한 검증
@@ -470,11 +472,11 @@ router.post("/:id/cleanup", isAuthenticated, asyncHandler(async (req, res) => {
       logger.info("cleanup 요청 무시 (결제 진행 중)", {
         orderId,
         status: order.status,
-        message: "결제창이 열려 있어 보호합니다",
+        message: ORDER_MESSAGES.PAYMENT_PROTECTED,
       });
       return res.json({
         success: true,
-        message: "결제 진행 중입니다. 결제를 완료해주세요."
+        message: ORDER_MESSAGES.PAYMENT_IN_PROGRESS
       });
     }
 
@@ -493,7 +495,7 @@ router.post("/:id/cleanup", isAuthenticated, asyncHandler(async (req, res) => {
     logger.info("cleanup 실행 (pending_payment 상태)", {
       orderId,
       status: order.status,
-      message: "결제창 열기 전 이탈 - 재고 복구 시작",
+      message: ORDER_MESSAGES.STOCK_RESTORE_STARTED,
     });
 
     // 5. 재고 복구 + 주문 취소 (트랜잭션)
@@ -511,7 +513,7 @@ router.post("/:id/cleanup", isAuthenticated, asyncHandler(async (req, res) => {
       externalOrderId: order.externalOrderId,
     });
 
-    res.json({ success: true, message: "재고 복구 완료" });
+    res.json({ success: true, message: SUCCESS_MESSAGES.STOCK_RESTORED });
   } catch (error) {
     logger.error("cleanup 실패 (Cron이 나중에 처리)", {
       orderId,
@@ -519,7 +521,7 @@ router.post("/:id/cleanup", isAuthenticated, asyncHandler(async (req, res) => {
     });
 
     // 에러가 발생해도 200 응답 (sendBeacon은 응답을 무시하므로)
-    res.json({ success: false, message: "cleanup 실패, Cron이 처리합니다" });
+    res.json({ success: false, message: ORDER_MESSAGES.CLEANUP_FAILED });
   }
 }));
 
@@ -571,7 +573,7 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
 
     if (!updatedOrder) {
       return res.status(500).json({
-        message: "주문 취소 중 오류가 발생했습니다.",
+        message: ORDER_MESSAGES.CANCEL_ERROR,
         code: "CANCEL_FAILED",
       });
     }
@@ -605,7 +607,7 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
       itemIds: req.body.itemIds
     });
     return res.status(400).json({
-      message: "부분 취소는 지원하지 않습니다. 전체 환불만 가능합니다.",
+      message: ORDER_MESSAGES.NO_PARTIAL_CANCEL,
       code: "PARTIAL_CANCEL_NOT_SUPPORTED",
     });
   }
@@ -832,12 +834,12 @@ router.delete("/:id", isAuthenticated, asyncHandler(async (req, res) => {
   // 1. 주문 조회
   const order = await storage.getOrder(orderId);
   if (!order) {
-    return res.status(404).json({ message: "주문을 찾을 수 없습니다." });
+    return res.status(404).json({ message: ORDER_MESSAGES.NOT_FOUND });
   }
 
   // 2. 권한 검증 (본인만 삭제 가능)
   if (order.userId !== userId) {
-    return res.status(403).json({ message: "권한이 없습니다." });
+    return res.status(403).json({ message: AUTH_MESSAGES.FORBIDDEN });
   }
 
   // 3. 🔒 임시 조치: 주문 삭제 기능 완전 차단
@@ -850,7 +852,7 @@ router.delete("/:id", isAuthenticated, asyncHandler(async (req, res) => {
   });
 
   return res.status(400).json({
-    message: "주문 삭제 기능이 비활성화되었습니다. 주문 취소를 이용해주세요.",
+    message: ORDER_MESSAGES.DELETE_DISABLED,
     code: "DELETE_DISABLED",
     cancelEndpoint: `/api/orders/${orderId}/cancel`,
   });
@@ -882,7 +884,7 @@ router.delete("/:id", isAuthenticated, asyncHandler(async (req, res) => {
   if (deleted.length === 0) {
     logger.warn("원자적 삭제 실패 (상태가 변경됨)", { orderId, userId });
     return res.status(409).json({
-      message: "주문 상태가 변경되어 삭제할 수 없습니다.",
+      message: ORDER_MESSAGES.STATUS_CHANGED_CANNOT_DELETE,
       code: "ORDER_STATUS_CHANGED",
     });
   }
@@ -890,7 +892,7 @@ router.delete("/:id", isAuthenticated, asyncHandler(async (req, res) => {
   logger.info("주문 삭제 완료", { orderId, userId });
 
   res.json({
-    message: "주문이 삭제되었습니다.",
+    message: ORDER_MESSAGES.DELETED,
   });
 }));
 

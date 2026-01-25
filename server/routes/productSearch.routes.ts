@@ -7,6 +7,7 @@ import { storage } from "../storage";
 import { isAdmin, cacheStrategies, etagMiddleware } from "../middleware";
 import { asyncHandler } from "../middleware/error.middleware";
 import { createLogger } from "../utils/logger";
+import { SUCCESS_MESSAGES, SEARCH_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 const logger = createLogger("Search");
@@ -111,7 +112,7 @@ router.get("/stats", isAdmin, cacheStrategies.admin, asyncHandler(async (_req, r
   if (!meilisearchService.isEnabled()) {
     return res.json({
       enabled: false,
-      message: "Meilisearch가 비활성화되어 있습니다",
+      message: SEARCH_MESSAGES.MEILISEARCH_DISABLED,
     });
   }
 
@@ -130,7 +131,7 @@ router.get("/stats", isAdmin, cacheStrategies.admin, asyncHandler(async (_req, r
 router.post("/reindex", isAdmin, asyncHandler(async (_req, res) => {
   if (!meilisearchService.isEnabled()) {
     return res.status(400).json({
-      message: "Meilisearch가 비활성화되어 있습니다",
+      message: SEARCH_MESSAGES.MEILISEARCH_DISABLED,
     });
   }
 
@@ -147,7 +148,7 @@ router.post("/reindex", isAdmin, asyncHandler(async (_req, res) => {
   await meilisearchService.rebuildIndex(products, categoryMap);
 
   res.json({
-    message: "재인덱싱이 시작되었습니다",
+    message: SUCCESS_MESSAGES.REINDEX_STARTED,
     totalProducts: products.length,
   });
 }));

@@ -12,6 +12,7 @@ import {
   generateSearchSeo,
   generateProductListSeo,
 } from "../utils/seo";
+import { PRODUCT_MESSAGES, CATEGORY_MESSAGES, VALIDATION_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 
@@ -64,7 +65,7 @@ router.get("/products/:idOrSlug", cacheStrategies.staticData, asyncHandler(async
   }
 
   if (!product) {
-    return res.status(404).json({ message: "상품을 찾을 수 없습니다" });
+    return res.status(404).json({ message: PRODUCT_MESSAGES.NOT_FOUND });
   }
 
   // 카테고리명 조회 (브레드크럼브용)
@@ -99,7 +100,7 @@ router.get("/categories/:idOrSlug", cacheStrategies.staticData, asyncHandler(asy
   }
 
   if (!category) {
-    return res.status(404).json({ message: "카테고리를 찾을 수 없습니다" });
+    return res.status(404).json({ message: CATEGORY_MESSAGES.NOT_FOUND });
   }
 
   // 해당 카테고리의 상품 목록 조회
@@ -120,7 +121,7 @@ router.get("/search", cacheStrategies.productList, asyncHandler(async (req, res)
   const query = req.query.q as string;
 
   if (!query || query.trim() === "") {
-    return res.status(400).json({ message: "검색어(q)가 필요합니다" });
+    return res.status(400).json({ message: VALIDATION_MESSAGES.SEARCH_QUERY_REQUIRED });
   }
 
   // 검색 결과 수 조회

@@ -10,6 +10,7 @@ import { type InquiryType } from "@shared/schema";
 import { maskUserForPublicView } from "../../utils/masking";
 import { isValidUUID, optionalUuidSchema } from "../../utils/validation";
 import { z } from "zod";
+import { INQUIRY_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 
@@ -39,7 +40,7 @@ router.get(
     const validationResult = getInquiriesQuerySchema.safeParse(req.query);
     if (!validationResult.success) {
       return res.status(400).json({
-        message: "잘못된 요청 파라미터입니다.",
+        message: INQUIRY_MESSAGES.INVALID_PARAMS,
         errors: validationResult.error.errors,
       });
     }
@@ -87,13 +88,13 @@ router.get(
 
     // UUID 형식 검증
     if (!isValidUUID(id)) {
-      return res.status(400).json({ message: "잘못된 문의 ID 형식입니다" });
+      return res.status(400).json({ message: INQUIRY_MESSAGES.INVALID_ID });
     }
 
     const inquiry = await storage.getInquiry(id);
 
     if (!inquiry) {
-      return res.status(404).json({ message: "문의를 찾을 수 없습니다" });
+      return res.status(404).json({ message: INQUIRY_MESSAGES.NOT_FOUND });
     }
 
     // 관리자용 조회 API: 일반 사용자는 모두 마스킹, 관리자는 이름만 공개

@@ -6,6 +6,7 @@ import { storage } from "../storage";
 import { asyncHandler } from "../middleware/error.middleware";
 import { cacheStrategies, etagMiddleware } from "../middleware";
 import { createLogger } from "../utils/logger";
+import { PRODUCT_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 const logger = createLogger("Product");
@@ -45,7 +46,7 @@ router.get("/", etagMiddleware(), cacheStrategies.productList, asyncHandler(asyn
 router.get("/:id", cacheStrategies.productDetail, asyncHandler(async (req, res) => {
   const product = await storage.getProduct(req.params.id); // UUID 문자열
   if (!product) {
-    return res.status(404).json({ message: "Product not found" });
+    return res.status(404).json({ message: PRODUCT_MESSAGES.NOT_FOUND });
   }
   res.json(product);
 }));

@@ -7,6 +7,7 @@ import { storage } from "../storage";
 import { asyncHandler } from "../middleware/error.middleware";
 import { cacheStrategies, etagMiddleware } from "../middleware";
 import { siteImageTypeEnum, type SiteImageType } from "@shared/schema";
+import { IMAGE_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 
@@ -22,7 +23,7 @@ router.get("/", etagMiddleware(), cacheStrategies.siteImages, asyncHandler(async
   if (typeQuery) {
     if (!siteImageTypeEnum.includes(typeQuery as SiteImageType)) {
       return res.status(400).json({
-        message: "유효하지 않은 이미지 타입입니다. (hero 또는 marquee)",
+        message: IMAGE_MESSAGES.INVALID_SITE_IMAGE_TYPE,
       });
     }
     type = typeQuery as SiteImageType;

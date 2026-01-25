@@ -12,6 +12,7 @@ import {
   TossPaymentError,
 } from "../../services/toss.service";
 import { createLogger } from "../../utils/logger";
+import { ORDER_MESSAGES, PAYMENT_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 const logger = createLogger("AdminPayment");
@@ -23,7 +24,7 @@ const logger = createLogger("AdminPayment");
 router.get("/:orderId", isAuthenticated, isAdmin, cacheStrategies.admin, asyncHandler(async (req, res) => {
   const order = await storage.getOrder(req.params.orderId); // UUID 문자열
   if (!order) {
-    return res.status(404).json({ message: "주문을 찾을 수 없습니다" });
+    return res.status(404).json({ message: ORDER_MESSAGES.NOT_FOUND });
   }
 
   let paymentInfo = null;
@@ -50,11 +51,11 @@ router.post("/:orderId/cancel", isAuthenticated, isAdmin, asyncHandler(async (re
   const order = await storage.getOrder(req.params.orderId); // UUID 문자열
 
   if (!order) {
-    return res.status(404).json({ message: "주문을 찾을 수 없습니다" });
+    return res.status(404).json({ message: ORDER_MESSAGES.NOT_FOUND });
   }
 
   if (!order.paymentKey) {
-    return res.status(400).json({ message: "결제 정보가 없습니다" });
+    return res.status(400).json({ message: ORDER_MESSAGES.NO_PAYMENT_INFO });
   }
 
   // PG사 결제 취소 API 호출 (현재 토스페이먼츠만 지원)
@@ -96,7 +97,7 @@ router.post("/:orderId/cancel", isAuthenticated, isAdmin, asyncHandler(async (re
   logger.info("결제 취소 완료 (관리자)", { orderId: order.id });
 
   res.json({
-    message: "결제가 취소되었습니다",
+    message: PAYMENT_MESSAGES.CANCEL_SUCCESS,
     order: updatedOrder,
     payment,
   });

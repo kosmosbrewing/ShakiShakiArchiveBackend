@@ -13,6 +13,7 @@ import {
 import { sanitizeUserObject, maskUserForPublicView, maskUserForInquiryView } from "../utils/masking";
 import { isValidUUID, optionalUuidSchema } from "../utils/validation";
 import { z } from "zod";
+import { INQUIRY_MESSAGES, PRODUCT_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 
@@ -35,7 +36,7 @@ router.get("/", asyncHandler(async (req, res) => {
   const validationResult = getInquiriesQuerySchema.safeParse(req.query);
   if (!validationResult.success) {
     return res.status(400).json({
-      message: "잘못된 요청 파라미터입니다.",
+      message: INQUIRY_MESSAGES.INVALID_PARAMS,
       errors: validationResult.error.errors,
     });
   }
@@ -86,20 +87,20 @@ router.get("/:id", populateUser, asyncHandler(async (req, res) => {
 
   // UUID 형식 검증
   if (!isValidUUID(id)) {
-    return res.status(400).json({ message: "잘못된 문의 ID 형식입니다" });
+    return res.status(400).json({ message: INQUIRY_MESSAGES.INVALID_ID });
   }
 
   const inquiry = await storage.getInquiry(id);
 
   if (!inquiry) {
-    return res.status(404).json({ message: "문의를 찾을 수 없습니다" });
+    return res.status(404).json({ message: INQUIRY_MESSAGES.NOT_FOUND });
   }
 
   // 비밀글 접근 권한 체크
   if (inquiry.isPrivate && inquiry.userId !== userId) {
     // 관리자인지 확인 (캐시된 정보 사용)
     if (!req.user?.isAdmin) {
-      return res.status(403).json({ message: "비밀글은 작성자만 조회할 수 있습니다" });
+      return res.status(403).json({ message: INQUIRY_MESSAGES.PRIVATE_ACCESS_DENIED });
     }
   }
 
@@ -151,7 +152,7 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
   const parseResult = createInquirySchema.safeParse(req.body);
   if (!parseResult.success) {
     return res.status(400).json({
-      message: "입력값이 올바르지 않습니다",
+      message: INQUIRY_MESSAGES.INVALID_INPUT,
       errors: parseResult.error.flatten().fieldErrors,
     });
   }
@@ -162,7 +163,7 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
   if (productId) {
     const product = await storage.getProduct(productId);
     if (!product) {
-      return res.status(404).json({ message: "상품을 찾을 수 없습니다" });
+      return res.status(404).json({ message: PRODUCT_MESSAGES.NOT_FOUND });
     }
   }
 
@@ -185,24 +186,24 @@ router.delete("/:id", isAuthenticated, asyncHandler(async (req, res) => {
 
   // UUID 형식 검증
   if (!isValidUUID(id)) {
-    return res.status(400).json({ message: "잘못된 문의 ID 형식입니다" });
+    return res.status(400).json({ message: INQUIRY_MESSAGES.INVALID_ID });
   }
 
   const inquiry = await storage.getInquiry(id);
 
   if (!inquiry) {
-    return res.status(404).json({ message: "문의를 찾을 수 없습니다" });
+    return res.status(404).json({ message: INQUIRY_MESSAGES.NOT_FOUND });
   }
 
   // 본인 확인 (관리자도 삭제 가능)
   const user = await storage.getUser(userId);
   if (inquiry.userId !== userId && !user?.isAdmin) {
-    return res.status(403).json({ message: "본인의 문의만 삭제할 수 있습니다" });
+    return res.status(403).json({ message: INQUIRY_MESSAGES.DELETE_FORBIDDEN });
   }
 
   await storage.deleteInquiry(id);
 
-  res.json({ message: "문의가 삭제되었습니다" });
+  res.json({ message: INQUIRY_MESSAGES.DELETED });
 }));
 
 // ------------------------------------------------------------------
@@ -216,20 +217,20 @@ router.post("/:id/replies", isAdmin, asyncHandler(async (req, res) => {
 
   // UUID 형식 검증
   if (!isValidUUID(inquiryId)) {
-    return res.status(400).json({ message: "잘못된 문의 ID 형식입니다" });
+    return res.status(400).json({ message: INQUIRY_MESSAGES.INVALID_ID });
   }
 
   // 문의 존재 확인
   const inquiry = await storage.getInquiry(inquiryId);
   if (!inquiry) {
-    return res.status(404).json({ message: "문의를 찾을 수 없습니다" });
+    return res.status(404).json({ message: INQUIRY_MESSAGES.NOT_FOUND });
   }
 
   // 입력값 검증
   const parseResult = createInquiryReplySchema.safeParse(req.body);
   if (!parseResult.success) {
     return res.status(400).json({
-      message: "입력값이 올바르지 않습니다",
+      message: INQUIRY_MESSAGES.INVALID_INPUT,
       errors: parseResult.error.flatten().fieldErrors,
     });
   }
@@ -252,17 +253,17 @@ router.patch("/:id/status", isAdmin, asyncHandler(async (req, res) => {
 
   // UUID 형식 검증
   if (!isValidUUID(id)) {
-    return res.status(400).json({ message: "잘못된 문의 ID 형식입니다" });
+    return res.status(400).json({ message: INQUIRY_MESSAGES.INVALID_ID });
   }
 
   if (!status || !["pending", "answered", "closed"].includes(status)) {
-    return res.status(400).json({ message: "유효한 상태값을 입력해주세요" });
+    return res.status(400).json({ message: INQUIRY_MESSAGES.INVALID_STATUS });
   }
 
   const updated = await storage.updateInquiryStatus(id, status);
 
   if (!updated) {
-    return res.status(404).json({ message: "문의를 찾을 수 없습니다" });
+    return res.status(404).json({ message: INQUIRY_MESSAGES.NOT_FOUND });
   }
 
   res.json(updated);
@@ -275,35 +276,35 @@ router.delete("/:inquiryId/replies/:replyId", isAdmin, asyncHandler(async (req, 
 
   // UUID 형식 검증
   if (!isValidUUID(inquiryId)) {
-    return res.status(400).json({ message: "잘못된 문의 ID 형식입니다" });
+    return res.status(400).json({ message: INQUIRY_MESSAGES.INVALID_ID });
   }
 
   // 답변 ID 유효성 검사
   if (isNaN(replyIdNum)) {
-    return res.status(400).json({ message: "유효한 답변 ID가 필요합니다" });
+    return res.status(400).json({ message: INQUIRY_MESSAGES.INVALID_REPLY_ID });
   }
 
   // 1. 문의 존재 확인
   const inquiry = await storage.getInquiry(inquiryId);
   if (!inquiry) {
-    return res.status(404).json({ message: "문의를 찾을 수 없습니다" });
+    return res.status(404).json({ message: INQUIRY_MESSAGES.NOT_FOUND });
   }
 
   // 2. 답변 존재 확인
   const reply = await storage.getInquiryReply(replyIdNum);
   if (!reply) {
-    return res.status(404).json({ message: "답변을 찾을 수 없습니다" });
+    return res.status(404).json({ message: INQUIRY_MESSAGES.REPLY_NOT_FOUND });
   }
 
   // 3. 해당 답변이 해당 문의에 속하는지 확인
   if (reply.inquiryId !== inquiryId) {
-    return res.status(400).json({ message: "해당 답변은 이 문의에 속하지 않습니다" });
+    return res.status(400).json({ message: INQUIRY_MESSAGES.REPLY_MISMATCH });
   }
 
   // 4. 답변 삭제
   await storage.deleteInquiryReply(replyIdNum);
 
-  res.json({ message: "답변이 삭제되었습니다" });
+  res.json({ message: INQUIRY_MESSAGES.REPLY_DELETED });
 }));
 
 // 답변 삭제 (관리자만) - 기존 엔드포인트 호환성 유지 (Deprecated)
@@ -311,12 +312,12 @@ router.delete("/replies/:replyId", isAdmin, asyncHandler(async (req, res) => {
   const replyId = parseInt(req.params.replyId);
 
   if (isNaN(replyId)) {
-    return res.status(400).json({ message: "유효한 답변 ID가 필요합니다" });
+    return res.status(400).json({ message: INQUIRY_MESSAGES.INVALID_REPLY_ID });
   }
 
   await storage.deleteInquiryReply(replyId);
 
-  res.json({ message: "답변이 삭제되었습니다" });
+  res.json({ message: INQUIRY_MESSAGES.REPLY_DELETED });
 }));
 
 export default router;

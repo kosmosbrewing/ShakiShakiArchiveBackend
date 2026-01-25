@@ -9,6 +9,7 @@ import { cacheStrategies } from "../../middleware";
 import { insertProductSchema } from "@shared/schema";
 import { meilisearchService } from "../../services/meilisearch.service";
 import { createLogger } from "../../utils/logger";
+import { PRODUCT_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 const logger = createLogger("AdminProduct");
@@ -89,7 +90,7 @@ router.patch("/:id", isAuthenticated, isAdmin, asyncHandler(async (req, res) => 
     validatedData
   );
   if (!product) {
-    return res.status(404).json({ message: "Product not found" });
+    return res.status(404).json({ message: PRODUCT_MESSAGES.NOT_FOUND });
   }
 
   // Meilisearch 인덱스 업데이트 (동기로 변경하여 결과 확인)
@@ -126,7 +127,7 @@ router.delete("/:id", isAuthenticated, isAdmin, asyncHandler(async (req, res) =>
   );
 
   res.json({
-    message: "Product deleted",
+    message: PRODUCT_MESSAGES.DELETED,
     ...(searchIndexResult.warning && { _warning: searchIndexResult.warning }),
   });
 }));

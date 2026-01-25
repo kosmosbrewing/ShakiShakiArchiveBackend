@@ -11,6 +11,7 @@ import {
   insertProductVariantSchema,
   insertProductSizeMeasurementSchema,
 } from "@shared/schema";
+import { PRODUCT_MESSAGES, COMMON_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 
@@ -81,7 +82,7 @@ router.patch(
       req.body
     );
     if (!variant) {
-      return res.status(404).json({ message: "Variant not found" });
+      return res.status(404).json({ message: PRODUCT_MESSAGES.VARIANT_NOT_FOUND });
     }
     res.json(variant);
   })
@@ -99,7 +100,7 @@ router.delete(
     }
 
     await storage.deleteProductVariant(req.params.variantId);
-    res.json({ message: "Variant deleted" });
+    res.json({ message: PRODUCT_MESSAGES.VARIANT_DELETED });
   })
 );
 
@@ -162,7 +163,7 @@ router.patch(
       req.body
     );
     if (!measurement) {
-      return res.status(404).json({ message: "Measurement not found" });
+      return res.status(404).json({ message: PRODUCT_MESSAGES.MEASUREMENT_NOT_FOUND });
     }
     res.json(measurement);
   })
@@ -180,7 +181,7 @@ router.delete(
     }
 
     await storage.deleteProductSizeMeasurement(req.params.measurementId);
-    res.json({ message: "Measurement deleted" });
+    res.json({ message: PRODUCT_MESSAGES.MEASUREMENT_DELETED });
   })
 );
 

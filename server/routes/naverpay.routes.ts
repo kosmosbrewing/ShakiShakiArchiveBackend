@@ -23,6 +23,7 @@ import {
   getNaverPaySDKConfig,
 } from "../services/naverpay.service";
 import { createLogger } from "../utils/logger";
+import { ORDER_MESSAGES, AUTH_MESSAGES, PAYMENT_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 const logger = createLogger("NaverPay");
@@ -82,7 +83,7 @@ function checkNaverPayEnabled(
 ) {
   if (!config.naverpay.isEnabled) {
     return res.status(503).json({
-      message: "네이버페이 서비스가 비활성화되어 있습니다",
+      message: PAYMENT_MESSAGES.NAVERPAY_DISABLED,
     });
   }
   next();
@@ -202,7 +203,7 @@ router.get("/callback", asyncHandler(async (req, res) => {
     // ✅ URL 클래스를 사용한 안전한 리다이렉트 URL 생성
     const failUrl = new URL('/checkout/fail', config.frontendUrl);
     failUrl.searchParams.set('orderId', orderId);
-    failUrl.searchParams.set('message', '주문을 찾을 수 없습니다');
+    failUrl.searchParams.set('message', ORDER_MESSAGES.NOT_FOUND);
     return res.redirect(failUrl.toString());
   }
 
@@ -441,13 +442,13 @@ router.get(
     // 주문 조회
     const order = await storage.getOrder(orderId);
     if (!order) {
-      return res.status(404).json({ message: "주문을 찾을 수 없습니다" });
+      return res.status(404).json({ message: ORDER_MESSAGES.NOT_FOUND });
     }
 
     // 권한 검증
     const user = await storage.getUser(userId);
     if (order.userId !== userId && !user?.isAdmin) {
-      return res.status(403).json({ message: "권한이 없습니다" });
+      return res.status(403).json({ message: AUTH_MESSAGES.FORBIDDEN });
     }
 
     // 결제 키가 없거나 네이버페이가 아니면 DB 상태만 반환
@@ -530,7 +531,7 @@ router.post(
     const validationResult = cancelPaymentSchema.safeParse(req.body);
     if (!validationResult.success) {
       return res.status(400).json({
-        message: "잘못된 요청 데이터입니다",
+        message: PAYMENT_MESSAGES.INVALID_REQUEST,
         errors: validationResult.error.flatten().fieldErrors,
       });
     }
@@ -541,19 +542,19 @@ router.post(
     // 2. 주문 조회
     const order = await storage.getOrder(orderId);
     if (!order) {
-      return res.status(404).json({ message: "주문을 찾을 수 없습니다" });
+      return res.status(404).json({ message: ORDER_MESSAGES.NOT_FOUND });
     }
 
     // 3. 권한 검증
     const user = await storage.getUser(userId);
     if (order.userId !== userId && !user?.isAdmin) {
-      return res.status(403).json({ message: "권한이 없습니다" });
+      return res.status(403).json({ message: AUTH_MESSAGES.FORBIDDEN });
     }
 
     // 4. 결제 정보 확인
     if (!order.paymentKey || order.paymentProvider !== "naverpay") {
       return res.status(400).json({
-        message: "네이버페이 결제 정보가 없습니다",
+        message: PAYMENT_MESSAGES.NAVERPAY_NO_PAYMENT_INFO,
       });
     }
 
@@ -650,7 +651,7 @@ router.post(
     });
 
     res.json({
-      message: "결제가 취소되었습니다",
+      message: PAYMENT_MESSAGES.CANCEL_SUCCESS,
       refund: cancelResult.body
         ? {
             cancelAmount: totalCancelAmount,
