@@ -10,6 +10,7 @@ import cartRoutes from "./cart.routes";
 import orderRoutes from "./order.routes";
 import paymentRoutes from "./payment.routes";
 import naverpayRoutes from "./naverpay.routes";
+import kakaopayRoutes from "./kakaopay.routes";
 import wishlistRoutes from "./wishlist.routes";
 import addressRoutes from "./address.routes";
 import variantRoutes from "./variant.routes";
@@ -51,6 +52,7 @@ router.use("/cart", cartRoutes);
 router.use("/orders", orderRoutes);
 router.use("/payments", paymentRoutes);
 router.use("/payments/naverpay", naverpayRoutes); // 네이버페이 결제
+router.use("/payments/kakaopay", kakaopayRoutes); // 카카오페이 결제
 router.use("/wishlist", wishlistRoutes);
 router.use("/user/addresses", addressRoutes);
 // 🔒 Option A: 재고 선점 제거 - stock 엔드포인트 비활성화

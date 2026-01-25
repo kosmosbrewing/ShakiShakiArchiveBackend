@@ -75,9 +75,16 @@ export const PAYMENT_MESSAGES = {
   OUT_OF_STOCK: "재고가 부족합니다",
   SUCCESS: "결제가 완료되었습니다",
   CANCEL_SUCCESS: "결제가 취소되었습니다",
+  // 네이버페이
   NAVERPAY_NO_PARTIAL: "네이버페이는 부분 취소를 지원하지 않습니다. 전체 환불만 가능합니다.",
   NAVERPAY_DISABLED: "네이버페이 서비스가 비활성화되어 있습니다",
   NAVERPAY_NO_PAYMENT_INFO: "네이버페이 결제 정보가 없습니다",
+  // 카카오페이
+  KAKAOPAY_DISABLED: "카카오페이 서비스가 비활성화되어 있습니다",
+  KAKAOPAY_NO_PAYMENT_INFO: "카카오페이 결제 정보가 없습니다",
+  KAKAOPAY_READY_FAILED: "카카오페이 결제 준비에 실패했습니다",
+  KAKAOPAY_APPROVE_FAILED: "카카오페이 결제 승인에 실패했습니다",
+  KAKAOPAY_CANCEL_FAILED: "카카오페이 결제 취소에 실패했습니다",
 } as const;
 
 /**

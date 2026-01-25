@@ -21,11 +21,15 @@ export {
   TOSS_PAYMENT_STATUS,
   NAVERPAY_PAYMENT_STATUS,
   NAVERPAY_CONFIG,
+  KAKAOPAY_PAYMENT_STATUS,
+  KAKAOPAY_CONFIG,
   mapNaverpayStatusToOrderStatus,
   mapTossStatusToOrderStatus,
+  mapKakaopayStatusToOrderStatus,
   type PaymentProviderType,
   type TossPaymentStatusType,
   type NaverpayPaymentStatusType,
+  type KakaopayPaymentStatusType,
 } from "./payment";
 
 // 검증 관련

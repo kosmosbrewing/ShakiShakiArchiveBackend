@@ -120,6 +120,8 @@ httpServer.listen(
       frontendUrlSource: process.env.FRONTEND_URL ? 'env' : 'default',
       naverpayEnabled: config.naverpay.isEnabled,
       naverpayReturnUrl: config.naverpay.isEnabled ? config.naverpay.returnUrl : '(비활성화)',
+      kakaopayEnabled: config.kakaopay.isEnabled,
+      kakaopayReturnUrl: config.kakaopay.isEnabled ? config.kakaopay.returnUrl : '(비활성화)',
       tossEnabled: config.toss.isEnabled,
     });
 

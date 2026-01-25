@@ -18,8 +18,11 @@ export {
   TOSS_PAYMENT_STATUS,
   NAVERPAY_PAYMENT_STATUS,
   NAVERPAY_CONFIG,
+  KAKAOPAY_PAYMENT_STATUS,
+  KAKAOPAY_CONFIG,
   mapNaverpayStatusToOrderStatus,
   mapTossStatusToOrderStatus,
+  mapKakaopayStatusToOrderStatus,
   // 검증
   QUANTITY,
   PRICE,

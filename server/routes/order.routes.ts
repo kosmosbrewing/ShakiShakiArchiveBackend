@@ -30,6 +30,11 @@ import {
   NaverPayPaymentError,
   normalizeNaverPayCancelResponse,
 } from "../services/naverpay.service";
+import {
+  cancelPayment as cancelKakaoPayPayment,
+  KakaoPayPaymentError,
+  normalizeKakaoPayCancelResponse,
+} from "../services/kakaopay.service";
 import { createLogger } from "../utils/logger";
 import { eq, and, gt } from "drizzle-orm";
 
@@ -655,6 +660,17 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
 
       payment = normalizeNaverPayCancelResponse(naverPayResponse, totalAmount);
       logger.info("네이버페이 결제 취소 완료", { orderId });
+    } else if (provider === "kakaopay") {
+      // 카카오페이 취소
+      const totalAmount = parseFloat(order.totalAmount);
+      const kakaoPayResponse = await cancelKakaoPayPayment({
+        tid: order.paymentKey,
+        cancel_amount: totalAmount,
+        cancel_tax_free_amount: 0,  // 과세 상품 (비과세 금액 0)
+      });
+
+      payment = normalizeKakaoPayCancelResponse(kakaoPayResponse);
+      logger.info("카카오페이 결제 취소 완료", { orderId });
     } else {
       // 토스페이먼츠 취소 (기본)
       payment = await cancelTossPayment(order.paymentKey, cancelReason, undefined);
@@ -680,6 +696,11 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
         code: error.code,
       });
     } else if (error instanceof NaverPayPaymentError) {
+      return res.status(error.statusCode).json({
+        message: error.message,
+        code: error.code,
+      });
+    } else if (error instanceof KakaoPayPaymentError) {
       return res.status(error.statusCode).json({
         message: error.message,
         code: error.code,

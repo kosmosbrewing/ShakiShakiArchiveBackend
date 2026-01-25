@@ -183,7 +183,8 @@ export async function httpRequest<T = unknown>(
 export async function postJson<T = unknown>(
   url: string,
   body: unknown,
-  headers: Record<string, string> = {}
+  headers: Record<string, string> = {},
+  options: { timeout?: number } = {}
 ): Promise<HttpResponse<T>> {
   return httpRequest<T>(url, {
     method: "POST",
@@ -192,6 +193,7 @@ export async function postJson<T = unknown>(
       ...headers,
     },
     body: JSON.stringify(body),
+    timeout: options.timeout,
   });
 }
 

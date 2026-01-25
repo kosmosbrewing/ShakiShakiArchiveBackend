@@ -522,7 +522,7 @@ export const createOrderRequestSchema = z.object({
   shippingAddress: z.string().min(1, "주소를 입력해주세요"),
   shippingDetailAddress: z.string().optional(),
   shippingRequestNote: z.string().optional(),
-  paymentMethod: z.enum(["toss", "naverpay"]).optional(),
+  paymentMethod: z.enum(["toss", "naverpay", "kakaopay"]).optional(),
   directPurchaseItem: directPurchaseItemSchema.optional(),
   reservationId: z.string().uuid().optional(), // 재고 선점 ID
 });

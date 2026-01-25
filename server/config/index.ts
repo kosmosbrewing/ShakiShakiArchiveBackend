@@ -113,6 +113,19 @@ export const config = {
       "http://localhost:8080/api/payments/naverpay/callback",
   },
 
+  // 카카오페이 결제 설정 (신 API: open-api.kakaopay.com 사용)
+  kakaopay: {
+    cid: process.env.KAKAOPAY_CID || "TC0ONETIME", // 가맹점 코드 (테스트: TC0ONETIME)
+    secretKey: process.env.KAKAOPAY_SECRET_KEY || "", // Secret Key (신 API 인증용)
+    // 테스트/운영 환경 구분 (로깅 및 조건부 로직 용도, 신 API에서는 DEV 접두사 불필요)
+    mode: (process.env.KAKAOPAY_MODE || "dev") as "dev" | "prod",
+    isEnabled: !!process.env.KAKAOPAY_SECRET_KEY,
+    // 결제 완료 후 리다이렉트 URL (네이버페이와 동일한 패턴)
+    returnUrl:
+      process.env.KAKAOPAY_RETURN_URL ||
+      "http://localhost:8080/api/payments/kakaopay/callback",
+  },
+
   // 프론트엔드 URL (OAuth 콜백 리다이렉트용)
   frontendUrl: process.env.FRONTEND_URL || "http://localhost:5173",
 

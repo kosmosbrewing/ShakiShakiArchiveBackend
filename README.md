@@ -319,6 +319,94 @@ ShakiShakiArchiveBackend/
 
 ---
 
+## 📝 에러 메시지 중앙 관리
+
+모든 API 응답 메시지는 `shared/constants/messages.ts`에서 중앙 관리됩니다.
+
+### 파일 구조
+
+```
+shared/constants/
+├── messages.ts      # 메시지 상수 정의
+├── index.ts         # export 관리
+server/
+├── constants.ts     # 백엔드 re-export
+```
+
+### 메시지 카테고리
+
+| 카테고리 | 용도 |
+|---------|------|
+| `AUTH_MESSAGES` | 인증/로그인/OAuth |
+| `ORDER_MESSAGES` | 주문 |
+| `PAYMENT_MESSAGES` | 결제 (토스/네이버페이) |
+| `PRODUCT_MESSAGES` | 상품/옵션 |
+| `CART_MESSAGES` | 장바구니 |
+| `INQUIRY_MESSAGES` | 문의 |
+| `IMAGE_MESSAGES` | 이미지 업로드 |
+| `VALIDATION_MESSAGES` | 입력값 검증 |
+| `SEARCH_MESSAGES` | 검색 (카카오/Meilisearch) |
+| `SUCCESS_MESSAGES` | 성공 응답 |
+| `COMMON_MESSAGES` | 공통 에러 |
+
+### 사용 방법
+
+**1. 메시지 추가** (`shared/constants/messages.ts`)
+
+```typescript
+export const ORDER_MESSAGES = {
+  NOT_FOUND: "주문을 찾을 수 없습니다",
+  NEW_MESSAGE: "새로운 메시지",  // 추가
+} as const;
+```
+
+**2. 라우트에서 사용**
+
+```typescript
+import { ORDER_MESSAGES } from "@shared/constants/messages";
+// 또는
+import { ORDER_MESSAGES } from "../constants";
+
+res.status(404).json({ message: ORDER_MESSAGES.NOT_FOUND });
+```
+
+### 네이밍 규칙
+
+```typescript
+// 에러: 명사형 또는 상태
+NOT_FOUND: "찾을 수 없습니다"
+FORBIDDEN: "권한이 없습니다"
+
+// 성공: 과거형
+DELETED: "삭제되었습니다"
+PASSWORD_CHANGED: "비밀번호가 변경되었습니다"
+
+// 동적 메시지: 함수 사용
+CANNOT_CANCEL: (status: string) => `현재 상태(${status})에서는 취소할 수 없습니다`
+```
+
+### PG사 에러 메시지
+
+토스페이먼츠, 네이버페이의 **공식 에러 코드 매핑**은 별도 관리합니다:
+
+- `server/routes/payment.routes.ts` → `tossErrorMessages`
+- `server/routes/naverpay.routes.ts` → `naverPayErrorMessages`
+
+이는 PG사 API 에러 코드를 사용자 친화적 메시지로 변환하는 용도로, 중앙 메시지와 목적이 다릅니다.
+
+```typescript
+// PG 에러: 코드 기반 조회
+const userMessage = tossErrorMessages[error.code] || error.message;
+```
+
+### 주의사항
+
+- ❌ 하드코딩 금지: `message: "에러입니다"`
+- ✅ 상수 사용: `message: ORDER_MESSAGES.NOT_FOUND`
+- 새 카테고리 추가 시 `shared/constants/index.ts`에 export 추가 필요
+
+---
+
 ## 🛠️ Troubleshooting
 
 자세한 문제 해결 사례는 [Technical Challenges](./docs/TECHNICAL-CHALLENGES.md) 문서를 참고하세요.
