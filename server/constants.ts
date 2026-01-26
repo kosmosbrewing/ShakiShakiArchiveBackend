@@ -41,6 +41,7 @@ export {
   USER_CACHE,
   RATE_LIMIT,
   HSTS,
+  SUPER_ADMIN,
   // 메시지
   AUTH_MESSAGES,
   ORDER_MESSAGES,

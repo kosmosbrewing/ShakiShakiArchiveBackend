@@ -48,7 +48,7 @@ export {
 export { DB_FIELD_LENGTH, DB_POOL, DB_TIMEOUT } from "./database";
 
 // 보안 관련
-export { SESSION, USER_CACHE, RATE_LIMIT, HSTS } from "./security";
+export { SESSION, USER_CACHE, RATE_LIMIT, HSTS, SUPER_ADMIN } from "./security";
 
 // 메시지 관련
 export {

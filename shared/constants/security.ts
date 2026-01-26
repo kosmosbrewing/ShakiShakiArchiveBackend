@@ -66,3 +66,12 @@ export const HSTS = {
   /** maxAge (1년, 초) */
   MAX_AGE: 31536000,
 } as const;
+
+/**
+ * 슈퍼 관리자 설정
+ * 슈퍼 관리자만 다른 사용자에게 관리자 권한 부여/해제 가능
+ */
+export const SUPER_ADMIN = {
+  /** 슈퍼 관리자 이메일 */
+  EMAIL: "admin@shakishakiarchive.com",
+} as const;
