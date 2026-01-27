@@ -42,6 +42,30 @@ function validateReturnUrl(returnUrl: string | undefined): string {
 }
 
 /**
+ * 카카오 prompt 파라미터 검증 (화이트리스트)
+ * @see https://developers.kakao.com/docs/latest/ko/kakaologin/rest-api#request-code
+ */
+const KAKAO_PROMPT_WHITELIST = ["login", "none", "create", "select_account"] as const;
+function validateKakaoPrompt(prompt: string | undefined): string | undefined {
+  if (!prompt || typeof prompt !== "string") return undefined;
+  return KAKAO_PROMPT_WHITELIST.includes(prompt as typeof KAKAO_PROMPT_WHITELIST[number])
+    ? prompt
+    : undefined;
+}
+
+/**
+ * 네이버 auth_type 파라미터 검증 (화이트리스트)
+ * @see https://developers.naver.com/docs/login/api/api.md
+ */
+const NAVER_AUTH_TYPE_WHITELIST = ["reprompt", "reauthenticate"] as const;
+function validateNaverAuthType(authType: string | undefined): string | undefined {
+  if (!authType || typeof authType !== "string") return undefined;
+  return NAVER_AUTH_TYPE_WHITELIST.includes(authType as typeof NAVER_AUTH_TYPE_WHITELIST[number])
+    ? authType
+    : undefined;
+}
+
+/**
  * GET /api/oauth/naver 또는 /api/oauth/naver/login
  * 네이버 로그인 페이지로 리다이렉트
  */
@@ -61,8 +85,12 @@ router.get(["/naver", "/naver/login"], asyncHandler(async (req, res) => {
   const state = await generateStateToken();
   req.session.oauthState = state;
 
+  // 재인증 파라미터 (auth_type=reprompt: 기존 세션 무시하고 재로그인 강제)
+  // 화이트리스트 검증으로 허용된 값만 전달
+  const authType = validateNaverAuthType(req.query.auth_type as string);
+
   // 네이버 로그인 페이지로 리다이렉트
-  const authUrl = getAuthorizationUrl(state);
+  const authUrl = getAuthorizationUrl(state, authType);
   res.redirect(authUrl);
 }));
 
@@ -207,8 +235,12 @@ router.get(["/kakao", "/kakao/login"], asyncHandler(async (req, res) => {
   const state = await generateKakaoStateToken();
   req.session.oauthState = state;
 
+  // 재인증 파라미터 (prompt=login: 기존 세션 무시하고 재로그인 강제)
+  // 화이트리스트 검증으로 허용된 값만 전달
+  const prompt = validateKakaoPrompt(req.query.prompt as string);
+
   // 카카오 로그인 페이지로 리다이렉트
-  const authUrl = getKakaoAuthorizationUrl(state);
+  const authUrl = getKakaoAuthorizationUrl(state, prompt);
   res.redirect(authUrl);
 }));
 

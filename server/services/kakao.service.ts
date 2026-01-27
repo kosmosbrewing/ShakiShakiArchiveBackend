@@ -73,8 +73,11 @@ export async function generateStateToken(): Promise<string> {
 /**
  * 카카오 로그인 URL 생성
  * 사용자를 이 URL로 리다이렉트하면 카카오 로그인 페이지로 이동
+ *
+ * @param state - CSRF 방지용 상태 토큰
+ * @param prompt - 재인증 옵션 ("login" 전달 시 기존 세션 무시하고 재로그인 강제)
  */
-export function getAuthorizationUrl(state: string): string {
+export function getAuthorizationUrl(state: string, prompt?: string): string {
   const params = new URLSearchParams({
     response_type: "code",
     client_id: config.kakao.clientId,
@@ -83,6 +86,12 @@ export function getAuthorizationUrl(state: string): string {
     // 요청할 동의 항목 (닉네임, 이메일만 사용)
     scope: "profile_nickname account_email",
   });
+
+  // 재인증 요청 시 prompt 파라미터 추가
+  // prompt=login: 기존 카카오 로그인 세션을 무시하고 재로그인 강제
+  if (prompt) {
+    params.append("prompt", prompt);
+  }
 
   return `${KAKAO_AUTH_URL}/oauth/authorize?${params.toString()}`;
 }

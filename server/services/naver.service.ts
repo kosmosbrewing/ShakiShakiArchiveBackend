@@ -64,14 +64,23 @@ export async function generateStateToken(): Promise<string> {
 /**
  * 네이버 로그인 URL 생성
  * 사용자를 이 URL로 리다이렉트하면 네이버 로그인 페이지로 이동
+ *
+ * @param state - CSRF 방지용 상태 토큰
+ * @param authType - 재인증 옵션 ("reprompt" 전달 시 기존 세션 무시하고 재로그인 강제)
  */
-export function getAuthorizationUrl(state: string): string {
+export function getAuthorizationUrl(state: string, authType?: string): string {
   const params = new URLSearchParams({
     response_type: "code",
     client_id: config.naver.clientId,
     redirect_uri: config.naver.callbackUrl,
     state: state,
   });
+
+  // 재인증 요청 시 auth_type 파라미터 추가
+  // auth_type=reprompt: 기존 네이버 로그인 세션을 무시하고 재로그인 강제
+  if (authType) {
+    params.append("auth_type", authType);
+  }
 
   return `${NAVER_AUTH_URL}/authorize?${params.toString()}`;
 }
