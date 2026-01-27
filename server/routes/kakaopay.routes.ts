@@ -354,7 +354,7 @@ router.get(
           externalOrderId: approveResult.partner_order_id,
           paymentMethod: approveResult.payment_method_type.toLowerCase(),
           status: "payment_confirmed",
-          paidAt: new Date(),
+          // paidAt 생략 시 storage에서 NOW() 사용 (DB 세션 KST)
         });
 
         // 재고 선점 기록 삭제
@@ -374,6 +374,21 @@ router.get(
           });
         }
 
+        // 장바구니 비우기 (결제 완료된 상품 제거)
+        try {
+          await storage.clearCart(order.userId);
+          logger.info("장바구니 비우기 완료", {
+            userId: order.userId,
+            orderId: order.id,
+          });
+        } catch (cartError) {
+          logger.error("장바구니 비우기 실패", {
+            userId: order.userId,
+            orderId: order.id,
+            error: cartError,
+          });
+        }
+
         logger.info("결제 승인 완료 (선점 패턴 - 재고 이미 차감됨)", {
           orderId: order.id,
         });
@@ -390,7 +405,7 @@ router.get(
           paymentKey: approveResult.tid,
           externalOrderId: approveResult.partner_order_id,
           paymentMethod: approveResult.payment_method_type.toLowerCase(),
-          paidAt: new Date(),
+          // paidAt 생략 시 storage에서 NOW() 사용 (DB 세션 KST)
         });
 
         // 재고 부족 시 PG사 결제 취소 및 에러 반환
@@ -677,9 +692,9 @@ router.post(
     const isFullCancel = cancelResult.cancel_available_amount.total === 0;
     const newStatus = isFullCancel ? "cancelled" : order.status;
 
+    // canceledAt은 storage에서 NOW() 사용 (DB 세션 KST)
     await storage.cancelOrderPayment(orderId, {
       status: newStatus,
-      canceledAt: new Date(),
       cancelReason,
       refundedAmount: cancelResult.approved_cancel_amount.total.toString(),
     });

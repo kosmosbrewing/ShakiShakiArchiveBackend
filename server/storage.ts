@@ -13,6 +13,7 @@ import {
   siteImages,
   inquiries,
   inquiryReplies,
+  returns,
   type User,
   type UpsertUser,
   type Product,
@@ -41,6 +42,8 @@ import {
   type InquiryReply,
   type InsertInquiryReply,
   type InquiryType,
+  type Return,
+  type InsertReturn,
 } from "@shared/schema";
 import { db, pool } from "./db";
 import { eq, and, like, desc, isNull, gt, lt, count, sum, sql, inArray } from "drizzle-orm";
@@ -52,7 +55,7 @@ import type {
   StockLockResult,
   ConfirmPaymentData,
 } from "./types";
-import { getKSTDate } from "./utils/date";
+// DB 세션이 KST로 설정되어 있으므로 sql`NOW()`를 사용하여 일관된 시간 저장
 
 export interface IStorage {
   // User operations (UUID 기반)
@@ -211,7 +214,6 @@ export interface IStorage {
     orderId: string, // UUID
     cancelData: {
       status: string;
-      canceledAt: Date;
       cancelReason: string;
       refundedAmount?: string;
     }
@@ -306,6 +308,46 @@ export interface IStorage {
   createInquiryReply(reply: InsertInquiryReply): Promise<InquiryReply>;
   getInquiryReply(id: number): Promise<InquiryReply | undefined>;
   deleteInquiryReply(id: number): Promise<void>;
+
+  // Return operations (반품 관련)
+  createReturnRequest(returnData: InsertReturn): Promise<Return>;
+  getReturnRequest(id: string): Promise<Return | undefined>;
+  getReturnsByOrderId(orderId: string): Promise<Return[]>;
+  getReturnsByUserId(userId: string): Promise<Return[]>;
+  updateReturnTracking(
+    id: string,
+    data: { trackingNumber: string; courierCompany: string; status: string }
+  ): Promise<Return | undefined>;
+  updateReturnInspection(
+    id: string,
+    data: { result: string; note?: string }
+  ): Promise<Return | undefined>;
+
+  // 부분 취소 (배송 전)
+  partialCancelOrder(params: {
+    orderId: string;
+    cancelItemIds: number[];
+    refundAmount: number;
+    cancelReason: string;
+    isFullCancel: boolean;
+    updatePenaltyFlag: boolean;
+  }): Promise<void>;
+
+  // 반품 완료 처리
+  completeReturn(
+    returnId: string,
+    params: {
+      refundAmount: number;
+      inspectionResult: string;
+      inspectionNote?: string;
+      updatePenaltyFlag: boolean;
+      isLastItem: boolean;
+    }
+  ): Promise<void>;
+
+  // 주문 아이템 조회
+  getOrderItemById(itemId: number): Promise<OrderItem | undefined>;
+  getOrderItemsByOrderId(orderId: string): Promise<OrderItem[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -343,7 +385,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createUser(userData: Omit<UpsertUser, "id">): Promise<User> {
-    const [user] = await db.insert(users).values(userData).returning();
+    const [user] = await db
+      .insert(users)
+      .values({
+        ...userData,
+        createdAt: sql`NOW()`,
+        updatedAt: sql`NOW()`,
+      })
+      .returning();
     return user;
   }
 
@@ -355,7 +404,7 @@ export class DatabaseStorage implements IStorage {
         target: users.id,
         set: {
           ...userData,
-          updatedAt: getKSTDate(),
+          updatedAt: sql`NOW()`,
         },
       })
       .returning();
@@ -370,7 +419,7 @@ export class DatabaseStorage implements IStorage {
       .update(users)
       .set({
         ...userData,
-        updatedAt: getKSTDate(),
+        updatedAt: sql`NOW()`,
       })
       .where(eq(users.id, id))
       .returning();
@@ -648,7 +697,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createProduct(product: InsertProduct): Promise<Product> {
-    const [newProduct] = await db.insert(products).values(product).returning();
+    // DB 세션 KST timezone 보장을 위해 명시적으로 NOW() 사용
+    const [newProduct] = await db
+      .insert(products)
+      .values({
+        ...product,
+        createdAt: sql`NOW()`,
+        updatedAt: sql`NOW()`,
+      })
+      .returning();
     return newProduct;
   }
 
@@ -658,8 +715,8 @@ export class DatabaseStorage implements IStorage {
   ): Promise<Product | undefined> {
     const [updated] = await db
       .update(products)
-      // updatedAt이 직접 전달되면 그 값을 사용, 아니면 현재 KST 시간으로 자동 갱신
-      .set({ updatedAt: getKSTDate(), ...product })
+      // updatedAt이 직접 전달되면 그 값을 사용, 아니면 DB의 NOW() 사용
+      .set({ updatedAt: sql`NOW()`, ...product })
       .where(eq(products.id, id))
       .returning();
     return updated;
@@ -693,7 +750,11 @@ export class DatabaseStorage implements IStorage {
   ): Promise<ProductVariant> {
     const [newVariant] = await db
       .insert(productVariants)
-      .values(variant)
+      .values({
+        ...variant,
+        createdAt: sql`NOW()`,
+        updatedAt: sql`NOW()`,
+      })
       .returning();
     return newVariant;
   }
@@ -704,7 +765,7 @@ export class DatabaseStorage implements IStorage {
   ): Promise<ProductVariant | undefined> {
     const [updated] = await db
       .update(productVariants)
-      .set({ ...variant, updatedAt: getKSTDate() })
+      .set({ ...variant, updatedAt: sql`NOW()` })
       .where(eq(productVariants.id, id))
       .returning();
     return updated;
@@ -741,7 +802,10 @@ export class DatabaseStorage implements IStorage {
   ): Promise<ProductSizeMeasurement> {
     const [newMeasurement] = await db
       .insert(productSizeMeasurements)
-      .values(measurement)
+      .values({
+        ...measurement,
+        createdAt: sql`NOW()`,
+      })
       .returning();
     return newMeasurement;
   }
@@ -782,7 +846,10 @@ export class DatabaseStorage implements IStorage {
   async createCategory(category: InsertCategory): Promise<Category> {
     const [newCategory] = await db
       .insert(categories)
-      .values(category)
+      .values({
+        ...category,
+        createdAt: sql`NOW()`,
+      })
       .returning();
     return newCategory;
   }
@@ -863,7 +930,7 @@ export class DatabaseStorage implements IStorage {
   ): Promise<CartItem | undefined> {
     const [updated] = await db
       .update(cartItems)
-      .set({ quantity, updatedAt: getKSTDate() })
+      .set({ quantity, updatedAt: sql`NOW()` })
       .where(eq(cartItems.id, id))
       .returning();
     return updated;
@@ -1270,9 +1337,20 @@ export class DatabaseStorage implements IStorage {
     trackingNumber?: string
   ): Promise<Order | undefined> {
     // any 타입 제거: 명시적 타입 사용
-    const updateData: OrderStatusUpdate = { status, updatedAt: getKSTDate() };
+    // DB 세션이 KST로 설정되어 있으므로 sql`NOW()` 사용
+    const updateData: OrderStatusUpdate = { status, updatedAt: sql`NOW()` };
     if (trackingNumber !== undefined) {
       updateData.trackingNumber = trackingNumber;
+    }
+
+    // 배송 완료 시 delivered_at 기록 (자동 구매확정 기준일)
+    if (status === "delivered") {
+      updateData.deliveredAt = sql`NOW()`;
+    }
+
+    // 구매 확정 시 confirmed_at 기록 (정산 근거)
+    if (status === "purchase_confirmed") {
+      updateData.confirmedAt = sql`NOW()`;
     }
 
     const [updated] = await db
@@ -1331,7 +1409,7 @@ export class DatabaseStorage implements IStorage {
     try {
       await client.query("BEGIN");
 
-      // 1. 주문 상태 업데이트
+      // 1. 주문 상태 업데이트 (paid_at은 COALESCE로 NOW() 사용)
       const orderResult = await client.query(
         `UPDATE orders
          SET payment_provider = $1,
@@ -1339,7 +1417,7 @@ export class DatabaseStorage implements IStorage {
              external_order_id = $3,
              payment_method = $4,
              status = $5,
-             paid_at = $6,
+             paid_at = COALESCE($6, NOW()),
              updated_at = NOW()
          WHERE id = $7
          RETURNING *`,
@@ -1392,7 +1470,6 @@ export class DatabaseStorage implements IStorage {
     orderId: string, // UUID
     cancelData: {
       status: string;
-      canceledAt: Date;
       cancelReason: string;
       refundedAmount?: string;
     }
@@ -1403,19 +1480,18 @@ export class DatabaseStorage implements IStorage {
     try {
       await client.query("BEGIN");
 
-      // 1. 주문 상태 업데이트
+      // 1. 주문 상태 업데이트 (canceled_at은 NOW() 사용)
       const orderResult = await client.query(
         `UPDATE orders
          SET status = $1,
-             canceled_at = $2,
-             cancel_reason = $3,
-             refunded_amount = $4,
+             canceled_at = NOW(),
+             cancel_reason = $2,
+             refunded_amount = $3,
              updated_at = NOW()
-         WHERE id = $5
+         WHERE id = $4
          RETURNING *`,
         [
           cancelData.status,
-          cancelData.canceledAt,
           cancelData.cancelReason,
           cancelData.refundedAmount || null,
           orderId,
@@ -1596,6 +1672,7 @@ export class DatabaseStorage implements IStorage {
       }
 
       // 5. 주문 상태 업데이트 (결제 완료)
+      // DB 세션이 KST로 설정되어 있으므로 NOW() 사용
       await client.query(
         `UPDATE orders
          SET status = 'payment_confirmed',
@@ -1603,16 +1680,15 @@ export class DatabaseStorage implements IStorage {
              payment_key = $2,
              external_order_id = $3,
              payment_method = $4,
-             paid_at = $5,
-             updated_at = $6
-         WHERE id = $7`,
+             paid_at = COALESCE($5, NOW()),
+             updated_at = NOW()
+         WHERE id = $6`,
         [
           paymentData.paymentProvider,
           paymentData.paymentKey,
           paymentData.externalOrderId,
           paymentData.paymentMethod || null,
-          paymentData.paidAt || getKSTDate(),
-          getKSTDate(),
+          paymentData.paidAt || null,
           orderId,
         ]
       );
@@ -2050,7 +2126,10 @@ export class DatabaseStorage implements IStorage {
     if (!addressData.isDefault) {
       const [newAddress] = await db
         .insert(deliveryAddresses)
-        .values(addressData)
+        .values({
+          ...addressData,
+          createdAt: sql`NOW()`,
+        })
         .returning();
       return newAddress;
     }
@@ -2066,10 +2145,10 @@ export class DatabaseStorage implements IStorage {
         [addressData.userId]
       );
 
-      // 2. 새 배송지 추가
+      // 2. 새 배송지 추가 (created_at은 NOW() 사용)
       const result = await client.query(
-        `INSERT INTO delivery_addresses (user_id, recipient, phone, zip_code, address, detail_address, request_note, is_default)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        `INSERT INTO delivery_addresses (user_id, recipient, phone, zip_code, address, detail_address, request_note, is_default, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW()) RETURNING *`,
         [
           addressData.userId,
           addressData.recipient,
@@ -2166,7 +2245,10 @@ export class DatabaseStorage implements IStorage {
 
     const [newVerification] = await db
       .insert(emailVerifications)
-      .values(verification)
+      .values({
+        ...verification,
+        createdAt: sql`NOW()`,
+      })
       .returning();
     return newVerification;
   }
@@ -2185,7 +2267,7 @@ export class DatabaseStorage implements IStorage {
           eq(emailVerifications.code, code),
           eq(emailVerifications.type, type),
           eq(emailVerifications.verified, false),
-          gt(emailVerifications.expiresAt, new Date())
+          gt(emailVerifications.expiresAt, sql`NOW()`)
         )
       );
     return verification;
@@ -2205,7 +2287,7 @@ export class DatabaseStorage implements IStorage {
       .where(
         and(
           eq(emailVerifications.verified, false),
-          lt(emailVerifications.expiresAt, new Date())
+          lt(emailVerifications.expiresAt, sql`NOW()`)
         )
       );
   }
@@ -2265,7 +2347,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createSiteImage(image: InsertSiteImage): Promise<SiteImage> {
-    const [newImage] = await db.insert(siteImages).values(image).returning();
+    const [newImage] = await db
+      .insert(siteImages)
+      .values({
+        ...image,
+        createdAt: sql`NOW()`,
+        updatedAt: sql`NOW()`,
+      })
+      .returning();
     return newImage;
   }
 
@@ -2275,7 +2364,7 @@ export class DatabaseStorage implements IStorage {
   ): Promise<SiteImage | undefined> {
     const [updated] = await db
       .update(siteImages)
-      .set({ ...image, updatedAt: getKSTDate() })
+      .set({ ...image, updatedAt: sql`NOW()` })
       .where(eq(siteImages.id, id))
       .returning();
     return updated;
@@ -2406,7 +2495,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createInquiry(inquiry: InsertInquiry): Promise<Inquiry> {
-    const [newInquiry] = await db.insert(inquiries).values(inquiry).returning();
+    const [newInquiry] = await db
+      .insert(inquiries)
+      .values({
+        ...inquiry,
+        createdAt: sql`NOW()`,
+        updatedAt: sql`NOW()`,
+      })
+      .returning();
     return newInquiry;
   }
 
@@ -2416,7 +2512,7 @@ export class DatabaseStorage implements IStorage {
   ): Promise<Inquiry | undefined> {
     const [updated] = await db
       .update(inquiries)
-      .set({ status, updatedAt: getKSTDate() })
+      .set({ status, updatedAt: sql`NOW()` })
       .where(eq(inquiries.id, id))
       .returning();
     return updated;
@@ -2432,13 +2528,16 @@ export class DatabaseStorage implements IStorage {
   async createInquiryReply(reply: InsertInquiryReply): Promise<InquiryReply> {
     const [newReply] = await db
       .insert(inquiryReplies)
-      .values(reply)
+      .values({
+        ...reply,
+        createdAt: sql`NOW()`,
+      })
       .returning();
 
     // 문의 상태를 'answered'로 업데이트
     await db
       .update(inquiries)
-      .set({ status: "answered", updatedAt: getKSTDate() })
+      .set({ status: "answered", updatedAt: sql`NOW()` })
       .where(eq(inquiries.id, reply.inquiryId));
 
     return newReply;
@@ -2454,6 +2553,367 @@ export class DatabaseStorage implements IStorage {
 
   async deleteInquiryReply(id: number): Promise<void> {
     await db.delete(inquiryReplies).where(eq(inquiryReplies.id, id));
+  }
+
+  // ------------------------------------------------------------------
+  // Return operations (반품 관련)
+  // ------------------------------------------------------------------
+  async createReturnRequest(returnData: InsertReturn): Promise<Return> {
+    const [newReturn] = await db
+      .insert(returns)
+      .values({
+        ...returnData,
+        createdAt: sql`NOW()`,
+        updatedAt: sql`NOW()`,
+      })
+      .returning();
+    return newReturn;
+  }
+
+  async getReturnRequest(id: string): Promise<Return | undefined> {
+    const [returnRequest] = await db
+      .select()
+      .from(returns)
+      .where(eq(returns.id, id));
+    return returnRequest;
+  }
+
+  async getReturnsByOrderId(orderId: string): Promise<Return[]> {
+    return await db
+      .select()
+      .from(returns)
+      .where(eq(returns.orderId, orderId))
+      .orderBy(desc(returns.createdAt));
+  }
+
+  async getReturnsByUserId(userId: string): Promise<Return[]> {
+    return await db
+      .select()
+      .from(returns)
+      .where(eq(returns.userId, userId))
+      .orderBy(desc(returns.createdAt));
+  }
+
+  async updateReturnTracking(
+    id: string,
+    data: { trackingNumber: string; courierCompany: string; status: string }
+  ): Promise<Return | undefined> {
+    const [updated] = await db
+      .update(returns)
+      .set({
+        returnTrackingNumber: data.trackingNumber,
+        returnCourierCompany: data.courierCompany,
+        status: data.status,
+        updatedAt: sql`NOW()`,
+      })
+      .where(eq(returns.id, id))
+      .returning();
+    return updated;
+  }
+
+  async updateReturnInspection(
+    id: string,
+    data: { result: string; note?: string }
+  ): Promise<Return | undefined> {
+    const [updated] = await db
+      .update(returns)
+      .set({
+        inspectionResult: data.result,
+        inspectionNote: data.note,
+        inspectedAt: sql`NOW()`,
+        updatedAt: sql`NOW()`,
+      })
+      .where(eq(returns.id, id))
+      .returning();
+    return updated;
+  }
+
+  // ------------------------------------------------------------------
+  // 주문 아이템 조회
+  // ------------------------------------------------------------------
+  async getOrderItemById(itemId: number): Promise<OrderItem | undefined> {
+    const [item] = await db
+      .select()
+      .from(orderItems)
+      .where(eq(orderItems.id, itemId));
+    return item;
+  }
+
+  async getOrderItemsByOrderId(orderId: string): Promise<OrderItem[]> {
+    return await db
+      .select()
+      .from(orderItems)
+      .where(eq(orderItems.orderId, orderId));
+  }
+
+  // ------------------------------------------------------------------
+  // 부분 취소 (배송 전 즉시 환불)
+  // ------------------------------------------------------------------
+  async partialCancelOrder(params: {
+    orderId: string;
+    cancelItemIds: number[];
+    refundAmount: number;
+    cancelReason: string;
+    isFullCancel: boolean;
+    updatePenaltyFlag: boolean;
+  }): Promise<void> {
+    const client = await pool.connect();
+    const logger = createLogger("PartialCancel");
+
+    // normalizeSize 함수 (createOrder와 동일)
+    const normalizeSize = (size: string): string => {
+      return size.trim().toLowerCase();
+    };
+
+    try {
+      await client.query("BEGIN");
+
+      const { orderId, cancelItemIds, refundAmount, cancelReason, isFullCancel, updatePenaltyFlag } = params;
+
+      logger.info("부분 취소 시작", {
+        orderId,
+        cancelItemIds,
+        refundAmount,
+        isFullCancel,
+      });
+
+      // 1. 취소 대상 아이템 조회 (재고 복구용)
+      const itemsResult = await client.query(
+        `SELECT id, product_id, quantity, options
+         FROM order_items
+         WHERE id = ANY($1)`,
+        [cancelItemIds]
+      );
+
+      // 2. 아이템 상태 업데이트
+      for (const itemId of cancelItemIds) {
+        await client.query(
+          `UPDATE order_items
+           SET status = 'refunded'
+           WHERE id = $1`,
+          [itemId]
+        );
+      }
+
+      // 3. 재고 복구
+      for (const item of itemsResult.rows) {
+        let variantSize: string | null = null;
+        if (item.options) {
+          const match = item.options.match(/Size:\s*(.+?)$/im);
+          if (match) {
+            variantSize = normalizeSize(match[1]);
+          }
+        }
+
+        if (variantSize) {
+          const updateResult = await client.query(
+            `UPDATE product_variants
+             SET stock_quantity = stock_quantity + $1, updated_at = NOW()
+             WHERE product_id = $2 AND LOWER(TRIM(size)) = $3
+             RETURNING id, size, stock_quantity`,
+            [item.quantity, item.product_id, variantSize]
+          );
+
+          if (updateResult.rows.length > 0) {
+            logger.info("재고 복구 완료 (variant)", {
+              productId: item.product_id,
+              size: updateResult.rows[0].size,
+              quantity: item.quantity,
+              newStock: updateResult.rows[0].stock_quantity,
+            });
+          }
+        }
+      }
+
+      // 4. 주문 상태 및 환불 금액 업데이트
+      const currentOrder = await client.query(
+        `SELECT refunded_amount, shipping_penalty_applied FROM orders WHERE id = $1`,
+        [orderId]
+      );
+      const currentRefunded = parseFloat(currentOrder.rows[0].refunded_amount || "0");
+      const currentPenaltyApplied = currentOrder.rows[0].shipping_penalty_applied;
+
+      await client.query(
+        `UPDATE orders
+         SET status = $1,
+             refunded_amount = $2,
+             cancel_reason = $3,
+             canceled_at = CASE WHEN $4 THEN NOW() ELSE canceled_at END,
+             shipping_penalty_applied = $5,
+             updated_at = NOW()
+         WHERE id = $6`,
+        [
+          isFullCancel ? "refunded" : "partial_refunded",
+          (currentRefunded + refundAmount).toString(),
+          cancelReason,
+          isFullCancel,
+          updatePenaltyFlag ? true : currentPenaltyApplied,
+          orderId,
+        ]
+      );
+
+      await client.query("COMMIT");
+
+      logger.info("부분 취소 완료", {
+        orderId,
+        canceledItemCount: cancelItemIds.length,
+        totalRefundAmount: currentRefunded + refundAmount,
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      logger.error("부분 취소 실패", {
+        orderId: params.orderId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // 반품 완료 처리
+  // ------------------------------------------------------------------
+  async completeReturn(
+    returnId: string,
+    params: {
+      refundAmount: number;
+      inspectionResult: string;
+      inspectionNote?: string;
+      updatePenaltyFlag: boolean;
+      isLastItem: boolean;
+    }
+  ): Promise<void> {
+    const client = await pool.connect();
+    const logger = createLogger("CompleteReturn");
+
+    // normalizeSize 함수 (createOrder와 동일)
+    const normalizeSize = (size: string): string => {
+      return size.trim().toLowerCase();
+    };
+
+    try {
+      await client.query("BEGIN");
+
+      // 1. 반품 정보 조회
+      const returnResult = await client.query(
+        `SELECT order_id, order_item_id FROM returns WHERE id = $1`,
+        [returnId]
+      );
+
+      if (returnResult.rows.length === 0) {
+        throw new Error("반품 요청을 찾을 수 없습니다");
+      }
+
+      const { order_id: orderId, order_item_id: orderItemId } = returnResult.rows[0];
+
+      logger.info("반품 완료 처리 시작", {
+        returnId,
+        orderId,
+        orderItemId,
+        refundAmount: params.refundAmount,
+      });
+
+      // 2. 반품 상태 업데이트
+      await client.query(
+        `UPDATE returns
+         SET status = 'refunded',
+             refund_amount = $1,
+             inspection_result = $2,
+             inspection_note = $3,
+             inspected_at = NOW(),
+             refunded_at = NOW(),
+             updated_at = NOW()
+         WHERE id = $4`,
+        [params.refundAmount, params.inspectionResult, params.inspectionNote || null, returnId]
+      );
+
+      // 3. 아이템 정보 조회 (재고 복구용)
+      const itemResult = await client.query(
+        `SELECT product_id, quantity, options FROM order_items WHERE id = $1`,
+        [orderItemId]
+      );
+
+      if (itemResult.rows.length === 0) {
+        throw new Error("주문 아이템을 찾을 수 없습니다");
+      }
+
+      const item = itemResult.rows[0];
+
+      // 4. 아이템 상태 업데이트
+      await client.query(
+        `UPDATE order_items SET status = 'refunded' WHERE id = $1`,
+        [orderItemId]
+      );
+
+      // 5. 재고 복구
+      let variantSize: string | null = null;
+      if (item.options) {
+        const match = item.options.match(/Size:\s*(.+?)$/im);
+        if (match) {
+          variantSize = normalizeSize(match[1]);
+        }
+      }
+
+      if (variantSize) {
+        const updateResult = await client.query(
+          `UPDATE product_variants
+           SET stock_quantity = stock_quantity + $1, updated_at = NOW()
+           WHERE product_id = $2 AND LOWER(TRIM(size)) = $3
+           RETURNING id, size, stock_quantity`,
+          [item.quantity, item.product_id, variantSize]
+        );
+
+        if (updateResult.rows.length > 0) {
+          logger.info("재고 복구 완료 (variant)", {
+            productId: item.product_id,
+            size: updateResult.rows[0].size,
+            quantity: item.quantity,
+            newStock: updateResult.rows[0].stock_quantity,
+          });
+        }
+      }
+
+      // 6. 주문 상태 업데이트
+      const orderResult = await client.query(
+        `SELECT refunded_amount, shipping_penalty_applied FROM orders WHERE id = $1`,
+        [orderId]
+      );
+      const currentRefunded = parseFloat(orderResult.rows[0].refunded_amount || "0");
+      const currentPenaltyApplied = orderResult.rows[0].shipping_penalty_applied;
+
+      await client.query(
+        `UPDATE orders
+         SET status = $1,
+             refunded_amount = $2,
+             shipping_penalty_applied = $3,
+             updated_at = NOW()
+         WHERE id = $4`,
+        [
+          params.isLastItem ? "refunded" : "partial_refunded",
+          (currentRefunded + params.refundAmount).toString(),
+          params.updatePenaltyFlag ? true : currentPenaltyApplied,
+          orderId,
+        ]
+      );
+
+      await client.query("COMMIT");
+
+      logger.info("반품 완료 처리 완료", {
+        returnId,
+        orderId,
+        refundAmount: params.refundAmount,
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      logger.error("반품 완료 처리 실패", {
+        returnId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }
 

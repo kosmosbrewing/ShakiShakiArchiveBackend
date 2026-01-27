@@ -78,10 +78,9 @@ router.post("/:orderId/cancel", isAuthenticated, isAdmin, asyncHandler(async (re
     throw error;
   }
 
-  // 주문 상태 업데이트
+  // 주문 상태 업데이트 (canceledAt은 storage에서 NOW() 사용)
   const updatedOrder = await storage.cancelOrderPayment(order.id, {
     status: "cancelled",
-    canceledAt: new Date(),
     cancelReason: cancelReason || "관리자 취소",
     refundedAmount: cancelAmount?.toString(),
   });

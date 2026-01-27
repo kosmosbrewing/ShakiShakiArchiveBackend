@@ -2,6 +2,7 @@
 // 커스텀 타입 정의 (any 타입 제거용)
 
 import "express-session";
+import type { SQL } from "drizzle-orm";
 
 // Express Request 확장
 declare global {
@@ -35,10 +36,13 @@ export interface OrderItemCreateData {
 }
 
 // 주문 상태 업데이트 타입
+// SQL 타입은 Drizzle의 sql`NOW()` 사용을 위해 허용
 export interface OrderStatusUpdate {
   status: string;
   trackingNumber?: string;
-  updatedAt: Date;
+  deliveredAt?: Date | SQL<unknown>; // 배송 완료 일시
+  confirmedAt?: Date | SQL<unknown>; // 구매 확정 일시
+  updatedAt: Date | SQL<unknown>;
 }
 
 // 주문 아이템 상태 업데이트 타입

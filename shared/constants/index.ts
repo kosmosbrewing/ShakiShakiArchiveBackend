@@ -2,7 +2,16 @@
 // 상수 통합 export
 
 // 배송비 관련
-export { SHIPPING, calculateShippingFee } from "./shipping";
+export {
+  SHIPPING,
+  calculateShippingFee,
+  isRemoteArea,
+  // 환불 계산
+  calculateRefund,
+  formatRefundSummary,
+  type RefundCalculationInput,
+  type RefundCalculationResult,
+} from "./shipping";
 
 // 주문 관련
 export {
@@ -12,7 +21,19 @@ export {
   ORDER_ID_CONFIG,
   generateExternalOrderId,
   isCancelable,
+  // 아이템별 상태
+  ORDER_ITEM_STATUS,
+  PRE_SHIPPING_STATUSES,
+  POST_SHIPPING_STATUSES,
+  // 반품 관련
+  SELLER_FAULT_REASONS,
+  RETURN_REASON_TYPES,
+  RETURN_STATUS,
   type OrderStatusType,
+  type OrderItemStatusType,
+  type SellerFaultReasonType,
+  type ReturnReasonType,
+  type ReturnStatusType,
 } from "./order";
 
 // 결제 관련
@@ -84,3 +105,11 @@ export {
   LOGGER_ENV_KEYS,
   type LogLevelString,
 } from "./logger";
+
+// 스케줄러 관련
+export {
+  AUTO_CONFIRM_SCHEDULER,
+  ORDER_CLEANUP_SCHEDULER,
+  STOCK_RESERVATION_CLEANUP_SCHEDULER,
+  SCHEDULER_TIMEZONE,
+} from "./scheduler";

@@ -7,12 +7,16 @@ import { db, pool } from "../db";
 import { isAuthenticated } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
 import { cacheStrategies } from "../middleware";
-import { insertOrderSchema, createOrderRequestSchema, stockReservations, orders } from "@shared/schema";
+import { insertOrderSchema, createOrderRequestSchema, partialCancelRequestSchema, stockReservations, orders } from "@shared/schema";
 import {
   calculateShippingFee,
+  calculateRefund,
+  formatRefundSummary,
   generateExternalOrderId,
   NON_CANCELABLE_STATUSES,
   ORDER_STATUS,
+  ORDER_ITEM_STATUS,
+  PRE_SHIPPING_STATUSES,
   ORDER_MESSAGES,
   AUTH_MESSAGES,
   SUCCESS_MESSAGES,
@@ -531,6 +535,203 @@ router.post("/:id/cleanup", isAuthenticated, asyncHandler(async (req, res) => {
 }));
 
 /**
+ * 부분 취소 (배송 전)
+ * POST /api/orders/:id/partial-cancel
+ *
+ * 배송 전 상태(pending, preparing)인 개별 상품을 취소합니다.
+ * - 카카오페이 부분 취소 API 호출
+ * - 재고 복구
+ * - 환불 금액 계산 (무료배송 페널티 적용)
+ */
+router.post("/:id/partial-cancel", isAuthenticated, asyncHandler(async (req, res) => {
+  const orderId = req.params.id;
+  const userId = req.session.userId!;
+
+  // 1. 주문 조회
+  const order = await storage.getOrder(orderId);
+  if (!order) {
+    return res.status(404).json({ message: ORDER_MESSAGES.NOT_FOUND });
+  }
+
+  // 2. 권한 검증 (본인 또는 관리자)
+  const user = await storage.getUser(userId);
+  if (order.userId !== userId && !user?.isAdmin) {
+    return res.status(403).json({ message: AUTH_MESSAGES.FORBIDDEN });
+  }
+
+  // 3. 결제 정보 확인
+  const supportedProviders = ["kakaopay", "naverpay", "toss"];
+  if (!order.paymentKey || !supportedProviders.includes(order.paymentProvider || "")) {
+    return res.status(400).json({
+      message: "부분 취소를 지원하지 않는 결제 수단입니다.",
+      code: "PARTIAL_CANCEL_NOT_SUPPORTED",
+    });
+  }
+
+  // 4. 요청 검증
+  const validation = partialCancelRequestSchema.safeParse(req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      message: ORDER_MESSAGES.PARTIAL_CANCEL_INVALID_ITEMS,
+      errors: validation.error.errors,
+    });
+  }
+
+  const { cancelReason, cancelItems } = validation.data;
+  const orderItems = await storage.getOrderItemsByOrderId(order.id);
+
+  // 5. 취소 대상 아이템 검증
+  const cancelTargets: typeof orderItems = [];
+  for (const item of cancelItems) {
+    const orderItem = orderItems.find((i) => i.id === item.orderItemId);
+
+    if (!orderItem) {
+      return res.status(404).json({
+        message: ORDER_MESSAGES.PARTIAL_CANCEL_ITEM_NOT_FOUND,
+      });
+    }
+
+    // 배송 전 상태인지 확인
+    const preCancelableStatuses = ["pending", "pending_payment", "paying", "payment_confirmed", "preparing"];
+    if (!preCancelableStatuses.includes(orderItem.status)) {
+      return res.status(400).json({
+        message: ORDER_MESSAGES.PARTIAL_CANCEL_USE_RETURN,
+        code: "USE_RETURN_REQUEST",
+      });
+    }
+
+    if (["refunded", "cancelled"].includes(orderItem.status)) {
+      return res.status(400).json({
+        message: ORDER_MESSAGES.PARTIAL_CANCEL_ALREADY_CANCELED,
+      });
+    }
+
+    cancelTargets.push(orderItem);
+  }
+
+  // 6. 마지막 상품 취소 여부 확인
+  const activeItems = orderItems.filter(
+    (i) => !["refunded", "cancelled"].includes(i.status)
+  );
+  const isLastItems = activeItems.length === cancelTargets.length;
+
+  // 7. 환불 금액 계산
+  const cancelItemsAmount = cancelTargets.reduce(
+    (sum, item) => sum + parseFloat(item.productPrice) * item.quantity,
+    0
+  );
+
+  const refundResult = calculateRefund({
+    itemsAmount: cancelItemsAmount,
+    paidShippingFee: parseFloat(order.shippingFee),
+    totalOrderAmount: parseFloat(order.itemsAmount),
+    alreadyRefundedAmount: parseFloat(order.refundedAmount || "0"),
+    isLastItems,
+    isSellerFault: false, // 배송 전 취소는 귀책 구분 없음
+    isAfterShipping: false,
+    penaltyAlreadyApplied: (order as any).shippingPenaltyApplied || false,
+  });
+
+  logger.info("부분 취소 환불 금액 계산", {
+    orderId,
+    cancelItemsAmount,
+    refundResult,
+    isLastItems,
+  });
+
+  // 8. PG사 부분 취소 API 호출
+  const provider = order.paymentProvider!;
+  try {
+    if (provider === "kakaopay") {
+      await cancelKakaoPayPayment({
+        tid: order.paymentKey,
+        cancel_amount: refundResult.totalRefund,
+        cancel_tax_free_amount: 0,
+      });
+    } else if (provider === "naverpay") {
+      await cancelNaverPayPayment({
+        paymentId: order.paymentKey,
+        cancelAmount: refundResult.totalRefund,
+        cancelReason: cancelReason,
+        cancelRequester: "1", // 1: 구매자
+        taxScopeAmount: refundResult.totalRefund,
+        taxExScopeAmount: 0,
+      });
+    } else if (provider === "toss") {
+      await cancelTossPayment(
+        order.paymentKey,
+        cancelReason,
+        refundResult.totalRefund
+      );
+    }
+
+    logger.info("부분 취소 완료", {
+      orderId,
+      provider,
+      cancelAmount: refundResult.totalRefund,
+    });
+  } catch (error) {
+    if (error instanceof KakaoPayPaymentError) {
+      logger.error("카카오페이 부분 취소 실패", {
+        orderId,
+        error: error.message,
+        code: error.code,
+      });
+      return res.status(error.statusCode).json({
+        message: error.message,
+        code: error.code,
+      });
+    }
+    if (error instanceof NaverPayPaymentError) {
+      logger.error("네이버페이 부분 취소 실패", {
+        orderId,
+        error: error.message,
+        code: error.code,
+      });
+      return res.status(error.statusCode).json({
+        message: error.message,
+        code: error.code,
+      });
+    }
+    if (error instanceof TossPaymentError) {
+      logger.error("토스페이먼츠 부분 취소 실패", {
+        orderId,
+        error: error.message,
+        code: error.code,
+      });
+      return res.status(error.statusCode).json({
+        message: error.message,
+        code: error.code,
+      });
+    }
+    throw error;
+  }
+
+  // 9. DB 업데이트
+  await storage.partialCancelOrder({
+    orderId: order.id,
+    cancelItemIds: cancelTargets.map((i) => i.id),
+    refundAmount: refundResult.totalRefund,
+    cancelReason,
+    isFullCancel: isLastItems,
+    updatePenaltyFlag: refundResult.shouldUpdatePenaltyFlag,
+  });
+
+  logger.info("부분 취소 완료", {
+    orderId,
+    canceledItems: cancelTargets.map((i) => i.id),
+    refundAmount: refundResult.totalRefund,
+  });
+
+  return res.json({
+    message: ORDER_MESSAGES.PARTIAL_CANCEL_SUCCESS,
+    canceledItems: cancelTargets.map((i) => i.id),
+    refundDetails: refundResult,
+    summary: formatRefundSummary(refundResult),
+  });
+}));
+
+/**
  * 주문 취소/환불
  * POST /api/orders/:id/cancel
  *
@@ -619,9 +820,9 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
 
   // 8. 🔒 Critical Issue 2 수정: PG사 환불 전 중간 상태로 변경
   // 환불 진행 중 상태로 먼저 변경 (PG사 환불 성공했지만 DB 실패 방지)
+  // canceledAt은 storage에서 NOW() 사용 (DB 세션 KST)
   await storage.cancelOrderPayment(orderId, {
     status: "refunding" as any,  // 중간 상태
-    canceledAt: new Date(),
     cancelReason: `${cancelReason} (환불 진행 중)`,
   });
 
@@ -678,9 +879,9 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
     }
   } catch (error) {
     // PG사 환불 실패 시 상태 되돌리기
+    // canceledAt은 storage에서 NOW() 사용 (DB 세션 KST)
     await storage.cancelOrderPayment(orderId, {
       status: order.status,  // 원래 상태로 복구
-      canceledAt: new Date(),
       cancelReason: `환불 실패: ${error instanceof Error ? error.message : "알 수 없는 오류"}`,
     });
 

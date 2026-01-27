@@ -17,10 +17,14 @@ export const ORDER_STATUS = {
   SHIPPED: "shipped",
   /** 배송 완료 */
   DELIVERED: "delivered",
+  /** 구매 확정 (배송 완료 7일 후 자동 또는 수동) */
+  PURCHASE_CONFIRMED: "purchase_confirmed",
   /** 주문 취소 (결제 전) */
   CANCELLED: "cancelled",
   /** 환불 완료 (결제 후 취소) */
   REFUNDED: "refunded",
+  /** 부분 환불 완료 */
+  PARTIAL_REFUNDED: "partial_refunded",
 } as const;
 
 export type OrderStatusType = (typeof ORDER_STATUS)[keyof typeof ORDER_STATUS];
@@ -35,8 +39,10 @@ export const ORDER_STATUS_ENUM = [
   ORDER_STATUS.PREPARING,
   ORDER_STATUS.SHIPPED,
   ORDER_STATUS.DELIVERED,
+  ORDER_STATUS.PURCHASE_CONFIRMED,
   ORDER_STATUS.CANCELLED,
   ORDER_STATUS.REFUNDED,
+  ORDER_STATUS.PARTIAL_REFUNDED,
 ] as const;
 
 /**
@@ -49,6 +55,76 @@ export const NON_CANCELABLE_STATUSES = [
   ORDER_STATUS.CANCELLED,
   ORDER_STATUS.REFUNDED,
 ] as const;
+
+/**
+ * 아이템별 상태
+ */
+export const ORDER_ITEM_STATUS = {
+  PENDING: "pending",
+  PENDING_PAYMENT: "pending_payment",
+  PAYING: "paying",
+  PAYMENT_CONFIRMED: "payment_confirmed",
+  PREPARING: "preparing",
+  SHIPPED: "shipped",
+  DELIVERED: "delivered",
+  /** 구매 확정 (배송 완료 7일 후 자동 또는 수동) */
+  PURCHASE_CONFIRMED: "purchase_confirmed",
+  CANCELLED: "cancelled",
+  REFUNDED: "refunded",
+  /** 반품 요청됨 */
+  RETURN_REQUESTED: "return_requested",
+  /** 반품 배송 중 (고객 발송) */
+  RETURN_IN_TRANSIT: "return_in_transit",
+  /** 반품 상품 도착 */
+  RETURN_RECEIVED: "return_received",
+} as const;
+
+export type OrderItemStatusType = (typeof ORDER_ITEM_STATUS)[keyof typeof ORDER_ITEM_STATUS];
+
+/**
+ * 배송 전 취소 가능 상태 (부분 취소 가능)
+ */
+export const PRE_SHIPPING_STATUSES = [
+  ORDER_ITEM_STATUS.PENDING,
+  ORDER_ITEM_STATUS.PENDING_PAYMENT,
+  ORDER_ITEM_STATUS.PAYING,
+  ORDER_ITEM_STATUS.PAYMENT_CONFIRMED,
+  ORDER_ITEM_STATUS.PREPARING,
+] as const;
+
+/**
+ * 배송 후 반품 가능 상태
+ */
+export const POST_SHIPPING_STATUSES = [
+  ORDER_ITEM_STATUS.SHIPPED,
+  ORDER_ITEM_STATUS.DELIVERED,
+] as const;
+
+/**
+ * 판매자 귀책 반품 사유
+ */
+export const SELLER_FAULT_REASONS = ["defect", "wrong_item"] as const;
+export type SellerFaultReasonType = (typeof SELLER_FAULT_REASONS)[number];
+
+/**
+ * 반품 사유 타입
+ */
+export const RETURN_REASON_TYPES = ["change_mind", "defect", "wrong_item", "other"] as const;
+export type ReturnReasonType = (typeof RETURN_REASON_TYPES)[number];
+
+/**
+ * 반품 상태
+ */
+export const RETURN_STATUS = {
+  REQUESTED: "requested",
+  IN_TRANSIT: "in_transit",
+  RECEIVED: "received",
+  INSPECTED: "inspected",
+  REFUNDED: "refunded",
+  REJECTED: "rejected",
+} as const;
+
+export type ReturnStatusType = (typeof RETURN_STATUS)[keyof typeof RETURN_STATUS];
 
 /**
  * 주문 ID 생성 설정

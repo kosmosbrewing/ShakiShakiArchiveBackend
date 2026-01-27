@@ -1,5 +1,5 @@
 // server/utils/orderCleanup.ts
-// 유령 주문 자동 정리 (30분 이상 pending_payment/paying 상태 주문 삭제)
+// 유령 주문 자동 정리 (5분 이상 pending_payment/paying 상태 주문 삭제)
 // cancelled, refunded 상태는 영구 보관 (사용자가 인지한 액션)
 
 import { db } from "../db";
@@ -7,14 +7,12 @@ import { orders } from "../../shared/schema";
 import { eq, and, lt, or, sql } from "drizzle-orm";
 import { storage } from "../storage";
 import { createLogger } from "./logger";
+import { ORDER_CLEANUP_SCHEDULER } from "@shared/constants";
 
 const logger = createLogger("OrderCleanup");
 
-// 정리 간격: 1분 (60000ms) - 빠른 재고 복구
-const CLEANUP_INTERVAL_MS = 1 * 60 * 1000;
-
-// 주문 만료 시간: 5분 (300000ms) - 빠른 재고 복구
-const ORDER_EXPIRY_MS = 5 * 60 * 1000;
+// 상수에서 설정값 가져오기
+const { INTERVAL_MS: CLEANUP_INTERVAL_MS, MAX_PENDING_AGE_MS: ORDER_EXPIRY_MS } = ORDER_CLEANUP_SCHEDULER;
 
 /**
  * 만료된 유령 주문 정리 함수

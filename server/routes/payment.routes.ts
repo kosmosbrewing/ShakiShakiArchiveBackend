@@ -320,7 +320,7 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
       externalOrderId: payment.orderId,
       paymentMethod: payment.method,
       status: "payment_confirmed",
-      paidAt: payment.approvedAt ? new Date(payment.approvedAt) : new Date(),
+      // paidAt 생략 시 storage에서 NOW() 사용 (DB 세션 KST)
     });
 
     // 재고 선점 기록 삭제 (중요: 만료 시 이중 복구 방지)
@@ -348,7 +348,7 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
       paymentKey: payment.paymentKey,
       externalOrderId: payment.orderId,
       paymentMethod: payment.method,
-      paidAt: payment.approvedAt ? new Date(payment.approvedAt) : new Date(),
+      // paidAt 생략 시 storage에서 NOW() 사용 (DB 세션 KST)
     });
 
     // 8. 재고 부족 시 PG사 결제 취소 및 에러 반환
@@ -381,7 +381,12 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
   }
 
   // 9. 장바구니 비우기 (결제 성공 시점에 수행)
-  await storage.clearCart(userId);
+  try {
+    await storage.clearCart(userId);
+    logger.info("장바구니 비우기 완료", { userId, orderId: order.id });
+  } catch (cartError) {
+    logger.error("장바구니 비우기 실패", { userId, orderId: order.id, error: cartError });
+  }
 
   // 10. 최종 주문 정보 조회
   const updatedOrder = await storage.getOrder(order.id);
@@ -515,11 +520,10 @@ router.post("/:orderId/cancel", paymentRateLimiter, isAuthenticated, asyncHandle
     throw error;
   }
 
-  // 7. 주문 상태 업데이트
+  // 7. 주문 상태 업데이트 (canceledAt은 storage에서 NOW() 사용)
   const newStatus = payment.status === "CANCELED" ? "cancelled" : order.status;
   const updatedOrder = await storage.cancelOrderPayment(orderId, {
     status: newStatus,
-    canceledAt: new Date(),
     cancelReason,
     refundedAmount: cancelAmount?.toString(),
   });

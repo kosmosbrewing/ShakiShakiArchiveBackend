@@ -13,10 +13,9 @@ import {
   cartItems,
   type StockReservation,
 } from "@shared/schema";
-import { STOCK_MESSAGES } from "../constants";
+import { STOCK_MESSAGES, STOCK_RESERVATION_CLEANUP_SCHEDULER } from "../constants";
 import { eq, and, gt, lt } from "drizzle-orm";
 import { createLogger } from "../utils/logger";
-import { getKSTDate } from "../utils/date";
 
 const router = Router();
 const logger = createLogger("StockReservation");
@@ -245,7 +244,7 @@ router.post(
       }
 
       // 6. 재고 선점 기록 생성 (해제/만료 시 재고 복구용)
-      const TTL_SECONDS = 180; // 3분
+      const { TTL_SECONDS } = STOCK_RESERVATION_CLEANUP_SCHEDULER;
       const expiresAt = new Date(Date.now() + TTL_SECONDS * 1000);
       const reservationResult = await client.query(
         `INSERT INTO stock_reservations (user_id, items, expires_at)
@@ -534,7 +533,7 @@ let cleanupInterval: NodeJS.Timeout | null = null;
 export function startReservationCleanup(): void {
   if (cleanupInterval) return;
 
-  const CLEANUP_INTERVAL_MS = 60000; // 1분
+  const { INTERVAL_MS, TTL_SECONDS } = STOCK_RESERVATION_CLEANUP_SCHEDULER;
 
   cleanupInterval = setInterval(async () => {
     try {
@@ -542,10 +541,11 @@ export function startReservationCleanup(): void {
     } catch (error) {
       logger.error("재고 선점 정리 실패", { error });
     }
-  }, CLEANUP_INTERVAL_MS);
+  }, INTERVAL_MS);
 
   logger.info("재고 선점 자동 정리 시작", {
-    intervalMs: CLEANUP_INTERVAL_MS,
+    intervalMs: INTERVAL_MS,
+    ttlSeconds: TTL_SECONDS,
   });
 }
 

@@ -8,6 +8,7 @@ import productRoutes from "./product.routes";
 import categoryRoutes from "./category.routes";
 import cartRoutes from "./cart.routes";
 import orderRoutes from "./order.routes";
+import returnRoutes from "./return.routes";
 import paymentRoutes from "./payment.routes";
 import naverpayRoutes from "./naverpay.routes";
 import kakaopayRoutes from "./kakaopay.routes";
@@ -50,6 +51,7 @@ router.use("/constants", constantsRoutes); // 프론트엔드 공용 상수
 // 인증 필요 라우트
 router.use("/cart", cartRoutes);
 router.use("/orders", orderRoutes);
+router.use("/returns", returnRoutes); // 반품 관련
 router.use("/payments", paymentRoutes);
 router.use("/payments/naverpay", naverpayRoutes); // 네이버페이 결제
 router.use("/payments/kakaopay", kakaopayRoutes); // 카카오페이 결제

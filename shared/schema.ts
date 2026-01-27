@@ -466,6 +466,8 @@ export const orders = pgTable(
     externalOrderId: varchar("external_order_id", { length: 64 }).unique(), // PG사 주문 ID (중복 방지)
     paymentMethod: varchar("payment_method", { length: 50 }), // 'card', 'transfer', 'naverpay' 등
     paidAt: timestamp("paid_at"),
+    deliveredAt: timestamp("delivered_at"), // 배송 완료 일시
+    confirmedAt: timestamp("confirmed_at"), // 구매 확정 일시 (정산 근거)
     canceledAt: timestamp("canceled_at"),
     cancelReason: text("cancel_reason"),
     refundedAmount: decimal("refunded_amount", {
@@ -476,6 +478,8 @@ export const orders = pgTable(
     // - 주문 생성 시: storage.createOrder()가 재고 차감 → isStockReserved = true
     // - 결제 승인 시: updateOrderPayment()로 상태만 업데이트 (재고 차감 안 함)
     isStockReserved: boolean("is_stock_reserved").default(true).notNull(),
+    // [추가] 무료배송 페널티 차감 여부 플래그 (부분 취소/반품 시 중복 차감 방지)
+    shippingPenaltyApplied: boolean("shipping_penalty_applied").default(false).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -1120,3 +1124,108 @@ export const reserveStockRequestSchema = z.object({
   directPurchaseItem: directPurchaseItemSchema.optional(),
 });
 export type ReserveStockRequest = z.infer<typeof reserveStockRequestSchema>;
+
+// ------------------------------------------------------------------
+// 반품 (Returns) 테이블 - UUID PK 사용
+// ------------------------------------------------------------------
+export const returns = pgTable(
+  "returns",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id")
+      .references(() => orders.id)
+      .notNull(),
+    orderItemId: integer("order_item_id")
+      .references(() => orderItems.id)
+      .notNull(),
+    userId: uuid("user_id")
+      .references(() => users.id)
+      .notNull(),
+    // 반품 사유
+    reason: text("reason").notNull(),
+    reasonType: varchar("reason_type", { length: 50 }).notNull(), // "change_mind" | "defect" | "wrong_item" | "other"
+    // 반품 상태: requested → in_transit → received → inspected → refunded
+    status: varchar("status", { length: 30 }).default("requested").notNull(),
+    // 반품 택배 정보 (고객 직접 발송)
+    returnTrackingNumber: varchar("return_tracking_number", { length: 50 }),
+    returnCourierCompany: varchar("return_courier_company", { length: 50 }),
+    // 검수 정보
+    inspectionResult: varchar("inspection_result", { length: 30 }), // "approved" | "rejected"
+    inspectionNote: text("inspection_note"),
+    inspectedAt: timestamp("inspected_at"),
+    // 환불 정보
+    refundAmount: decimal("refund_amount", { precision: 12, scale: 2 }),
+    refundedAt: timestamp("refunded_at"),
+    // 타임스탬프
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("IDX_returns_order_id").on(table.orderId),
+    index("IDX_returns_order_item_id").on(table.orderItemId),
+    index("IDX_returns_user_id").on(table.userId),
+    index("IDX_returns_status").on(table.status),
+    index("IDX_returns_created_at").on(table.createdAt),
+  ]
+);
+
+export const returnsRelations = relations(returns, ({ one }) => ({
+  order: one(orders, {
+    fields: [returns.orderId],
+    references: [orders.id],
+  }),
+  orderItem: one(orderItems, {
+    fields: [returns.orderItemId],
+    references: [orderItems.id],
+  }),
+  user: one(users, {
+    fields: [returns.userId],
+    references: [users.id],
+  }),
+}));
+
+export type Return = typeof returns.$inferSelect;
+export const insertReturnSchema = createInsertSchema(returns, {
+  orderId: z.string().uuid(),
+  orderItemId: z.number().int().positive(),
+  userId: z.string().uuid(),
+}).omit({
+  id: true,
+  status: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertReturn = z.infer<typeof insertReturnSchema>;
+
+// 부분 취소 요청 스키마 (배송 전)
+export const partialCancelRequestSchema = z.object({
+  cancelReason: z.string().min(1, "취소 사유를 입력해주세요").max(500),
+  cancelItems: z.array(
+    z.object({
+      orderItemId: z.number().int().positive("유효한 주문 상품 ID가 아닙니다"),
+    })
+  ).min(1, "취소할 상품을 선택해주세요").max(50),
+});
+export type PartialCancelRequest = z.infer<typeof partialCancelRequestSchema>;
+
+// 반품 요청 스키마 (배송 후)
+export const returnRequestSchema = z.object({
+  orderItemId: z.number().int().positive("유효한 주문 상품 ID가 아닙니다"),
+  reason: z.string().min(1, "반품 사유를 입력해주세요").max(500),
+  reasonType: z.enum(["change_mind", "defect", "wrong_item", "other"]),
+});
+export type ReturnRequest = z.infer<typeof returnRequestSchema>;
+
+// 반품 운송장 등록 스키마
+export const returnTrackingSchema = z.object({
+  trackingNumber: z.string().min(1, "운송장 번호를 입력해주세요").max(50),
+  courierCompany: z.string().min(1, "택배사를 선택해주세요").max(50),
+});
+export type ReturnTrackingInput = z.infer<typeof returnTrackingSchema>;
+
+// 반품 검수 스키마 (관리자용)
+export const returnInspectionSchema = z.object({
+  result: z.enum(["approved", "rejected"]),
+  note: z.string().max(500).optional(),
+});
+export type ReturnInspectionInput = z.infer<typeof returnInspectionSchema>;

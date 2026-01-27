@@ -19,6 +19,7 @@ import routes from "./routes";
 import { meilisearchService } from "./services/meilisearch.service";
 import { startReservationCleanup } from "./routes/stock.routes";
 import { startOrderCleanup } from "./utils/orderCleanup";
+import { initializeSchedulers } from "./jobs";
 import { testConnection } from "./db";
 import { createLogger, getCurrentLogLevel } from "./utils/logger";
 
@@ -152,5 +153,8 @@ httpServer.listen(
 
     // 유령 주문 자동 정리 시작 (1시간 이상 pending_payment 주문 삭제)
     startOrderCleanup();
+
+    // 스케줄러 초기화 (자동 구매확정 등)
+    initializeSchedulers();
   }
 );

@@ -6,6 +6,12 @@ export {
   // 배송비
   SHIPPING,
   calculateShippingFee,
+  isRemoteArea,
+  // 환불 계산
+  calculateRefund,
+  formatRefundSummary,
+  type RefundCalculationInput,
+  type RefundCalculationResult,
   // 주문
   ORDER_STATUS,
   ORDER_STATUS_ENUM,
@@ -13,6 +19,18 @@ export {
   ORDER_ID_CONFIG,
   generateExternalOrderId,
   isCancelable,
+  // 주문 아이템 상태
+  ORDER_ITEM_STATUS,
+  PRE_SHIPPING_STATUSES,
+  POST_SHIPPING_STATUSES,
+  // 반품 관련
+  SELLER_FAULT_REASONS,
+  RETURN_REASON_TYPES,
+  RETURN_STATUS,
+  type OrderItemStatusType,
+  type SellerFaultReasonType,
+  type ReturnReasonType,
+  type ReturnStatusType,
   // 결제
   PAYMENT_PROVIDER,
   TOSS_PAYMENT_STATUS,
@@ -64,4 +82,9 @@ export {
   SENSITIVE_KEYS,
   LOGGER_ENV_KEYS,
   type LogLevelString,
+  // 스케줄러
+  AUTO_CONFIRM_SCHEDULER,
+  ORDER_CLEANUP_SCHEDULER,
+  STOCK_RESERVATION_CLEANUP_SCHEDULER,
+  SCHEDULER_TIMEZONE,
 } from "@shared/constants";

@@ -58,6 +58,24 @@ export const ORDER_MESSAGES = {
   DELETE_DISABLED: "주문 삭제 기능이 비활성화되었습니다. 주문 취소를 이용해주세요.",
   STATUS_CHANGED_CANNOT_DELETE: "주문 상태가 변경되어 삭제할 수 없습니다.",
   DELETED: "주문이 삭제되었습니다.",
+  // 부분 취소 메시지
+  PARTIAL_CANCEL_SUCCESS: "선택한 상품이 취소되었습니다.",
+  PARTIAL_CANCEL_INVALID_ITEMS: "취소할 상품을 올바르게 선택해주세요.",
+  PARTIAL_CANCEL_ITEM_NOT_FOUND: "취소할 상품을 찾을 수 없습니다.",
+  PARTIAL_CANCEL_ALREADY_CANCELED: "이미 취소된 상품입니다.",
+  PARTIAL_CANCEL_USE_RETURN: "배송 후 상품은 반품 요청을 이용해주세요.",
+  PARTIAL_CANCEL_NOT_CANCELABLE: "취소할 수 없는 상태의 상품입니다.",
+  // 반품 메시지
+  RETURN_REQUEST_SUCCESS: "반품 요청이 접수되었습니다.",
+  RETURN_TRACKING_UPDATED: "반품 운송장이 등록되었습니다.",
+  RETURN_INSPECTION_APPROVED: "검수가 완료되어 환불이 진행됩니다.",
+  RETURN_INSPECTION_REJECTED: "반품이 거절되었습니다.",
+  RETURN_ALREADY_REQUESTED: "이미 반품 요청된 상품입니다.",
+  RETURN_NOT_DELIVERED: "배송 완료된 상품만 반품 가능합니다.",
+  RETURN_PERIOD_EXPIRED: "반품 가능 기간(7일)이 지났습니다.",
+  RETURN_NOT_FOUND: "반품 요청을 찾을 수 없습니다.",
+  RETURN_NEXT_STEP_TRACKING: "반품 상품을 발송 후 운송장 번호를 입력해주세요.",
+  RETURN_NEXT_STEP_INSPECTION: "상품 도착 후 검수가 진행됩니다.",
 } as const;
 
 /**

@@ -290,13 +290,13 @@ router.get("/callback", asyncHandler(async (req, res) => {
       logger.info("✅ 재고 이미 차감됨 - updateOrderPayment만 호출 (네이버페이)", { orderId: order.id });
 
       // 선점 패턴 사용: 이미 재고가 차감되어 있으므로 상태만 업데이트
+      // paidAt 미전달 시 storage에서 NOW() 사용
       await storage.updateOrderPayment(order.id, {
         paymentProvider: "naverpay",
         paymentKey: detail.paymentId,
         externalOrderId: detail.merchantPayKey,
         paymentMethod: detail.primaryPayMeans?.toLowerCase() || "naverpay",
         status: "payment_confirmed",
-        paidAt: new Date(),
       });
 
       // 재고 선점 기록 삭제 (중요: 만료 시 이중 복구 방지)
@@ -310,6 +310,14 @@ router.get("/callback", asyncHandler(async (req, res) => {
         logger.error("재고 선점 기록 삭제 실패", { userId: order.userId, orderId: order.id, error: deleteError });
       }
 
+      // 장바구니 비우기 (결제 완료된 상품 제거)
+      try {
+        await storage.clearCart(order.userId);
+        logger.info("장바구니 비우기 완료", { userId: order.userId, orderId: order.id });
+      } catch (cartError) {
+        logger.error("장바구니 비우기 실패", { userId: order.userId, orderId: order.id, error: cartError });
+      }
+
       logger.info("결제 승인 완료 (선점 패턴 - 재고 이미 차감됨)", { orderId: order.id });
     } else {
       logger.warn("❌ 소프트 락 방식 실행 (deprecated) - 이중 차감 위험! (네이버페이)", {
@@ -319,12 +327,12 @@ router.get("/callback", asyncHandler(async (req, res) => {
       });
 
       // 기존 방식: 소프트 락 기반 재고 확인 및 차감 + 주문 상태 업데이트
+      // paidAt 미전달 시 storage에서 NOW() 사용
       const stockResult = await storage.confirmOrderWithStockLock(order.id, {
         paymentProvider: "naverpay",
         paymentKey: detail.paymentId,
         externalOrderId: detail.merchantPayKey,
         paymentMethod: detail.primaryPayMeans?.toLowerCase() || "naverpay",
-        paidAt: new Date(),
       });
 
       // 재고 부족 시 PG사 결제 취소 및 에러 반환
@@ -626,7 +634,6 @@ router.post(
 
     await storage.cancelOrderPayment(orderId, {
       status: newStatus,
-      canceledAt: new Date(),
       cancelReason,
       refundedAmount: totalCancelAmount.toString(),
     });
