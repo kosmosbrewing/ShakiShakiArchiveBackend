@@ -40,6 +40,7 @@ import {
   normalizeKakaoPayCancelResponse,
 } from "../services/kakaopay.service";
 import { createLogger } from "../utils/logger";
+import { sendOrderCancelEmail, sendRefundCompleteEmail } from "../services/email.service";
 import { eq, and, gt } from "drizzle-orm";
 
 const router = Router();
@@ -723,6 +724,23 @@ router.post("/:id/partial-cancel", isAuthenticated, asyncHandler(async (req, res
     refundAmount: refundResult.totalRefund,
   });
 
+  // 부분 환불 이메일 발송 (비동기 - fire-and-forget)
+  const partialCancelUser = await storage.getUser(userId);
+  if (partialCancelUser?.email) {
+    const canceledProductNames = cancelTargets.map(i => i.productName).join(', ');
+    sendRefundCompleteEmail({
+      orderId: order.id,
+      externalOrderId: order.externalOrderId || '',
+      userName: partialCancelUser.userName || '고객',
+      email: partialCancelUser.email,
+      orderName: canceledProductNames || '주문 상품',
+      cancelReason,
+      refundAmount: refundResult.totalRefund,
+      canceledAt: new Date(),
+      paymentMethod: order.paymentMethod,
+    }).catch(err => logger.error("부분 환불 이메일 발송 실패", { orderId: order.id, error: err instanceof Error ? err.message : String(err) }));
+  }
+
   return res.json({
     message: ORDER_MESSAGES.PARTIAL_CANCEL_SUCCESS,
     canceledItems: cancelTargets.map((i) => i.id),
@@ -789,6 +807,26 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
       previousStatus: order.status,
       isStockReserved: shouldRestoreStock,
     });
+
+    // 취소 이메일 발송 (비동기 - fire-and-forget)
+    const cancelUser = await storage.getUser(userId);
+    if (cancelUser?.email && updatedOrder) {
+      // 주문명 계산을 위한 주문 아이템 조회
+      const cancelOrderItems = await storage.getOrderItemsByOrderId(order.id);
+      const cancelOrderName = cancelOrderItems.length > 1
+        ? `${cancelOrderItems[0]?.productName} 외 ${cancelOrderItems.length - 1}건`
+        : cancelOrderItems[0]?.productName || '주문';
+      sendOrderCancelEmail({
+        orderId: order.id,
+        externalOrderId: order.externalOrderId || '',
+        userName: cancelUser.userName || '고객',
+        email: cancelUser.email,
+        orderName: cancelOrderName,
+        cancelReason,
+        refundAmount: 0, // 결제 전 취소
+        canceledAt: new Date(),
+      }).catch(err => logger.error("취소 이메일 발송 실패", { orderId: order.id, error: err instanceof Error ? err.message : String(err) }));
+    }
 
     return res.json({
       message: ORDER_MESSAGES.CANCEL_SUCCESS,
@@ -1028,6 +1066,27 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
 
   // 11. 최종 주문 조회
   const finalOrder = await storage.getOrder(orderId);
+
+  // 12. 환불 완료 이메일 발송 (비동기 - fire-and-forget)
+  const refundUser = await storage.getUser(userId);
+  if (refundUser?.email && finalOrder) {
+    // 주문명 계산을 위한 주문 아이템 조회
+    const refundOrderItems = await storage.getOrderItemsByOrderId(order.id);
+    const refundOrderName = refundOrderItems.length > 1
+      ? `${refundOrderItems[0]?.productName} 외 ${refundOrderItems.length - 1}건`
+      : refundOrderItems[0]?.productName || '주문';
+    sendRefundCompleteEmail({
+      orderId: order.id,
+      externalOrderId: order.externalOrderId || '',
+      userName: refundUser.userName || '고객',
+      email: refundUser.email,
+      orderName: refundOrderName,
+      cancelReason,
+      refundAmount: parseFloat(order.totalAmount),
+      canceledAt: new Date(),
+      paymentMethod: order.paymentMethod,
+    }).catch(err => logger.error("환불 이메일 발송 실패", { orderId: order.id, error: err instanceof Error ? err.message : String(err) }));
+  }
 
   res.json({
     message: ORDER_MESSAGES.CANCEL_SUCCESS,

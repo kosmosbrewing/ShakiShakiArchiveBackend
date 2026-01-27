@@ -23,6 +23,7 @@ import { confirmPaymentSchema, cancelPaymentSchema, stockReservations } from "@s
 import { eq } from "drizzle-orm";
 import { createLogger } from "../utils/logger";
 import { ORDER_MESSAGES, AUTH_MESSAGES, PAYMENT_MESSAGES } from "@shared/constants/messages";
+import { sendPaymentConfirmEmail } from "../services/email.service";
 
 const router = Router();
 const logger = createLogger("Payment");
@@ -390,6 +391,37 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
 
   // 10. 최종 주문 정보 조회
   const updatedOrder = await storage.getOrder(order.id);
+
+  // 11. 결제 완료 이메일 발송 (비동기 - fire-and-forget)
+  const user = await storage.getUser(userId);
+  if (user?.email && updatedOrder) {
+    const orderItems = await storage.getOrderItemsByOrderId(order.id);
+    // 주문명 계산: "상품명" 또는 "상품명 외 N건"
+    const orderName = orderItems.length > 1
+      ? `${orderItems[0]?.productName} 외 ${orderItems.length - 1}건`
+      : orderItems[0]?.productName || '주문';
+    sendPaymentConfirmEmail({
+      orderId: order.id,
+      externalOrderId: order.externalOrderId || '',
+      userName: user.userName || '고객',
+      email: user.email,
+      orderName,
+      items: orderItems.map(item => ({
+        productName: item.productName,
+        quantity: item.quantity,
+        price: parseFloat(item.productPrice) * item.quantity,
+        options: item.options,
+      })),
+      itemsAmount: parseFloat(updatedOrder.itemsAmount),
+      shippingFee: parseFloat(updatedOrder.shippingFee),
+      totalAmount: parseFloat(updatedOrder.totalAmount),
+      shippingName: updatedOrder.shippingName,
+      shippingAddress: updatedOrder.shippingAddress,
+      shippingDetailAddress: updatedOrder.shippingDetailAddress,
+      shippingPhone: updatedOrder.shippingPhone,
+      paymentMethod: payment.method,
+    }).catch(err => logger.error("결제 완료 이메일 발송 실패", { orderId: order.id, error: err instanceof Error ? err.message : String(err) }));
+  }
 
   logger.info("결제 승인 완료 (재고 차감 + 장바구니 비움)", { orderId: order.id, paymentKey });
 
