@@ -40,7 +40,7 @@ import {
   normalizeKakaoPayCancelResponse,
 } from "../services/kakaopay.service";
 import { createLogger } from "../utils/logger";
-import { sendOrderCancelEmail, sendRefundCompleteEmail } from "../services/email.service";
+import { sendRefundCompleteEmail } from "../services/email.service";
 import { eq, and, gt } from "drizzle-orm";
 
 const router = Router();
@@ -808,25 +808,7 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
       isStockReserved: shouldRestoreStock,
     });
 
-    // 취소 이메일 발송 (비동기 - fire-and-forget)
-    const cancelUser = await storage.getUser(userId);
-    if (cancelUser?.email && updatedOrder) {
-      // 주문명 계산을 위한 주문 아이템 조회
-      const cancelOrderItems = await storage.getOrderItemsByOrderId(order.id);
-      const cancelOrderName = cancelOrderItems.length > 1
-        ? `${cancelOrderItems[0]?.productName} 외 ${cancelOrderItems.length - 1}건`
-        : cancelOrderItems[0]?.productName || '주문';
-      sendOrderCancelEmail({
-        orderId: order.id,
-        externalOrderId: order.externalOrderId || '',
-        userName: cancelUser.userName || '고객',
-        email: cancelUser.email,
-        orderName: cancelOrderName,
-        cancelReason,
-        refundAmount: 0, // 결제 전 취소
-        canceledAt: new Date(),
-      }).catch(err => logger.error("취소 이메일 발송 실패", { orderId: order.id, error: err instanceof Error ? err.message : String(err) }));
-    }
+    // 결제 전 취소는 이메일 발송 불필요 (실제 거래 미발생)
 
     return res.json({
       message: ORDER_MESSAGES.CANCEL_SUCCESS,

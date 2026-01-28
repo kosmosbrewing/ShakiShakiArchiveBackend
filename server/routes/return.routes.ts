@@ -32,6 +32,7 @@ import {
   TossPaymentError,
 } from "../services/toss.service";
 import { createLogger } from "../utils/logger";
+import { sendReturnRequestEmail } from "../services/email.service";
 
 const router = Router();
 const logger = createLogger("Return");
@@ -120,6 +121,22 @@ router.post(
       orderItemId,
       reasonType,
     });
+
+    // 9. 반품 요청 이메일 발송 (비동기 - fire-and-forget)
+    const user = await storage.getUser(userId);
+    if (user?.email) {
+      sendReturnRequestEmail({
+        returnId: returnRequest.id,
+        orderId: order.id,
+        externalOrderId: order.externalOrderId || '',
+        userName: user.userName || '고객',
+        email: user.email,
+        productName: orderItem.productName,
+        reason: reason || '',
+        reasonType,
+        requestedAt: new Date(),
+      }).catch(err => logger.error("반품 요청 이메일 발송 실패", { returnId: returnRequest.id, error: err instanceof Error ? err.message : String(err) }));
+    }
 
     return res.json({
       message: ORDER_MESSAGES.RETURN_REQUEST_SUCCESS,

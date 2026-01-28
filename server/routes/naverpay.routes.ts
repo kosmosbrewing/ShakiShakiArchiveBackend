@@ -24,6 +24,7 @@ import {
 } from "../services/naverpay.service";
 import { createLogger } from "../utils/logger";
 import { ORDER_MESSAGES, AUTH_MESSAGES, PAYMENT_MESSAGES } from "@shared/constants/messages";
+import { sendPaymentConfirmEmail } from "../services/email.service";
 
 const router = Router();
 const logger = createLogger("NaverPay");
@@ -375,6 +376,37 @@ router.get("/callback", asyncHandler(async (req, res) => {
       paymentId: detail.paymentId,
       totalPayAmount: detail.totalPayAmount,
     });
+
+    // 결제 완료 이메일 발송 (비동기 - fire-and-forget)
+    const updatedOrder = await storage.getOrder(order.id);
+    const user = await storage.getUser(order.userId);
+    if (user?.email && updatedOrder) {
+      const orderItems = await storage.getOrderItemsByOrderId(order.id);
+      const orderName = orderItems.length > 1
+        ? `${orderItems[0]?.productName} 외 ${orderItems.length - 1}건`
+        : orderItems[0]?.productName || '주문';
+      sendPaymentConfirmEmail({
+        orderId: order.id,
+        externalOrderId: order.externalOrderId || '',
+        userName: user.userName || '고객',
+        email: user.email,
+        orderName,
+        items: orderItems.map(item => ({
+          productName: item.productName,
+          quantity: item.quantity,
+          price: parseFloat(item.productPrice) * item.quantity,
+          options: item.options,
+        })),
+        itemsAmount: parseFloat(updatedOrder.itemsAmount),
+        shippingFee: parseFloat(updatedOrder.shippingFee),
+        totalAmount: parseFloat(updatedOrder.totalAmount),
+        shippingName: updatedOrder.shippingName,
+        shippingAddress: updatedOrder.shippingAddress,
+        shippingDetailAddress: updatedOrder.shippingDetailAddress,
+        shippingPhone: updatedOrder.shippingPhone,
+        paymentMethod: detail.primaryPayMeans || 'naverpay',
+      }).catch(err => logger.error("결제 완료 이메일 발송 실패", { orderId: order.id, error: err instanceof Error ? err.message : String(err) }));
+    }
 
     // ✅ URL 클래스를 사용한 안전한 리다이렉트 URL 생성
     const successUrl = new URL('/checkout/success', config.frontendUrl);
