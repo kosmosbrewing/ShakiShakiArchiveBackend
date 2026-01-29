@@ -228,6 +228,33 @@ export interface IStorage {
   // 주문 취소 시 재고 복구
   restoreStockOnCancel(orderId: string): Promise<void>;
 
+  // 개별 주문 상품 취소 (부분 취소용)
+  cancelOrderItemPayment(
+    orderItemId: number,
+    cancelData: {
+      status: string;
+      cancelReason?: string;
+    }
+  ): Promise<OrderItem | undefined>;
+
+  // 개별 상품 재고 복구 (부분 취소용)
+  restoreStockOnItemCancel(orderItemId: number): Promise<void>;
+
+  // 주문 환불 금액 누적 업데이트
+  addRefundedAmount(
+    orderId: string,
+    additionalRefundAmount: string
+  ): Promise<Order | undefined>;
+
+  // 주문 상태만 업데이트 (orderItems는 건드리지 않음)
+  updateOrderStatusOnly(
+    orderId: string,
+    updateData: {
+      status: string;
+      cancelReason?: string;
+    }
+  ): Promise<Order | undefined>;
+
   // 🔒 Cron Job 전용: 재고 복구 + 주문 삭제 (원자적 트랜잭션)
   restoreStockAndDeleteOrder(orderId: string): Promise<void>;
 
@@ -1812,6 +1839,181 @@ export class DatabaseStorage implements IStorage {
     } finally {
       client.release();
     }
+  }
+
+  // ------------------------------------------------------------------
+  // 개별 주문 상품 취소 (부분 취소용)
+  // ------------------------------------------------------------------
+  async cancelOrderItemPayment(
+    orderItemId: number,
+    cancelData: {
+      status: string;
+      cancelReason?: string;
+    }
+  ): Promise<OrderItem | undefined> {
+    const [updated] = await db
+      .update(orderItems)
+      .set({
+        status: cancelData.status,
+      })
+      .where(eq(orderItems.id, orderItemId))
+      .returning();
+    return updated;
+  }
+
+  // ------------------------------------------------------------------
+  // 개별 상품 재고 복구 (부분 취소용)
+  // ------------------------------------------------------------------
+  async restoreStockOnItemCancel(orderItemId: number): Promise<void> {
+    const client = await pool.connect();
+    const logger = createLogger("StockRestoreItem");
+
+    // 🔒 normalizeSize 함수 (createOrder와 동일)
+    const normalizeSize = (size: string): string => {
+      return size.trim().toLowerCase();
+    };
+
+    try {
+      await client.query("BEGIN");
+
+      // 주문 아이템 조회
+      const itemResult = await client.query(
+        `SELECT oi.product_id, oi.quantity, oi.options
+         FROM order_items oi
+         WHERE oi.id = $1`,
+        [orderItemId]
+      );
+
+      if (itemResult.rows.length === 0) {
+        await client.query("ROLLBACK");
+        logger.warn("개별 재고 복구 실패 - 아이템 없음", { orderItemId });
+        return;
+      }
+
+      const item = itemResult.rows[0];
+
+      logger.info("개별 재고 복구 시작", {
+        orderItemId,
+        productId: item.product_id,
+        quantity: item.quantity,
+      });
+
+      // 옵션에서 사이즈 추출 (공백 포함된 사이즈도 처리: "X Large", "Free Size" 등)
+      let variantSize: string | null = null;
+      if (item.options) {
+        const match = item.options.match(/Size:\s*(.+?)$/im);
+        if (match) {
+          // 🔒 normalizeSize 적용 (createOrder와 동일하게)
+          variantSize = normalizeSize(match[1]);
+        }
+      }
+
+      if (variantSize) {
+        // variant 재고 복구 (사이즈 지정)
+        const updateResult = await client.query(
+          `UPDATE product_variants
+           SET stock_quantity = stock_quantity + $1, updated_at = NOW()
+           WHERE product_id = $2 AND LOWER(TRIM(size)) = $3
+           RETURNING id, size, stock_quantity`,
+          [item.quantity, item.product_id, variantSize]
+        );
+
+        if (updateResult.rows.length > 0) {
+          logger.info("개별 재고 복구 완료 (variant)", {
+            orderItemId,
+            productId: item.product_id,
+            size: updateResult.rows[0].size,
+            quantity: item.quantity,
+            newStock: updateResult.rows[0].stock_quantity,
+          });
+        } else {
+          logger.warn("개별 재고 복구 실패 - variant 찾을 수 없음", {
+            orderItemId,
+            productId: item.product_id,
+            size: variantSize,
+          });
+        }
+      } else {
+        // variant 재고 복구 (첫 번째 variant 사용)
+        const updateResult = await client.query(
+          `UPDATE product_variants
+           SET stock_quantity = stock_quantity + $1, updated_at = NOW()
+           WHERE product_id = $2
+           AND id = (
+             SELECT id FROM product_variants
+             WHERE product_id = $2
+             ORDER BY created_at ASC
+             LIMIT 1
+           )
+           RETURNING id, size, stock_quantity`,
+          [item.quantity, item.product_id]
+        );
+
+        if (updateResult.rows.length > 0) {
+          logger.info("개별 재고 복구 완료 (기본 variant)", {
+            orderItemId,
+            productId: item.product_id,
+            size: updateResult.rows[0].size,
+            quantity: item.quantity,
+            newStock: updateResult.rows[0].stock_quantity,
+          });
+        }
+      }
+
+      await client.query("COMMIT");
+      logger.info("개별 재고 복구 트랜잭션 완료", { orderItemId });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      logger.error("개별 재고 복구 실패 - 롤백", {
+        orderItemId,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // 주문 환불 금액 누적 업데이트
+  // ------------------------------------------------------------------
+  async addRefundedAmount(
+    orderId: string,
+    additionalRefundAmount: string
+  ): Promise<Order | undefined> {
+    const result = await db
+      .update(orders)
+      .set({
+        refundedAmount: sql`COALESCE(refunded_amount, '0')::numeric + ${additionalRefundAmount}::numeric`,
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, orderId))
+      .returning();
+    return result[0];
+  }
+
+  // ------------------------------------------------------------------
+  // 주문 상태만 업데이트 (orderItems는 건드리지 않음, 부분 취소 완료 시 사용)
+  // ------------------------------------------------------------------
+  async updateOrderStatusOnly(
+    orderId: string,
+    updateData: {
+      status: string;
+      cancelReason?: string;
+    }
+  ): Promise<Order | undefined> {
+    const result = await db
+      .update(orders)
+      .set({
+        status: updateData.status,
+        cancelReason: updateData.cancelReason,
+        canceledAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, orderId))
+      .returning();
+    return result[0];
   }
 
   // ------------------------------------------------------------------

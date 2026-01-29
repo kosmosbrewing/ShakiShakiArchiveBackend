@@ -57,10 +57,13 @@ router.get("/:orderId", isAuthenticated, isAdmin, cacheStrategies.admin, asyncHa
  *
  * cancelType에 따른 환불 로직:
  * - customer_request: 고객 요청 반품 승인 (배송비 차감 적용)
+ * - customer_request_cod: 착불 반품 (배송비 + 반품비 차감)
  * - seller_cancel: 판매자 직권 취소 (전액 환불)
+ *
+ * orderItemId가 있으면 개별 상품 취소, 없으면 전체 주문 취소
  */
 router.post("/:orderId/cancel", isAuthenticated, isAdmin, asyncHandler(async (req, res) => {
-  const { cancelReason, cancelType, refundReceiveAccount } = req.body;
+  const { cancelReason, cancelType, refundReceiveAccount, orderItemId } = req.body;
   const order = await storage.getOrder(req.params.orderId); // UUID 문자열
 
   if (!order) {
@@ -71,6 +74,30 @@ router.post("/:orderId/cancel", isAuthenticated, isAdmin, asyncHandler(async (re
     return res.status(400).json({ message: ORDER_MESSAGES.NO_PAYMENT_INFO });
   }
 
+  // 주문 아이템 조회
+  const orderItems = await storage.getOrderItemsByOrderId(order.id);
+
+  // 취소 대상 아이템 확인
+  let targetItem = null;
+  if (orderItemId) {
+    targetItem = orderItems.find((item) => item.id === orderItemId);
+    if (!targetItem) {
+      return res.status(404).json({ message: "취소할 주문 상품을 찾을 수 없습니다." });
+    }
+  }
+
+  // 활성 상태인 아이템 필터링 (취소/환불 완료된 것 제외)
+  const activeStatuses = ["payment_confirmed", "preparing", "shipped", "delivered", "return_requested", "return_in_transit", "return_received"];
+  const activeItems = orderItems.filter((item) =>
+    activeStatuses.includes(item.status) && item.id !== orderItemId
+  );
+  const isLastItems = activeItems.length === 0;
+
+  // 취소 대상 금액 계산
+  const targetItemsAmount = targetItem
+    ? parseFloat(targetItem.productPrice) * targetItem.quantity
+    : orderItems.reduce((sum: number, item) => sum + parseFloat(item.productPrice) * item.quantity, 0);
+
   // 환불 금액 계산
   let refundAmount: number;
   let refundDetails: ReturnType<typeof calculateRefund> | null = null;
@@ -78,18 +105,12 @@ router.post("/:orderId/cancel", isAuthenticated, isAdmin, asyncHandler(async (re
 
   if (cancelType === "customer_request" || cancelType === "customer_request_cod") {
     // 고객 요청 반품 승인: calculateRefund 사용 (배송비 차감)
-    const orderItems = await storage.getOrderItemsByOrderId(order.id);
-    const itemsAmount = orderItems.reduce(
-      (sum: number, item) => sum + parseFloat(item.productPrice) * item.quantity,
-      0
-    );
-
     refundDetails = calculateRefund({
-      itemsAmount,
+      itemsAmount: targetItemsAmount,
       paidShippingFee: parseFloat(order.shippingFee),
       totalOrderAmount: parseFloat(order.itemsAmount),
       alreadyRefundedAmount: parseFloat(order.refundedAmount || "0"),
-      isLastItems: true, // 전체 주문 취소
+      isLastItems,
       isSellerFault: false, // 고객 귀책 (단순 변심)
       isAfterShipping: true, // 배송 후 반품
       penaltyAlreadyApplied: (order as any).shippingPenaltyApplied || false,
@@ -104,6 +125,7 @@ router.post("/:orderId/cancel", isAuthenticated, isAdmin, asyncHandler(async (re
       refundAmount = Math.max(0, refundAmount - returnShippingDeducted);
       logger.info("착불 반품비 추가 차감", {
         orderId: order.id,
+        orderItemId,
         returnShippingDeducted,
         finalRefundAmount: refundAmount,
       });
@@ -111,14 +133,26 @@ router.post("/:orderId/cancel", isAuthenticated, isAdmin, asyncHandler(async (re
 
     logger.info("고객 요청 반품 환불 금액 계산", {
       orderId: order.id,
+      orderItemId,
+      targetItemsAmount,
+      isLastItems,
       refundDetails,
       returnShippingDeducted,
     });
   } else {
-    // 판매자 직권 취소: 전액 환불
-    refundAmount = Number(order.totalAmount);
-    logger.info("판매자 직권 취소 전액 환불", {
+    // 판매자 직권 취소
+    if (isLastItems) {
+      // 마지막 상품: 상품값 + 낸 배송비
+      refundAmount = targetItemsAmount + parseFloat(order.shippingFee);
+    } else {
+      // 부분 취소: 상품값만
+      refundAmount = targetItemsAmount;
+    }
+    logger.info("판매자 직권 취소 환불", {
       orderId: order.id,
+      orderItemId,
+      targetItemsAmount,
+      isLastItems,
       refundAmount,
     });
   }
@@ -170,28 +204,70 @@ router.post("/:orderId/cancel", isAuthenticated, isAdmin, asyncHandler(async (re
     throw error;
   }
 
-  // 주문 상태 업데이트 (canceledAt은 storage에서 NOW() 사용)
-  const updatedOrder = await storage.cancelOrderPayment(order.id, {
-    status: "cancelled",
-    cancelReason: cancelReason || "관리자 취소",
-    refundedAmount: refundAmount.toString(),
-  });
+  // 주문/상품 상태 업데이트 및 재고 복구
+  let updatedOrder;
 
-  // 재고 복구
-  try {
-    await storage.restoreStockOnCancel(order.id);
-    logger.info("재고 복구 완료 (관리자)", { orderId: order.id });
-  } catch (restoreError) {
-    logger.error("재고 복구 실패 (관리자)", { orderId: order.id, error: restoreError });
+  if (orderItemId && targetItem) {
+    // 부분 취소: 개별 상품만 처리
+    logger.info("부분 취소 처리 시작", { orderId: order.id, orderItemId });
+
+    // 1. 개별 상품 상태 업데이트
+    await storage.cancelOrderItemPayment(orderItemId, {
+      status: "cancelled",
+      cancelReason: cancelReason || "관리자 취소",
+    });
+
+    // 2. 개별 상품 재고 복구
+    try {
+      await storage.restoreStockOnItemCancel(orderItemId);
+      logger.info("개별 재고 복구 완료 (관리자)", { orderId: order.id, orderItemId });
+    } catch (restoreError) {
+      logger.error("개별 재고 복구 실패 (관리자)", { orderId: order.id, orderItemId, error: restoreError });
+    }
+
+    // 3. 환불 금액 누적 업데이트
+    await storage.addRefundedAmount(order.id, refundAmount.toString());
+
+    // 4. 마지막 활성 상품이면 전체 주문 상태도 변경 (orderItems는 건드리지 않음)
+    if (isLastItems) {
+      updatedOrder = await storage.updateOrderStatusOnly(order.id, {
+        status: "cancelled",
+        cancelReason: cancelReason || "관리자 취소 (전체)",
+      });
+      logger.info("마지막 상품 취소로 주문 전체 취소", { orderId: order.id });
+    } else {
+      // 주문은 유지하되 환불 금액만 업데이트 (위에서 이미 처리)
+      updatedOrder = await storage.getOrder(order.id);
+      logger.info("부분 취소 완료 - 주문 유지", { orderId: order.id, remainingActiveItems: activeItems.length });
+    }
+  } else {
+    // 전체 취소
+    updatedOrder = await storage.cancelOrderPayment(order.id, {
+      status: "cancelled",
+      cancelReason: cancelReason || "관리자 취소",
+      refundedAmount: refundAmount.toString(),
+    });
+
+    // 전체 재고 복구
+    try {
+      await storage.restoreStockOnCancel(order.id);
+      logger.info("재고 복구 완료 (관리자)", { orderId: order.id });
+    } catch (restoreError) {
+      logger.error("재고 복구 실패 (관리자)", { orderId: order.id, error: restoreError });
+    }
   }
 
-  logger.info("결제 취소 완료 (관리자)", { orderId: order.id, cancelType, refundAmount });
+  logger.info("결제 취소 완료 (관리자)", { orderId: order.id, orderItemId, cancelType, refundAmount, isPartialCancel: !!orderItemId });
 
   res.json({
     message: PAYMENT_MESSAGES.CANCEL_SUCCESS,
     order: updatedOrder,
     payment,
     refundAmount,
+    isPartialCancel: !!orderItemId,
+    cancelledItemId: orderItemId || null,
+    cancelledItemName: targetItem?.productName || null,
+    remainingActiveItems: orderItemId ? activeItems.length : 0,
     refundDetails: refundDetails ? {
       ...refundDetails,
       returnShippingDeducted,
