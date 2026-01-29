@@ -19,6 +19,7 @@ import {
   cancelPaymentSimple as cancelNaverPayment,
   NaverPayPaymentError,
 } from "../../services/naverpay.service";
+import { calculateRefund, formatRefundSummary } from "@shared/constants/shipping";
 import { createLogger } from "../../utils/logger";
 import { ORDER_MESSAGES, PAYMENT_MESSAGES } from "@shared/constants/messages";
 
@@ -53,9 +54,13 @@ router.get("/:orderId", isAuthenticated, isAdmin, cacheStrategies.admin, asyncHa
 /**
  * 관리자: 강제 결제 취소 (환불)
  * POST /api/admin/payments/:orderId/cancel
+ *
+ * cancelType에 따른 환불 로직:
+ * - customer_request: 고객 요청 반품 승인 (배송비 차감 적용)
+ * - seller_cancel: 판매자 직권 취소 (전액 환불)
  */
 router.post("/:orderId/cancel", isAuthenticated, isAdmin, asyncHandler(async (req, res) => {
-  const { cancelReason, cancelAmount, refundReceiveAccount } = req.body;
+  const { cancelReason, cancelType, refundReceiveAccount } = req.body;
   const order = await storage.getOrder(req.params.orderId); // UUID 문자열
 
   if (!order) {
@@ -66,22 +71,73 @@ router.post("/:orderId/cancel", isAuthenticated, isAdmin, asyncHandler(async (re
     return res.status(400).json({ message: ORDER_MESSAGES.NO_PAYMENT_INFO });
   }
 
+  // 환불 금액 계산
+  let refundAmount: number;
+  let refundDetails: ReturnType<typeof calculateRefund> | null = null;
+  let returnShippingDeducted = 0; // 착불 반품비 차감액
+
+  if (cancelType === "customer_request" || cancelType === "customer_request_cod") {
+    // 고객 요청 반품 승인: calculateRefund 사용 (배송비 차감)
+    const orderItems = await storage.getOrderItemsByOrderId(order.id);
+    const itemsAmount = orderItems.reduce(
+      (sum: number, item) => sum + parseFloat(item.productPrice) * item.quantity,
+      0
+    );
+
+    refundDetails = calculateRefund({
+      itemsAmount,
+      paidShippingFee: parseFloat(order.shippingFee),
+      totalOrderAmount: parseFloat(order.itemsAmount),
+      alreadyRefundedAmount: parseFloat(order.refundedAmount || "0"),
+      isLastItems: true, // 전체 주문 취소
+      isSellerFault: false, // 고객 귀책 (단순 변심)
+      isAfterShipping: true, // 배송 후 반품
+      penaltyAlreadyApplied: (order as any).shippingPenaltyApplied || false,
+    });
+
+    refundAmount = refundDetails.totalRefund;
+
+    // 착불 반품비 추가 차감
+    if (cancelType === "customer_request_cod") {
+      const { SHIPPING } = await import("@shared/constants/shipping");
+      returnShippingDeducted = SHIPPING.FEE; // 반품 배송비 (3,500원)
+      refundAmount = Math.max(0, refundAmount - returnShippingDeducted);
+      logger.info("착불 반품비 추가 차감", {
+        orderId: order.id,
+        returnShippingDeducted,
+        finalRefundAmount: refundAmount,
+      });
+    }
+
+    logger.info("고객 요청 반품 환불 금액 계산", {
+      orderId: order.id,
+      refundDetails,
+      returnShippingDeducted,
+    });
+  } else {
+    // 판매자 직권 취소: 전액 환불
+    refundAmount = Number(order.totalAmount);
+    logger.info("판매자 직권 취소 전액 환불", {
+      orderId: order.id,
+      refundAmount,
+    });
+  }
+
   // PG사별 결제 취소 API 호출
   const provider = order.paymentProvider || "toss";
   const reason = cancelReason || "관리자 취소";
-  const amount = cancelAmount || Number(order.totalAmount);
   let payment;
 
   try {
     switch (provider) {
       case "kakaopay":
         // 카카오페이: tid(paymentKey), 취소금액
-        payment = await cancelKakaoPayment(order.paymentKey, amount);
+        payment = await cancelKakaoPayment(order.paymentKey, refundAmount);
         break;
 
       case "naverpay":
         // 네이버페이: paymentId(paymentKey), 취소금액, 사유, 요청자(2=가맹점관리자)
-        payment = await cancelNaverPayment(order.paymentKey, amount, reason, "2");
+        payment = await cancelNaverPayment(order.paymentKey, refundAmount, reason, "2");
         break;
 
       case "toss":
@@ -90,13 +146,13 @@ router.post("/:orderId/cancel", isAuthenticated, isAdmin, asyncHandler(async (re
         payment = await cancelTossPayment(
           order.paymentKey,
           reason,
-          cancelAmount,
+          refundAmount,
           refundReceiveAccount
         );
         break;
     }
 
-    logger.info("PG사 결제 취소 성공", { provider, orderId: order.id });
+    logger.info("PG사 결제 취소 성공", { provider, orderId: order.id, refundAmount });
   } catch (error) {
     // PG사별 에러 처리
     if (error instanceof TossPaymentError) {
@@ -118,7 +174,7 @@ router.post("/:orderId/cancel", isAuthenticated, isAdmin, asyncHandler(async (re
   const updatedOrder = await storage.cancelOrderPayment(order.id, {
     status: "cancelled",
     cancelReason: cancelReason || "관리자 취소",
-    refundedAmount: cancelAmount?.toString(),
+    refundedAmount: refundAmount.toString(),
   });
 
   // 재고 복구
@@ -129,12 +185,19 @@ router.post("/:orderId/cancel", isAuthenticated, isAdmin, asyncHandler(async (re
     logger.error("재고 복구 실패 (관리자)", { orderId: order.id, error: restoreError });
   }
 
-  logger.info("결제 취소 완료 (관리자)", { orderId: order.id });
+  logger.info("결제 취소 완료 (관리자)", { orderId: order.id, cancelType, refundAmount });
 
   res.json({
     message: PAYMENT_MESSAGES.CANCEL_SUCCESS,
     order: updatedOrder,
     payment,
+    refundAmount,
+    refundDetails: refundDetails ? {
+      ...refundDetails,
+      returnShippingDeducted,
+      summary: formatRefundSummary(refundDetails) +
+        (returnShippingDeducted > 0 ? `\n착불 반품비 차감: -${returnShippingDeducted.toLocaleString()}원\n최종 환불 금액: ${refundAmount.toLocaleString()}원` : ""),
+    } : null,
   });
 }));
 
