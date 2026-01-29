@@ -27,7 +27,7 @@ export const RATE_LIMIT = {
     /** 윈도우 시간 (15분, 밀리초) */
     WINDOW_MS: 15 * 60 * 1000,
     /** 최대 요청 수 */
-    MAX_REQUESTS: 100,
+    MAX_REQUESTS: 500,
   },
   /** 인증 Rate Limit (Brute Force 방지) */
   AUTH: {
@@ -41,7 +41,7 @@ export const RATE_LIMIT = {
     /** 윈도우 시간 (1분, 밀리초) */
     WINDOW_MS: 1 * 60 * 1000,
     /** 최대 요청 수 */
-    MAX_REQUESTS: 60,
+    MAX_REQUESTS: 100,
   },
   /** 결제 Rate Limit (매우 엄격) */
   PAYMENT: {
