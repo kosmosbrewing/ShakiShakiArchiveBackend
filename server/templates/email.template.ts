@@ -544,11 +544,12 @@ export function maskEmail(email: string): string {
 // ============================================================================
 
 export const LEGAL_NOTICE = {
-  PAYMENT_COMPLETE: "상품 수령 후 7일 이내 청약철회가 가능합니다.",
+  PAYMENT_COMPLETE:
+    "택배 배송은 영업일 기준 3~7일 이내 도착하며, 상품 수령 후 7일 이내 청약철회가 가능합니다.",
   REFUND_GENERAL: "반품은 상품 회수 및 검수 완료 후 3영업일 내 처리됩니다.",
   REFUND_CARD: "결제 취소는 결제 수단에 따라 즉시 ~ 3영업일 내 완료됩니다.",
   REFUND_BANK: "환불은 결제 수단에 따라 즉시 ~ 3영업일 내 완료됩니다.",
-  RETURN_RESTRICTION: "착용 흔적, 세탁 후에는 반품이 불가합니다.",
+  RETURN_RESTRICTION: "상품이 훼손된 경우 환불이 불가합니다. (라벨제거/세탁/착용 등)",
 } as const;
 
 // 하위 호환성을 위한 alias (기존 emailAlert 사용처 대응)
