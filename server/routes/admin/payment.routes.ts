@@ -7,10 +7,18 @@ import { isAuthenticated, isAdmin } from "../../middleware/auth.middleware";
 import { asyncHandler } from "../../middleware/error.middleware";
 import { cacheStrategies } from "../../middleware";
 import {
-  cancelPayment,
+  cancelPayment as cancelTossPayment,
   getPayment,
   TossPaymentError,
 } from "../../services/toss.service";
+import {
+  cancelPaymentSimple as cancelKakaoPayment,
+  KakaoPayPaymentError,
+} from "../../services/kakaopay.service";
+import {
+  cancelPaymentSimple as cancelNaverPayment,
+  NaverPayPaymentError,
+} from "../../services/naverpay.service";
 import { createLogger } from "../../utils/logger";
 import { ORDER_MESSAGES, PAYMENT_MESSAGES } from "@shared/constants/messages";
 
@@ -58,22 +66,50 @@ router.post("/:orderId/cancel", isAuthenticated, isAdmin, asyncHandler(async (re
     return res.status(400).json({ message: ORDER_MESSAGES.NO_PAYMENT_INFO });
   }
 
-  // PG사 결제 취소 API 호출 (현재 토스페이먼츠만 지원)
-  // TODO: 네이버페이 등 다른 PG사 추가 시 order.paymentProvider로 분기
+  // PG사별 결제 취소 API 호출
+  const provider = order.paymentProvider || "toss";
+  const reason = cancelReason || "관리자 취소";
+  const amount = cancelAmount || Number(order.totalAmount);
   let payment;
+
   try {
-    payment = await cancelPayment(
-      order.paymentKey,
-      cancelReason || "관리자 취소",
-      cancelAmount,
-      refundReceiveAccount
-    );
+    switch (provider) {
+      case "kakaopay":
+        // 카카오페이: tid(paymentKey), 취소금액
+        payment = await cancelKakaoPayment(order.paymentKey, amount);
+        break;
+
+      case "naverpay":
+        // 네이버페이: paymentId(paymentKey), 취소금액, 사유, 요청자(2=가맹점관리자)
+        payment = await cancelNaverPayment(order.paymentKey, amount, reason, "2");
+        break;
+
+      case "toss":
+      default:
+        // 토스페이먼츠: paymentKey, 사유, 취소금액, 환불계좌
+        payment = await cancelTossPayment(
+          order.paymentKey,
+          reason,
+          cancelAmount,
+          refundReceiveAccount
+        );
+        break;
+    }
+
+    logger.info("PG사 결제 취소 성공", { provider, orderId: order.id });
   } catch (error) {
+    // PG사별 에러 처리
     if (error instanceof TossPaymentError) {
-      logger.error("결제 취소 에러 (관리자)", { code: error.code, message: error.message });
-      return res
-        .status(error.statusCode)
-        .json({ message: error.message, code: error.code });
+      logger.error("토스 결제 취소 에러 (관리자)", { code: error.code, message: error.message });
+      return res.status(error.statusCode).json({ message: error.message, code: error.code });
+    }
+    if (error instanceof KakaoPayPaymentError) {
+      logger.error("카카오페이 결제 취소 에러 (관리자)", { code: error.code, message: error.message });
+      return res.status(error.statusCode).json({ message: error.message, code: error.code });
+    }
+    if (error instanceof NaverPayPaymentError) {
+      logger.error("네이버페이 결제 취소 에러 (관리자)", { code: error.code, message: error.message });
+      return res.status(error.statusCode).json({ message: error.message, code: error.code });
     }
     throw error;
   }
