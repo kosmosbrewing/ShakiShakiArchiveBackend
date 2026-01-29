@@ -376,6 +376,8 @@ export function emailProductTable(
  * 상품 목록 컴포넌트 (가격 없음, 좌/우 정렬)
  * 주문 상품               오버핏 데님 자켓
  *                         L / 블루 / 1개
+ *                         슬림 셔츠
+ *                         M / 화이트 / 2개
  */
 export function emailProductList(
   items: Array<{
@@ -384,23 +386,29 @@ export function emailProductList(
     options?: string | null;
   }>,
 ): string {
-  const rows = items
+  // 상품 목록을 오른쪽에 세로로 나열
+  const productRows = items
     .map(
       (item) => `
-    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 4px;">
-      <tr>
-        <td style="color: ${COLORS.muted}; font-size: 13px; text-align: left; vertical-align: top; width: 80px;">주문 상품</td>
-        <td style="color: ${COLORS.foreground}; font-size: 14px; text-align: right; vertical-align: top;">
-          <span style="display: block;">${item.productName}</span>
-          <span style="display: block; color: ${COLORS.muted}; font-size: 12px; margin-top: 2px;">${item.options ? `${item.options} / ${item.quantity}개` : `${item.quantity}개`}</span>
-        </td>
-      </tr>
-    </table>
-  `,
+      <div style="margin-bottom: 8px;">
+        <span style="display: block; color: ${COLORS.foreground}; font-size: 14px;">${item.productName}</span>
+        <span style="display: block; color: ${COLORS.muted}; font-size: 12px; margin-top: 2px;">${item.options ? `${item.options} / ${item.quantity}개` : `${item.quantity}개`}</span>
+      </div>
+    `,
     )
     .join("");
 
-  return rows;
+  // "주문 상품" 라벨은 한 번만 표시
+  return `
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 4px;">
+      <tr>
+        <td style="color: ${COLORS.muted}; font-size: 13px; text-align: left; vertical-align: top; width: 80px;">주문 상품</td>
+        <td style="text-align: right; vertical-align: top;">
+          ${productRows}
+        </td>
+      </tr>
+    </table>
+  `;
 }
 
 /**
