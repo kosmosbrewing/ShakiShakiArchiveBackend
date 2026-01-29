@@ -238,9 +238,10 @@ export function calculateRefund(input: RefundCalculationInput): RefundCalculatio
     } else {
       // 고객 귀책
       if (isLastItems) {
-        // 마지막 반품: 상품값 + 낸 배송비 - 기본배송비 + 크레딧
+        // 마지막 반품: 상품값 + 낸 배송비 - 실제낸배송비 + 크레딧
+        // 도서산간 추가 배송비 포함하여 전액 차감
         shippingRefund = paidShippingFee;
-        penalty = SHIPPING.FEE;
+        penalty = paidShippingFee; // 실제 낸 배송비 전액 차감
         credit = calculateCredit(penaltyAlreadyApplied);
       } else {
         // 부분 반품: 상품값 - 페널티
