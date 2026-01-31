@@ -480,6 +480,8 @@ export const orders = pgTable(
     isStockReserved: boolean("is_stock_reserved").default(true).notNull(),
     // [추가] 무료배송 페널티 차감 여부 플래그 (부분 취소/반품 시 중복 차감 방지)
     shippingPenaltyApplied: boolean("shipping_penalty_applied").default(false).notNull(),
+    // [추가] 판매자 귀책 취소 금액 누적 (직권 취소로 무료배송 기준 붕괴 시 고객 보호)
+    sellerCancelledAmount: decimal("seller_cancelled_amount", { precision: 10, scale: 2 }).default("0").notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },

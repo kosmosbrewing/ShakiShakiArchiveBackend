@@ -243,7 +243,14 @@ export interface IStorage {
   // 주문 환불 금액 누적 업데이트
   addRefundedAmount(
     orderId: string,
-    additionalRefundAmount: string
+    additionalRefundAmount: string,
+    updatePenaltyFlag?: boolean
+  ): Promise<Order | undefined>;
+
+  // 판매자 귀책 취소 금액 누적 업데이트 (직권 취소 시)
+  addSellerCancelledAmount(
+    orderId: string,
+    amount: string
   ): Promise<Order | undefined>;
 
   // 주문 상태만 업데이트 (orderItems는 건드리지 않음)
@@ -1976,16 +1983,51 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ------------------------------------------------------------------
-  // 주문 환불 금액 누적 업데이트
+  // 주문 환불 금액 누적 업데이트 (페널티 플래그 업데이트 옵션)
   // ------------------------------------------------------------------
   async addRefundedAmount(
     orderId: string,
-    additionalRefundAmount: string
+    additionalRefundAmount: string,
+    updatePenaltyFlag?: boolean
   ): Promise<Order | undefined> {
+    // 페널티 플래그 업데이트가 필요한 경우
+    if (updatePenaltyFlag) {
+      const result = await db
+        .update(orders)
+        .set({
+          refundedAmount: sql`COALESCE(refunded_amount, '0')::numeric + ${additionalRefundAmount}::numeric`,
+          shippingPenaltyApplied: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(orders.id, orderId))
+        .returning();
+      return result[0];
+    }
+
     const result = await db
       .update(orders)
       .set({
         refundedAmount: sql`COALESCE(refunded_amount, '0')::numeric + ${additionalRefundAmount}::numeric`,
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, orderId))
+      .returning();
+    return result[0];
+  }
+
+  // ------------------------------------------------------------------
+  // 판매자 귀책 취소 금액 누적 업데이트 (직권 취소 시)
+  // - 직권 취소로 인해 무료배송 기준이 깨진 경우 고객 보호
+  // - 이후 고객 귀책 반품 시 가상 남은 금액 계산에 사용
+  // ------------------------------------------------------------------
+  async addSellerCancelledAmount(
+    orderId: string,
+    amount: string
+  ): Promise<Order | undefined> {
+    const result = await db
+      .update(orders)
+      .set({
+        sellerCancelledAmount: sql`COALESCE(seller_cancelled_amount, '0')::numeric + ${amount}::numeric`,
         updatedAt: new Date(),
       })
       .where(eq(orders.id, orderId))

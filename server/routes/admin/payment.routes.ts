@@ -114,6 +114,8 @@ router.post("/:orderId/cancel", isAuthenticated, isAdmin, asyncHandler(async (re
       isSellerFault: false, // 고객 귀책 (단순 변심)
       isAfterShipping: true, // 배송 후 반품
       penaltyAlreadyApplied: (order as any).shippingPenaltyApplied || false,
+      // 판매자 귀책 취소 금액 (직권 취소로 무료배송 기준 붕괴 시 고객 보호)
+      sellerCancelledAmount: parseFloat((order as any).sellerCancelledAmount || "0"),
     });
 
     refundAmount = refundDetails.totalRefund;
@@ -225,10 +227,24 @@ router.post("/:orderId/cancel", isAuthenticated, isAdmin, asyncHandler(async (re
       logger.error("개별 재고 복구 실패 (관리자)", { orderId: order.id, orderItemId, error: restoreError });
     }
 
-    // 3. 환불 금액 누적 업데이트
-    await storage.addRefundedAmount(order.id, refundAmount.toString());
+    // 3. 환불 금액 누적 업데이트 + 페널티 플래그 업데이트
+    await storage.addRefundedAmount(
+      order.id,
+      refundAmount.toString(),
+      refundDetails?.shouldUpdatePenaltyFlag
+    );
 
-    // 4. 마지막 활성 상품이면 전체 주문 상태도 변경 (orderItems는 건드리지 않음)
+    // 4. 직권 취소인 경우 판매자 귀책 취소 금액 누적 (이후 고객 귀책 반품 시 고객 보호)
+    if (cancelType === "seller_cancel") {
+      await storage.addSellerCancelledAmount(order.id, targetItemsAmount.toString());
+      logger.info("판매자 귀책 취소 금액 누적", {
+        orderId: order.id,
+        orderItemId,
+        amount: targetItemsAmount,
+      });
+    }
+
+    // 5. 마지막 활성 상품이면 전체 주문 상태도 변경 (orderItems는 건드리지 않음)
     if (isLastItems) {
       updatedOrder = await storage.updateOrderStatusOnly(order.id, {
         status: "cancelled",
