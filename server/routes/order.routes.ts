@@ -7,7 +7,7 @@ import { db, pool } from "../db";
 import { isAuthenticated } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
 import { cacheStrategies } from "../middleware";
-import { insertOrderSchema, createOrderRequestSchema, partialCancelRequestSchema, stockReservations, orders } from "@shared/schema";
+import { insertOrderSchema, createOrderRequestSchema, partialCancelRequestSchema, stockReservations, orders, orderItems as orderItemsTable } from "@shared/schema";
 import {
   calculateShippingFee,
   calculateRefund,
@@ -1156,6 +1156,86 @@ router.delete("/:id", isAuthenticated, asyncHandler(async (req, res) => {
 
   res.json({
     message: ORDER_MESSAGES.DELETED,
+  });
+}));
+
+/**
+ * 개별 상품 구매 확정
+ * POST /api/orders/:orderId/items/:itemId/confirm
+ *
+ * - 배송완료(delivered) 상태인 상품만 구매 확정 가능
+ * - 상태를 "purchase_confirmed"로 변경
+ * - confirmedAt 타임스탬프 기록
+ */
+router.post("/:orderId/items/:itemId/confirm", isAuthenticated, asyncHandler(async (req, res) => {
+  const { orderId, itemId } = req.params;
+  const userId = req.session.userId!;
+
+  // itemId를 number로 변환 (DB 스키마가 serial이므로)
+  const itemIdNum = Number(itemId);
+  if (isNaN(itemIdNum)) {
+    return res.status(400).json({ message: "잘못된 상품 ID입니다." });
+  }
+
+  // 1. 주문 조회
+  const order = await storage.getOrder(orderId);
+  if (!order) {
+    return res.status(404).json({ message: ORDER_MESSAGES.NOT_FOUND });
+  }
+
+  // 2. 권한 검증 (본인만 구매 확정 가능)
+  if (order.userId !== userId) {
+    return res.status(403).json({ message: AUTH_MESSAGES.FORBIDDEN });
+  }
+
+  // 3. 주문 아이템 조회
+  const orderItems = await storage.getOrderItemsByOrderId(orderId);
+  const targetItem = orderItems.find(item => item.id === itemIdNum);
+
+  if (!targetItem) {
+    return res.status(404).json({ message: "주문 상품을 찾을 수 없습니다." });
+  }
+
+  // 4. 배송완료 상태인지 확인
+  if (targetItem.status !== "delivered") {
+    return res.status(400).json({
+      message: "배송완료 상태에서만 구매 확정이 가능합니다.",
+      code: "INVALID_STATUS_FOR_CONFIRM",
+    });
+  }
+
+  // 5. 상태 업데이트 (purchase_confirmed)
+  await db
+    .update(orderItemsTable)
+    .set({
+      status: "purchase_confirmed",
+    })
+    .where(eq(orderItemsTable.id, itemIdNum));
+
+  // 6. 주문의 confirmedAt 업데이트 (첫 구매 확정 시)
+  if (!order.confirmedAt) {
+    await db
+      .update(orders)
+      .set({
+        confirmedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, orderId));
+  }
+
+  logger.info("구매 확정 완료", {
+    orderId,
+    itemId: itemIdNum,
+    productName: targetItem.productName,
+    userId,
+  });
+
+  res.json({
+    message: "구매가 확정되었습니다.",
+    item: {
+      id: itemIdNum,
+      status: "purchase_confirmed",
+    },
   });
 }));
 
