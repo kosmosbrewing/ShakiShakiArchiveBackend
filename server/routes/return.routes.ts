@@ -33,6 +33,7 @@ import {
 } from "../services/toss.service";
 import { createLogger } from "../utils/logger";
 import { sendReturnRequestEmail } from "../services/email.service";
+import { notifyReturnRequest } from "../services/telegram.service";
 
 const router = Router();
 const logger = createLogger("Return");
@@ -122,8 +123,18 @@ router.post(
       reasonType,
     });
 
-    // 9. 반품 요청 이메일 발송 (비동기 - fire-and-forget)
+    // 9. 반품 요청 이메일 및 관리자 알림 발송 (비동기 - fire-and-forget)
     const user = await storage.getUser(userId);
+
+    // Telegram 관리자 알림
+    notifyReturnRequest({
+      externalOrderId: order.externalOrderId || '',
+      userName: user?.userName || '고객',
+      productName: orderItem.productName,
+      reasonType,
+      reason: reason || undefined,
+    }).catch(err => logger.error("반품 알림 발송 실패", { returnId: returnRequest.id, error: err instanceof Error ? err.message : String(err) }));
+
     if (user?.email) {
       sendReturnRequestEmail({
         returnId: returnRequest.id,

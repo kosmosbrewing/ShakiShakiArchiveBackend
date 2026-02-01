@@ -14,6 +14,10 @@ import { sanitizeUserObject, maskUserForPublicView, maskUserForInquiryView } fro
 import { isValidUUID, optionalUuidSchema } from "../utils/validation";
 import { z } from "zod";
 import { INQUIRY_MESSAGES, PRODUCT_MESSAGES } from "@shared/constants/messages";
+import { notifyInquiryCreated } from "../services/telegram.service";
+import { createLogger } from "../utils/logger";
+
+const logger = createLogger("Inquiry");
 
 const router = Router();
 
@@ -159,9 +163,10 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
 
   const { productId, type, title, content, isPrivate } = parseResult.data;
 
-  // 상품 문의인 경우 상품 존재 확인
+  // 상품 문의인 경우 상품 존재 확인 (Telegram 알림에서도 재사용)
+  let product = null;
   if (productId) {
-    const product = await storage.getProduct(productId);
+    product = await storage.getProduct(productId);
     if (!product) {
       return res.status(404).json({ message: PRODUCT_MESSAGES.NOT_FOUND });
     }
@@ -175,6 +180,17 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
     content,
     isPrivate: isPrivate || false,
   });
+
+  // Telegram 관리자 알림
+  const inquiryUser = await storage.getUser(userId);
+
+  notifyInquiryCreated({
+    inquiryId: inquiry.id,
+    userName: inquiryUser?.userName || '고객',
+    type,
+    title,
+    productName: product?.name,
+  }).catch(err => logger.error("문의 알림 발송 실패", { inquiryId: inquiry.id, error: err instanceof Error ? err.message : String(err) }));
 
   res.status(201).json(inquiry);
 }));

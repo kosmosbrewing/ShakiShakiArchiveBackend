@@ -149,6 +149,13 @@ export const config = {
     verificationCodeExpiry: 10, // 인증코드 만료 시간 (분)
   },
 
+  // Telegram 봇 알림 설정
+  telegram: {
+    botToken: process.env.TELEGRAM_BOT_TOKEN || "",
+    chatId: process.env.TELEGRAM_CHAT_ID || "",
+    isEnabled: !!process.env.TELEGRAM_BOT_TOKEN && !!process.env.TELEGRAM_CHAT_ID,
+  },
+
   // Cloudinary 이미지 업로드 설정
   cloudinary: {
     cloudName: process.env.CLOUDINARY_CLOUD_NAME || "",

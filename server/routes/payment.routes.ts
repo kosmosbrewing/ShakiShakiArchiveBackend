@@ -24,6 +24,7 @@ import { eq } from "drizzle-orm";
 import { createLogger } from "../utils/logger";
 import { ORDER_MESSAGES, AUTH_MESSAGES, PAYMENT_MESSAGES } from "@shared/constants/messages";
 import { sendPaymentConfirmEmail } from "../services/email.service";
+import { notifyPaymentComplete } from "../services/telegram.service";
 
 const router = Router();
 const logger = createLogger("Payment");
@@ -392,7 +393,7 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
   // 10. 최종 주문 정보 조회
   const updatedOrder = await storage.getOrder(order.id);
 
-  // 11. 결제 완료 이메일 발송 (비동기 - fire-and-forget)
+  // 11. 결제 완료 이메일 및 관리자 알림 발송 (비동기 - fire-and-forget)
   const user = await storage.getUser(userId);
   if (user?.email && updatedOrder) {
     const orderItems = await storage.getOrderItemsByOrderId(order.id);
@@ -400,6 +401,17 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
     const orderName = orderItems.length > 1
       ? `${orderItems[0]?.productName} 외 ${orderItems.length - 1}건`
       : orderItems[0]?.productName || '주문';
+
+    // Telegram 관리자 알림
+    notifyPaymentComplete({
+      externalOrderId: order.externalOrderId || '',
+      userName: user.userName || '고객',
+      orderName,
+      totalAmount: parseFloat(updatedOrder.totalAmount),
+      paymentMethod: payment.method,
+      paymentProvider: "toss",
+    }).catch(err => logger.error("결제 알림 발송 실패", { orderId: order.id, error: err instanceof Error ? err.message : String(err) }));
+
     sendPaymentConfirmEmail({
       orderId: order.id,
       externalOrderId: order.externalOrderId || '',
