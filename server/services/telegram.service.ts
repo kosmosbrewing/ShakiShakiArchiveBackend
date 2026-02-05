@@ -2,8 +2,8 @@
 // Telegram 관리자 알림 서비스
 
 import { config } from "../config";
-import { createLogger } from "../utils/logger";
-import { maskUserName } from "../utils/masking";
+import { createLogger, maskSensitiveData } from "../utils/logger";
+import { maskUserName, maskEmail } from "../utils/masking";
 
 const logger = createLogger("Telegram");
 
@@ -45,6 +45,22 @@ export interface InquiryNotificationData {
   productName?: string;
 }
 
+/** 시스템 오류 알림 데이터 */
+export interface SystemErrorNotificationData {
+  errorMessage: string;
+  errorName?: string;
+  requestId?: string;
+  method?: string;
+  path?: string;
+  statusCode?: number;
+  stack?: string;
+  // 사용자 식별 정보
+  userId?: string;
+  userEmail?: string;
+  // 요청 본문 (민감 정보 마스킹 후 전달)
+  requestBody?: Record<string, unknown>;
+}
+
 // ============================================================================
 // 유틸리티 함수
 // ============================================================================
@@ -83,10 +99,18 @@ function escapeHtml(text: string): string {
 // 기본 발송 함수
 // ============================================================================
 
+/** 환경 이름 */
+function getEnvName(): string {
+  if (config.isProd) return "Production";
+  return config.nodeEnv === "development" ? "Development" : config.nodeEnv;
+}
+
 /**
  * Telegram 메시지 발송
+ * @param text 발송할 메시지
+ * @param useAdminChat 관리자 전용 채팅방 사용 여부 (기본: false)
  */
-async function sendMessage(text: string): Promise<TelegramResult> {
+async function sendMessage(text: string, useAdminChat = false): Promise<TelegramResult> {
   if (!config.telegram.isEnabled) {
     logger.info("Telegram이 설정되지 않았습니다. 알림을 건너뜁니다.");
     if (config.isDev) {
@@ -94,6 +118,8 @@ async function sendMessage(text: string): Promise<TelegramResult> {
     }
     return { success: true, messageId: 0 };
   }
+
+  const chatId = useAdminChat ? config.telegram.adminChatId : config.telegram.chatId;
 
   // 타임아웃 설정 (5초)
   const controller = new AbortController();
@@ -106,7 +132,7 @@ async function sendMessage(text: string): Promise<TelegramResult> {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        chat_id: config.telegram.chatId,
+        chat_id: chatId,
         text,
         parse_mode: "HTML",
       }),
@@ -167,7 +193,7 @@ export async function notifyPaymentComplete(
   const message = `
 💳 <b>새로운 결제</b> (${getKSTTimestamp()})
 ${DIVIDER}
-주문번호: <code>${data.externalOrderId}</code>
+주문번호: <code>${escapeHtml(data.externalOrderId)}</code>
 고객: ${safeUserName}
 상품: ${safeOrderName}
 금액: <b>${data.totalAmount.toLocaleString()}원</b>
@@ -198,7 +224,7 @@ export async function notifyReturnRequest(
   const message = `
 📦 <b>반품 요청</b> (${getKSTTimestamp()})
 ${DIVIDER}
-주문번호: <code>${data.externalOrderId}</code>
+주문번호: <code>${escapeHtml(data.externalOrderId)}</code>
 고객: ${safeUserName}
 상품: ${safeProductName}
 사유: ${reasonTypeMap[data.reasonType] || data.reasonType}
@@ -236,4 +262,77 @@ ${safeProductName ? `상품: ${safeProductName}` : ""}
   `.trim();
 
   return sendMessage(message);
+}
+
+// ============================================================================
+// 시스템 오류 알림 (Rate Limiting 적용)
+// ============================================================================
+
+// 마지막 에러 알림 시각 (알림 폭주 방지)
+let lastErrorNotifyTime = 0;
+const ERROR_NOTIFY_COOLDOWN = 60 * 1000; // 1분 쿨다운
+
+/**
+ * 시스템 오류 관리자 알림
+ * - 500 에러 발생 시 호출
+ * - 1분 쿨다운으로 알림 폭주 방지
+ * - 관리자 전용 채팅방으로 발송
+ */
+export async function notifySystemError(
+  data: SystemErrorNotificationData
+): Promise<TelegramResult> {
+  // Rate Limiting: 1분 이내 중복 알림 방지
+  const now = Date.now();
+  if (now - lastErrorNotifyTime < ERROR_NOTIFY_COOLDOWN) {
+    logger.debug("시스템 오류 알림 스킵 (쿨다운)", {
+      remainingSeconds: Math.ceil((ERROR_NOTIFY_COOLDOWN - (now - lastErrorNotifyTime)) / 1000),
+    });
+    return { success: true, messageId: 0 };
+  }
+  lastErrorNotifyTime = now;
+
+  // 이스케이프 처리
+  const safeErrorMessage = escapeHtml(data.errorMessage);
+  const safeErrorName = data.errorName ? escapeHtml(data.errorName) : "Error";
+  const safePath = data.path ? escapeHtml(data.path) : "";
+
+  // 사용자 정보 (마스킹)
+  let userInfo = "";
+  if (data.userId || data.userEmail) {
+    const maskedEmail = data.userEmail ? maskEmail(data.userEmail) : "";
+    userInfo = data.userId
+      ? `User: ${data.userId}${maskedEmail ? ` (${maskedEmail})` : ""}`
+      : `User: ${maskedEmail}`;
+  }
+
+  // 요청 본문 (민감 정보 마스킹, 최대 200자)
+  let bodyPreview = "";
+  if (data.requestBody && Object.keys(data.requestBody).length > 0) {
+    const maskedBody = maskSensitiveData(data.requestBody);
+    const bodyStr = JSON.stringify(maskedBody);
+    bodyPreview = bodyStr.length > 200 ? bodyStr.substring(0, 200) + "..." : bodyStr;
+    bodyPreview = escapeHtml(bodyPreview);
+  }
+
+  // 스택 트레이스 (첫 3줄만)
+  const stackPreview = data.stack
+    ? data.stack.split("\n").slice(0, 3).map(escapeHtml).join("\n")
+    : "";
+
+  const message = `
+🚨 <b>시스템 오류</b> (${getKSTTimestamp()})
+${DIVIDER}
+환경: <b>${getEnvName()}</b>
+오류: ${safeErrorName}
+메시지: ${safeErrorMessage}
+${data.method && safePath ? `요청: ${data.method} ${safePath}` : ""}
+${data.statusCode ? `상태: ${data.statusCode}` : ""}
+${userInfo ? `${userInfo}` : ""}
+${data.requestId ? `요청ID: <code>${data.requestId}</code>` : ""}
+${bodyPreview ? `Body: <code>${bodyPreview}</code>` : ""}
+${stackPreview ? `\n<pre>${stackPreview}</pre>` : ""}
+  `.trim();
+
+  // 관리자 전용 채팅방으로 발송
+  return sendMessage(message, true);
 }

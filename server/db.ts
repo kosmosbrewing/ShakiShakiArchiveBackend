@@ -226,15 +226,20 @@ export async function closePool(): Promise<void> {
 }
 
 // 프로세스 종료 시그널 핸들러
-process.on("SIGTERM", async () => {
-  logger.info("SIGTERM 수신 - Graceful shutdown 시작");
-  await closePool();
-});
+async function handleShutdown(signal: string): Promise<void> {
+  if (isShuttingDown) {
+    // 이미 종료 중이면 강제 종료
+    logger.info(`${signal} 재수신 - 강제 종료`);
+    process.exit(1);
+  }
 
-process.on("SIGINT", async () => {
-  logger.info("SIGINT 수신 - Graceful shutdown 시작");
+  logger.info(`${signal} 수신 - Graceful shutdown 시작`);
   await closePool();
-});
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => handleShutdown("SIGTERM"));
+process.on("SIGINT", () => handleShutdown("SIGINT"));
 
 // Drizzle ORM 인스턴스
 export const db = drizzle({ client: pool, schema });

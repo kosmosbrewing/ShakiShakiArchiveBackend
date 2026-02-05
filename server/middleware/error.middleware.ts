@@ -4,6 +4,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { createLogger } from "../utils/logger";
 import { config } from "../config";
+import { notifySystemError } from "../services/telegram.service";
 
 const logger = createLogger("ERROR");
 
@@ -95,9 +96,29 @@ export function errorHandler(
   // 상세 에러 로깅
   logger.error(`[${statusCode}] ${err.message}`, context);
 
-  // 500 에러인 경우 전체 스택 트레이스도 출력
-  if (statusCode >= 500 && err.stack) {
-    logger.error("Full Stack Trace", { stack: err.stack });
+  // 500 에러인 경우 전체 스택 트레이스도 출력 + Telegram 알림
+  if (statusCode >= 500) {
+    if (err.stack) {
+      logger.error("Full Stack Trace", { stack: err.stack });
+    }
+
+    // Telegram 관리자 알림 (fire-and-forget)
+    notifySystemError({
+      errorMessage: err.message,
+      errorName: err.name,
+      requestId: req.requestId,
+      method: req.method,
+      path: req.path,
+      statusCode,
+      stack: err.stack,
+      // 사용자 식별 정보
+      userId: req.user?.id,
+      userEmail: req.user?.email,
+      // 요청 본문 (민감 정보는 telegram.service.ts에서 마스킹)
+      requestBody: req.body && Object.keys(req.body).length > 0 ? req.body : undefined,
+    }).catch(() => {
+      // 알림 실패 시 무시 (로깅은 telegram.service.ts에서 처리)
+    });
   }
 
   // 응답

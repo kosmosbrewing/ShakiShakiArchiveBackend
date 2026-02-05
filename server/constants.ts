@@ -7,6 +7,9 @@ export {
   SHIPPING,
   calculateShippingFee,
   isRemoteArea,
+  // 반품지 정보
+  RETURN_INFO,
+  RETURN_SHIPPING_FEE,
   // 환불 계산
   calculateRefund,
   formatRefundSummary,

@@ -15,6 +15,35 @@ export const SHIPPING = {
 } as const;
 
 /**
+ * 반품지 정보
+ * 네이버페이 상품정보 API 등에서 사용
+ */
+export const RETURN_INFO = {
+  /** 반품지 우편번호 */
+  zipcode: "06234",
+  /** 반품지 기본주소 */
+  address1: "서울특별시 강남구",
+  /** 반품지 상세주소 */
+  address2: "",
+  /** 판매자명 */
+  sellername: "ShakiShaki",
+  /** 연락처1 (필수) */
+  contact1: "02-1234-5678",
+  /** 연락처2 (선택) */
+  contact2: "",
+} as const;
+
+/**
+ * 반품/교환 배송비 (편도/왕복)
+ */
+export const RETURN_SHIPPING_FEE = {
+  /** 반품 배송비 (편도) */
+  RETURN: 5000,
+  /** 교환 배송비 (왕복) */
+  EXCHANGE: 10000,
+} as const;
+
+/**
  * 도서산간 우편번호 범위 목록
  * 두 기준을 조합하여 최신화 (2024년 기준)
  */

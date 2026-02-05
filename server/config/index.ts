@@ -98,19 +98,29 @@ export const config = {
     isEnabled: !!process.env.KAKAO_CLIENT_ID,
   },
 
-  // 네이버페이 결제 설정
+  // 네이버페이 결제 설정 (결제형 - 기존 PG 방식)
   naverpay: {
     clientId: process.env.NAVERPAY_CLIENT_ID || "",
     clientSecret: process.env.NAVERPAY_CLIENT_SECRET || "",
     chainId: process.env.NAVERPAY_CHAIN_ID || "",
     merchantId: process.env.NAVERPAY_MERCHANT_ID || "",
-    // 개발 환경에서는 dev, 운영 환경에서는 prod
-    mode: (process.env.NAVERPAY_MODE || "dev") as "dev" | "prod",
+    // 테스트: test, 운영: production (가이드 0.1절)
+    mode: (process.env.NAVERPAY_MODE || "test") as "test" | "production",
     isEnabled: !!process.env.NAVERPAY_CLIENT_ID,
     // 결제 완료 후 리다이렉트 URL
     returnUrl:
       process.env.NAVERPAY_RETURN_URL ||
       "http://localhost:8080/api/payments/naverpay/callback",
+  },
+
+  // 네이버페이 주문형 설정
+  naverpayOrder: {
+    merchantId: process.env.NAVERPAY_MERCHANT_ID || "",
+    certiKey: process.env.NAVERPAY_CERTI_KEY || "",
+    buttonKey: process.env.NAVERPAY_BUTTON_KEY || "",
+    // 테스트: test, 운영: production (가이드 0.1절)
+    mode: (process.env.NAVERPAY_MODE || "test") as "test" | "production",
+    isEnabled: !!process.env.NAVERPAY_CERTI_KEY,
   },
 
   // 카카오페이 결제 설정 (신 API: open-api.kakaopay.com 사용)
@@ -153,6 +163,8 @@ export const config = {
   telegram: {
     botToken: process.env.TELEGRAM_BOT_TOKEN || "",
     chatId: process.env.TELEGRAM_CHAT_ID || "",
+    // 관리자 전용 Chat ID (시스템 오류 알림용, 미설정 시 기본 chatId 사용)
+    adminChatId: process.env.TELEGRAM_ADMIN_CHAT_ID || process.env.TELEGRAM_CHAT_ID || "",
     isEnabled: !!process.env.TELEGRAM_BOT_TOKEN && !!process.env.TELEGRAM_CHAT_ID,
   },
 

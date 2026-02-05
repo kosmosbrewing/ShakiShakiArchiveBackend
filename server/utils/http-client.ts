@@ -103,12 +103,24 @@ export async function httpRequest<T = unknown>(
     }
   }
 
-  // 요청 로그
+  // 요청 로그 (문자열 body는 요약해서 로깅)
+  let logBody: unknown;
+  if (requestBody) {
+    if (typeof requestBody === "string") {
+      // XML 등 문자열 바디는 길이 제한해서 로깅
+      logBody = requestBody.length > 500
+        ? `${requestBody.substring(0, 500)}... [truncated, total ${requestBody.length} chars]`
+        : requestBody;
+    } else {
+      logBody = maskSensitiveData(requestBody as Record<string, unknown>);
+    }
+  }
+
   logger.info(`→ EXTERNAL ${method} ${url}`, {
     method,
     url,
     headers: maskHeaders(requestHeaders),
-    body: requestBody ? maskSensitiveData(requestBody as Record<string, unknown>) : undefined,
+    body: logBody,
   });
 
   // AbortController로 타임아웃 구현
@@ -165,12 +177,24 @@ export async function httpRequest<T = unknown>(
     const isTimeout =
       error instanceof Error && error.name === "AbortError";
 
+    // 에러 로그 (문자열 body는 요약)
+    let errorLogBody: unknown;
+    if (requestBody) {
+      if (typeof requestBody === "string") {
+        errorLogBody = requestBody.length > 500
+          ? `${requestBody.substring(0, 500)}... [truncated]`
+          : requestBody;
+      } else {
+        errorLogBody = maskSensitiveData(requestBody as Record<string, unknown>);
+      }
+    }
+
     logger.error(`✕ EXTERNAL ${method} ${url} FAILED ${duration}ms`, {
       method,
       url,
       duration: `${duration}ms`,
       error: isTimeout ? "Request timeout" : errorMessage,
-      body: requestBody ? maskSensitiveData(requestBody as Record<string, unknown>) : undefined,
+      body: errorLogBody,
     });
 
     throw error;

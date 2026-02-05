@@ -14,7 +14,7 @@ import {
 // 네이버페이 API 기본 URL (환경에 따라 동적 결정)
 // 공식 문서: https://docs.pay.naver.com/docs/common/url-format
 function getApiBaseUrl(): string {
-  return config.naverpay.mode === "prod"
+  return config.naverpay.mode === "production"
     ? "https://pay.paygate.naver.com"
     : "https://dev-pay.paygate.naver.com";
 }
@@ -446,7 +446,8 @@ export function getNaverPaySDKConfig(): NaverPaySDKParams {
   return {
     clientId: config.naverpay.clientId,
     chainId: config.naverpay.chainId,
-    mode: config.naverpay.mode === "prod" ? "production" : "development",
+    // test → development, production → production
+    mode: config.naverpay.mode === "production" ? "production" : "development",
     payType: "normal",
   };
 }
