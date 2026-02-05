@@ -20,15 +20,15 @@ export const SHIPPING = {
  */
 export const RETURN_INFO = {
   /** 반품지 우편번호 */
-  zipcode: "06234",
+  zipcode: "48411",
   /** 반품지 기본주소 */
-  address1: "서울특별시 강남구",
+  address1: "부산광역시 남구 전포대로 84-1",
   /** 반품지 상세주소 */
-  address2: "",
+  address2: "104동 201호",
   /** 판매자명 */
-  sellername: "ShakiShaki",
+  sellername: "손유진",
   /** 연락처1 (필수) */
-  contact1: "02-1234-5678",
+  contact1: "010-7347-4088",
   /** 연락처2 (선택) */
   contact2: "",
 } as const;
@@ -38,9 +38,9 @@ export const RETURN_INFO = {
  */
 export const RETURN_SHIPPING_FEE = {
   /** 반품 배송비 (편도) */
-  RETURN: 5000,
+  RETURN: 3500,
   /** 교환 배송비 (왕복) */
-  EXCHANGE: 10000,
+  EXCHANGE: 7000,
 } as const;
 
 /**
@@ -111,7 +111,7 @@ export function isRemoteArea(postalCode: string): boolean {
   if (isNaN(code)) return false;
 
   return REMOTE_AREA_POSTAL_CODES.some(
-    (range) => code >= range.start && code <= range.end
+    (range) => code >= range.start && code <= range.end,
   );
 }
 
@@ -123,7 +123,7 @@ export function isRemoteArea(postalCode: string): boolean {
  */
 export function calculateShippingFee(
   subtotal: number,
-  postalCode?: string
+  postalCode?: string,
 ): number {
   // 기본 배송비 (무료 배송 조건 충족 시 0)
   let baseFee = subtotal >= SHIPPING.FREE_THRESHOLD ? 0 : SHIPPING.FEE;
@@ -201,7 +201,7 @@ function calculatePenalty(
   paidShippingFee: number,
   remainingAmount: number,
   penaltyAlreadyApplied: boolean,
-  sellerCancelledAmount: number = 0
+  sellerCancelledAmount: number = 0,
 ): { penalty: number; shouldUpdateFlag: boolean } {
   // 유료배송 주문 (기본 배송비를 결제한 경우): 페널티 없음
   if (!hadFreeShippingBenefit(paidShippingFee)) {
@@ -237,7 +237,9 @@ function calculatePenalty(
  * - 배송 후 부분 반품 (고객 귀책): 상품값 - 페널티
  * - 배송 후 마지막 반품 (고객 귀책): 상품값 + 낸 배송비 - 낸 배송비 - 기본배송비(무료배송 혜택 회수)
  */
-export function calculateRefund(input: RefundCalculationInput): RefundCalculationResult {
+export function calculateRefund(
+  input: RefundCalculationInput,
+): RefundCalculationResult {
   const {
     itemsAmount,
     paidShippingFee,
@@ -251,7 +253,8 @@ export function calculateRefund(input: RefundCalculationInput): RefundCalculatio
   } = input;
 
   // 남은 금액 계산: 전체 주문 - 이미 환불 - 현재 환불
-  const remainingAmount = totalOrderAmount - alreadyRefundedAmount - itemsAmount;
+  const remainingAmount =
+    totalOrderAmount - alreadyRefundedAmount - itemsAmount;
 
   let itemsRefund = itemsAmount;
   let shippingRefund = 0;
@@ -299,7 +302,7 @@ export function calculateRefund(input: RefundCalculationInput): RefundCalculatio
           paidShippingFee,
           remainingAmount,
           penaltyAlreadyApplied,
-          sellerCancelledAmount
+          sellerCancelledAmount,
         );
         penalty = penaltyResult.penalty;
         shouldUpdatePenaltyFlag = penaltyResult.shouldUpdateFlag;
