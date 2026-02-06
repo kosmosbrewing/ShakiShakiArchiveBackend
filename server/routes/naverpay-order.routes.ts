@@ -18,6 +18,7 @@ import {
 } from "../constants";
 import {
   registerOrder,
+  registerWishlist,
   buildProductInfoXml,
   buildAdditionalFeesXml,
   getNaverPayOrderSDKConfig,
@@ -31,7 +32,7 @@ import {
   type OptionItemXml,
   type CombinationXml,
 } from "../services/naverpay-order.service";
-import { decodeBase64Url } from "../utils/naverpay-validators";
+import { decodeBase64Url, toNaverPayValueId, validateOptionPrice } from "../utils/naverpay-validators";
 import {
   toNaverPayProductId,
   toNaverPayOptionCode,
@@ -218,15 +219,23 @@ router.post(
           });
         }
 
-        // 옵션 추가 금액 계산
+        // 옵션 추가 금액 계산 (정수 변환)
         if (variant.price) {
-          optionPrice = parseFloat(variant.price);
+          optionPrice = Math.round(parseFloat(variant.price));
         }
         // 네이버페이 옵션 관리 코드 (30자 제한)
         optionManageCode = toNaverPayOptionCode(variant.sku, variant.id);
       }
 
-      const basePrice = parseFloat(product.price);
+      const basePrice = Math.round(parseFloat(product.price));
+
+      // 옵션 가격 검증 (basePrice의 -50% 이상이어야 함)
+      if (optionPrice !== 0) {
+        const priceValidation = validateOptionPrice(optionPrice, basePrice);
+        if (!priceValidation.valid) {
+          return res.status(400).json({ message: priceValidation.error });
+        }
+      }
       const itemTotal = (basePrice + optionPrice) * item.quantity;
       totalAmount += itemTotal;
 
@@ -249,7 +258,7 @@ router.post(
         shippingPolicy: {
           groupId: "default", // 묶음배송 그룹
           method: "DELIVERY",
-          feeType: totalAmount >= SHIPPING.FREE_THRESHOLD ? "CONDITIONAL_FREE" : "CHARGE",
+          feeType: "CONDITIONAL_FREE",
           feePayType: "PREPAYED",
           feePrice: SHIPPING.FEE,
           conditionalFree: {
@@ -266,17 +275,19 @@ router.post(
 
       // 옵션이 있는 경우
       if (variant) {
+        // 해당 상품의 전체 variants 조회 (한글 옵션 ID 결정론적 매핑을 위해)
+        const allVariants = await storage.getProductVariants(item.productId);
+        const allSizes = Array.from(new Set(allVariants.map(v => v.size).filter(Boolean))) as string[];
+        const allColors = Array.from(new Set(allVariants.map(v => v.color).filter(Boolean))) as string[];
+
         // selectedItems 구성 (네이버페이 표 3-3 규격)
         // 사이즈와 색상을 각각 별도의 selectedItem으로 분리
         const selectedItems: SelectedItem[] = [];
 
-        // valueId는 영문/숫자만 허용되므로, 한글인 경우 영문 prefix + 인덱스 사용
+        // valueId는 영문/숫자만 허용되므로, 한글인 경우 정렬 기반 인덱스 사용
         // valueText에는 원본 한글값 유지
         if (variant.size) {
-          // size가 영문/숫자면 그대로, 한글이면 SZ_ prefix 사용
-          const sizeId = /^[a-zA-Z0-9!+\-\/=_|]+$/.test(variant.size)
-            ? variant.size
-            : `SZ_${variant.size.length}`;  // 한글은 ID로 사용 불가, 대체값 사용
+          const sizeId = toNaverPayValueId("SZ", variant.size, allSizes);
 
           selectedItems.push({
             type: "SELECT",
@@ -287,10 +298,7 @@ router.post(
         }
 
         if (variant.color) {
-          // color가 영문/숫자면 그대로, 한글이면 CL_ prefix 사용
-          const colorId = /^[a-zA-Z0-9!+\-\/=_|]+$/.test(variant.color)
-            ? variant.color
-            : `CL_${variant.color.length}`;  // 한글은 ID로 사용 불가, 대체값 사용
+          const colorId = toNaverPayValueId("CL", variant.color, allColors);
 
           selectedItems.push({
             type: "SELECT",
@@ -343,7 +351,7 @@ router.post(
     }
 
     // 뒤로가기 URL (FRONTEND_URL/cart 사용)
-    const backUrl = `${config.frontendUrl}/cart`;
+    const backUrl = `${config.frontendUrl}/naverpay/back`;
 
     // 주문 등록 요청
     const registerRequest: OrderRegisterRequest = {
@@ -428,14 +436,10 @@ router.post(
 router.get(
   "/product-info",
   asyncHandler(async (req: Request, res: Response) => {
-    // ========== 디버그: 요청 전체 로깅 ==========
-    console.log("\n" + "=".repeat(80));
-    console.log("[상품정보 API] REQUEST RECEIVED");
-    console.log("=".repeat(80));
-    console.log("URL:", req.originalUrl);
-    console.log("Query (raw):", JSON.stringify(req.query, null, 2));
-    console.log("Headers:", JSON.stringify(req.headers, null, 2));
-    console.log("=".repeat(80));
+    logger.debug("상품정보 API 요청", {
+      url: req.originalUrl,
+      query: req.query,
+    });
 
     // 쿼리 파라미터에서 상품 ID 추출
     // product[0][id]=xxx&product[1][id]=yyy 형식
@@ -446,30 +450,33 @@ router.get(
     const optionSearch = req.query.optionSearch === "true";
     const supplementSearch = req.query.supplementSearch === "true";
 
-    // 쿼리 파라미터 파싱
+    // 쿼리 파라미터 파싱 (2-pass: 순서 의존성 버그 방지)
+    // 1st pass: 상품 ID 전체 수집
+    const indexToId: Map<number, string> = new Map();
     for (const [key, value] of Object.entries(req.query)) {
-      // product[0][id] 형식 파싱
       const idMatch = key.match(/^product\[(\d+)\]\[id\]$/);
       if (idMatch && typeof value === "string") {
+        const index = parseInt(idMatch[1], 10);
+        indexToId.set(index, value);
         productIds.push(value);
-        console.log(`[상품정보 API] 상품 ID 파싱: ${key} = ${value}`);
       }
+    }
 
-      // product[0][optionManageCodes] 형식 파싱
+    // 2nd pass: optionManageCodes 수집 (productIds가 모두 준비된 후)
+    for (const [key, value] of Object.entries(req.query)) {
       const optionMatch = key.match(/^product\[(\d+)\]\[optionManageCodes\]$/);
       if (optionMatch && typeof value === "string") {
         const index = parseInt(optionMatch[1], 10);
-        const productId = productIds[index];
+        const productId = indexToId.get(index);
         if (productId) {
           optionCodes.set(productId, value.split(","));
         }
       }
     }
 
-    console.log(`[상품정보 API] 파싱된 상품 ID 목록: [${productIds.join(", ")}]`);
+    logger.debug("파싱된 상품 ID 목록", { productIds });
 
     if (productIds.length === 0) {
-      console.log("[상품정보 API] ERROR: 상품 ID가 없음!");
       return res.status(400).send("상품 ID가 필요합니다");
     }
 
@@ -484,26 +491,21 @@ router.get(
     const productsInfo: ProductInfoXml[] = [];
 
     for (const shortProductId of productIds) {
-      console.log(`\n[상품정보 API] 상품 처리 시작: shortId=${shortProductId}`);
-
       // 짧은 ID를 UUID로 변환 (네이버페이는 우리가 등록한 짧은 ID로 호출)
       let productId: string;
       try {
         productId = shortIdToUuid(shortProductId);
-        console.log(`[상품정보 API] ID 변환 성공: ${shortProductId} → ${productId}`);
       } catch (e) {
         // 변환 실패 시 원본 ID 사용 (하위 호환)
         productId = shortProductId;
-        console.log(`[상품정보 API] ID 변환 실패, 원본 사용: ${productId}`, e);
+        logger.debug("ID 변환 실패, 원본 사용", { shortProductId });
       }
 
       const product = await storage.getProduct(productId);
       if (!product) {
-        console.log(`[상품정보 API] ERROR: 상품을 찾을 수 없음! productId=${productId}`);
         logger.warn("상품을 찾을 수 없음", { productId, shortProductId });
         continue;
       }
-      console.log(`[상품정보 API] 상품 조회 성공: ${product.name} (isAvailable=${product.isAvailable})`);
 
       // 상품 옵션(variant) 조회
       const variants = await storage.getProductVariants(productId);
@@ -529,7 +531,7 @@ router.get(
         id: naverPayProductId,
         ecMallProductId: naverPayProductId,
         name: product.name,
-        basePrice: parseFloat(product.price),
+        basePrice: Math.round(parseFloat(product.price)),
         taxType: "TAX",
         infoUrl: `${config.frontendUrl}/productDetail/${product.id}`,
         imageUrl: product.imageUrl || product.images?.[0] || "",
@@ -560,12 +562,20 @@ router.get(
 
       // 옵션 정보 추가 (표 3-10 규격: optionItem + combination 구조)
       if (variants.length > 0) {
-        // 한글 → 영문 ID 변환 헬퍼 (상품정보 API에서는 ID와 text가 동일해야 네이버페이가 매칭함)
-        // 하지만 ID는 영문/숫자만 허용되므로, 한글인 경우 인덱스 기반 ID 생성
-        const sizeIdMap = new Map<string, string>();  // 원본값 → 영문ID
-        const colorIdMap = new Map<string, string>(); // 원본값 → 영문ID
-        let sizeIdx = 0;
-        let colorIdx = 0;
+        // 전체 고유 사이즈/색상 목록 (toNaverPayValueId 공통 함수에 전달)
+        const allSizes = Array.from(new Set(variants.map(v => v.size).filter(Boolean))) as string[];
+        const allColors = Array.from(new Set(variants.map(v => v.color).filter(Boolean))) as string[];
+
+        // 한글 → 영문 ID 변환 맵 (공통 함수 사용으로 주문등록과 동일한 ID 생성)
+        const sizeIdMap = new Map<string, string>();
+        const colorIdMap = new Map<string, string>();
+
+        for (const size of allSizes) {
+          sizeIdMap.set(size, toNaverPayValueId("SZ", size, allSizes));
+        }
+        for (const color of allColors) {
+          colorIdMap.set(color, toNaverPayValueId("CL", color, allColors));
+        }
 
         // 1. 옵션 항목 수집 (사이즈, 색상별 고유값)
         const sizeValues = new Map<string, boolean>(); // 원본값 → status
@@ -575,14 +585,6 @@ router.get(
           const isAvailable = (v.stockQuantity || 0) > 0;
 
           if (v.size) {
-            // ID 매핑 생성 (한글이면 SZ_0, SZ_1 형태)
-            if (!sizeIdMap.has(v.size)) {
-              const id = /^[a-zA-Z0-9!+\-\/=_|]+$/.test(v.size)
-                ? v.size
-                : `SZ_${sizeIdx++}`;
-              sizeIdMap.set(v.size, id);
-            }
-
             // 이미 있고 구매 가능한 것은 유지
             const existing = sizeValues.get(v.size);
             if (existing === undefined || !existing) {
@@ -590,14 +592,6 @@ router.get(
             }
           }
           if (v.color) {
-            // ID 매핑 생성 (한글이면 CL_0, CL_1 형태)
-            if (!colorIdMap.has(v.color)) {
-              const id = /^[a-zA-Z0-9!+\-\/=_|]+$/.test(v.color)
-                ? v.color
-                : `CL_${colorIdx++}`;
-              colorIdMap.set(v.color, id);
-            }
-
             const existing = colorValues.get(v.color);
             if (existing === undefined || !existing) {
               colorValues.set(v.color, isAvailable);
@@ -633,7 +627,7 @@ router.get(
         }
 
         // 3. combinations 생성 (각 variant가 하나의 조합)
-        const combinations: CombinationXml[] = variants.map((v) => {
+        const allCombinations: CombinationXml[] = variants.map((v) => {
           const options: Array<{ name: string; id: string }> = [];
 
           if (v.size) {
@@ -651,12 +645,18 @@ router.get(
 
           return {
             manageCode: toNaverPayOptionCode(v.sku, v.id),
-            price: v.price ? parseFloat(v.price) : 0,
+            price: v.price ? Math.round(parseFloat(v.price)) : 0,
             stockQuantity: v.stockQuantity || 0,
             status: (v.stockQuantity || 0) > 0,
             options,
           };
         });
+
+        // optionManageCodes 필터링 (가이드 표 3-7: 해당 조합만 응답에 포함)
+        const requestedCodes = optionCodes.get(shortProductId);
+        const combinations = (requestedCodes && requestedCodes.length > 0)
+          ? allCombinations.filter(c => requestedCodes.includes(c.manageCode))
+          : allCombinations;
 
         // optionSearch=true일 때만 옵션 정보 포함 (가이드 표 3-7)
         if (optionSearch) {
@@ -669,7 +669,7 @@ router.get(
             productInfo.options = variants.map((v) => ({
               optionManageCode: toNaverPayOptionCode(v.sku, v.id),
               optionName: [v.size, v.color].filter(Boolean).join(" / ") || "기본",
-              optionPrice: v.price ? parseFloat(v.price) : 0,
+              optionPrice: v.price ? Math.round(parseFloat(v.price)) : 0,
               stockQuantity: v.stockQuantity || 0,
               status:
                 (v.stockQuantity || 0) > 0 ? ("ON_SALE" as const) : ("SOLD_OUT" as const),
@@ -684,19 +684,10 @@ router.get(
     // XML 응답 생성
     const xml = buildProductInfoXml(productsInfo);
 
-    // ========== 디버그: 응답 로깅 ==========
-    console.log("\n" + "=".repeat(80));
-    console.log("[상품정보 API] RESPONSE");
-    console.log("=".repeat(80));
-    console.log(`상품 수: ${productsInfo.length}`);
     if (productsInfo.length === 0) {
-      console.log("WARNING: 반환할 상품이 없음! (네이버페이에서 '상품정보 조회 실패' 오류 발생)");
+      logger.warn("상품정보 API: 반환할 상품 없음");
     }
-    console.log("-".repeat(80));
-    console.log("XML Response:");
-    console.log("-".repeat(80));
-    console.log(xml);
-    console.log("=".repeat(80) + "\n");
+    logger.debug("상품정보 API 응답", { productCount: productsInfo.length, xml });
 
     res.set("Content-Type", "application/xml; charset=utf-8");
     res.send(xml);
@@ -816,23 +807,37 @@ router.post(
       });
     }
 
-    // 위시리스트에 추가
+    // 네이버페이 찜하기 API 호출
+    const naverPayProductId = toNaverPayProductId(productId);
+    const wishlistResult = await registerWishlist({
+      itemId: naverPayProductId,
+      itemName: product.name,
+      itemUprice: Math.round(parseFloat(product.price)),
+      itemImage: product.imageUrl || product.images?.[0] || "",
+      itemUrl: `${config.frontendUrl}/productDetail/${product.id}`,
+    });
+
+    if (!wishlistResult.success) {
+      logger.error("네이버페이 찜하기 실패", { userId, productId, message: wishlistResult.message });
+      return res.status(500).json({
+        success: false,
+        message: wishlistResult.message,
+      });
+    }
+
+    // 네이버페이 API 성공 시 내부 위시리스트에도 저장
     try {
       await storage.addWishlistItem(userId, productId);
       logger.info("네이버페이 찜하기 성공", { userId, productId });
-
-      res.json({
-        success: true,
-        message: "찜 목록에 추가되었습니다",
-      });
     } catch (error) {
-      // 이미 찜한 상품인 경우
-      logger.warn("이미 찜한 상품", { userId, productId });
-      res.json({
-        success: true,
-        message: "이미 찜 목록에 있는 상품입니다",
-      });
+      // 이미 찜한 상품인 경우 (내부 위시리스트 중복은 무시)
+      logger.warn("이미 찜한 상품 (내부 위시리스트)", { userId, productId });
     }
+
+    res.json({
+      success: true,
+      message: "찜 목록에 추가되었습니다",
+    });
   })
 );
 

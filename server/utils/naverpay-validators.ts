@@ -245,6 +245,24 @@ export function validateBasePrice(basePrice: number): ValidationResult {
 }
 
 /**
+ * 한글 옵션값을 네이버페이 호환 ID로 변환
+ * 주문등록과 상품정보 API에서 동일한 ID를 생성하기 위해 정렬 기반 결정론적 매핑
+ *
+ * @param prefix - ID 접두사 (예: "SZ", "CL")
+ * @param value - 현재 옵션값 (예: "프리", "라지")
+ * @param allUniqueValues - 해당 상품의 전체 고유 옵션값 목록 (정렬 전)
+ * @returns 영문/숫자 호환 ID (영문이면 그대로, 한글이면 prefix_인덱스)
+ */
+export function toNaverPayValueId(prefix: string, value: string, allUniqueValues: string[]): string {
+  // 영문/숫자/허용 특수문자면 그대로 사용
+  if (NAVERPAY_ID_PATTERN.test(value)) return value;
+  // 정렬하여 순서 고정 (결정론적 매핑)
+  const sorted = [...allUniqueValues].sort();
+  const idx = sorted.indexOf(value);
+  return `${prefix}_${idx}`;
+}
+
+/**
  * base64url 디코딩 (address1 파라미터용)
  * 네이버페이는 주소를 UTF-8 → base64url 인코딩해서 전달
  * @param encoded base64url 인코딩된 문자열

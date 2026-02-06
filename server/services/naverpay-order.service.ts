@@ -3,7 +3,7 @@
 // 참고: 주문형 네이버페이 서비스 연동하기 V2.1 문서
 
 import { config } from "../config";
-import { httpRequest } from "../utils/http-client";
+import { httpRequest, postFormUrlEncoded } from "../utils/http-client";
 import { createLogger } from "../utils/logger";
 import {
   safeOptionName,
@@ -31,30 +31,6 @@ function getOrderRegisterUrl(): string {
 }
 
 /**
- * 주문서 호출 URL (PC)
- * 테스트: https://test-order.pay.naver.com/customer/buy/{인증키}/{가맹점번호}
- * 운영: https://order.pay.naver.com/customer/buy/{인증키}/{가맹점번호}
- */
-export function getOrderPageUrl(): string {
-  const { certiKey, merchantId, mode } = config.naverpayOrder;
-  return mode === "production"
-    ? `https://order.pay.naver.com/customer/buy/${certiKey}/${merchantId}`
-    : `https://test-order.pay.naver.com/customer/buy/${certiKey}/${merchantId}`;
-}
-
-/**
- * 주문서 호출 URL (Mobile)
- * 테스트: https://test-m.pay.naver.com/o/customer/buy/{인증키}/{가맹점번호}
- * 운영: https://m.pay.naver.com/o/customer/buy/{인증키}/{가맹점번호}
- */
-export function getOrderPageUrlMobile(): string {
-  const { certiKey, merchantId, mode } = config.naverpayOrder;
-  return mode === "production"
-    ? `https://m.pay.naver.com/o/customer/buy/${certiKey}/${merchantId}`
-    : `https://test-m.pay.naver.com/o/customer/buy/${certiKey}/${merchantId}`;
-}
-
-/**
  * 네이버페이 버튼 스크립트 URL (PC)
  */
 export function getButtonScriptUrl(): string {
@@ -70,6 +46,70 @@ export function getButtonScriptUrlMobile(): string {
   return config.naverpayOrder.mode === "production"
     ? "https://pay.naver.com/customer/js/mobile/naverPayButton.js"
     : "https://test-pay.naver.com/customer/js/mobile/naverPayButton.js";
+}
+
+/**
+ * 네이버페이 찜하기 API URL
+ * 테스트: https://test-pay.naver.com/customer/api/wishlist.nhn
+ * 운영: https://pay.naver.com/customer/api/wishlist.nhn
+ */
+function getWishlistUrl(): string {
+  return config.naverpayOrder.mode === "production"
+    ? "https://pay.naver.com/customer/api/wishlist.nhn"
+    : "https://test-pay.naver.com/customer/api/wishlist.nhn";
+}
+
+/**
+ * 네이버페이 찜하기 등록 파라미터
+ */
+export interface WishlistRegisterParams {
+  itemId: string;       // 상품 ID (네이버페이용 짧은 ID)
+  itemName: string;     // 상품명
+  itemUprice: number;   // 상품 가격
+  itemImage: string;    // 상품 이미지 URL
+  itemUrl: string;      // 상품 상세 페이지 URL
+}
+
+/**
+ * 네이버페이 찜하기 API 호출
+ * 가이드 5장: 찜 버튼 클릭 시 가맹점 → 네이버페이 서버로 POST
+ *
+ * @param params 찜하기 등록 파라미터
+ * @returns 성공 여부
+ */
+export async function registerWishlist(params: WishlistRegisterParams): Promise<{ success: boolean; message: string }> {
+  const url = getWishlistUrl();
+  const { merchantId, certiKey } = config.naverpayOrder;
+
+  try {
+    const response = await postFormUrlEncoded<string>(url, {
+      SHOP_ID: merchantId,
+      CERTI_KEY: certiKey,
+      ITEM_ID: params.itemId,
+      ITEM_NAME: params.itemName,
+      ITEM_UPRICE: params.itemUprice,
+      ITEM_IMAGE: params.itemImage,
+      ITEM_URL: params.itemUrl,
+    }, {}, { timeout: 10000 });
+
+    const responseText = response.data;
+    logger.info("네이버페이 찜하기 API 응답", {
+      status: response.status,
+      body: typeof responseText === "string" ? responseText.substring(0, 200) : responseText,
+    });
+
+    // 응답 처리 (SUCCESS 또는 FAIL)
+    if (response.status === 200) {
+      return { success: true, message: "찜 목록에 등록되었습니다" };
+    }
+
+    return { success: false, message: `네이버페이 찜하기 실패 (HTTP ${response.status})` };
+  } catch (error) {
+    logger.error("네이버페이 찜하기 API 호출 실패", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { success: false, message: "네이버페이 찜하기 API 호출에 실패했습니다" };
+  }
 }
 
 // ============================================================
@@ -638,18 +678,9 @@ export async function registerOrder(
   const url = getOrderRegisterUrl();
   const xml = buildOrderRegisterXml(request);
 
-  // ========== 요청 로깅 ==========
-  console.log("\n" + "=".repeat(80));
-  console.log("[네이버페이 주문등록] REQUEST");
-  console.log("=".repeat(80));
-  console.log("URL:", url);
-  console.log("Method: POST");
-  console.log("Content-Type: application/xml; charset=utf-8");
-  console.log("-".repeat(80));
-  console.log("REQUEST BODY (XML):");
-  console.log("-".repeat(80));
-  console.log(xml);
-  console.log("=".repeat(80) + "\n");
+  // 요청 로깅 (certiKey 마스킹)
+  const maskedXml = xml.replace(/<certiKey>[^<]+<\/certiKey>/, "<certiKey>****</certiKey>");
+  logger.debug("주문등록 요청", { url, xml: maskedXml });
 
   try {
     const response = await httpRequest<string>(url, {
@@ -661,17 +692,12 @@ export async function registerOrder(
       timeout: 60000,
     });
 
-    // ========== 응답 로깅 ==========
+    // 응답 로깅
     const responseText = response.data;
-    console.log("\n" + "=".repeat(80));
-    console.log("[네이버페이 주문등록] RESPONSE");
-    console.log("=".repeat(80));
-    console.log("HTTP Status:", response.status, response.statusText);
-    console.log("-".repeat(80));
-    console.log("RESPONSE BODY:");
-    console.log("-".repeat(80));
-    console.log(responseText);
-    console.log("=".repeat(80) + "\n");
+    logger.debug("주문등록 응답", {
+      status: response.status,
+      body: responseText,
+    });
 
     // 평문 성공 응답 처리 (예: "SUCCESS:HC-E89lGCvtS_AAm80C3gA:300091190")
     // orderId: 동적 인증키 (URL 구성에 사용)
@@ -712,16 +738,14 @@ export async function registerOrder(
         detail: errorDetail,
       });
 
-      // 콘솔에 디버그 정보 출력
+      // 에러 상세 디버그 로깅
       if (errorDetail) {
-        console.log("\n" + "!".repeat(80));
-        console.log("[네이버페이 에러 상세]");
-        console.log("!".repeat(80));
-        console.log(`코드: ${errorCode}`);
-        console.log(`메시지: ${errorMessage}`);
-        console.log(`원인: ${errorDetail.cause}`);
-        console.log(`해결: ${errorDetail.solution}`);
-        console.log("!".repeat(80) + "\n");
+        logger.debug("네이버페이 에러 상세", {
+          code: errorCode,
+          message: errorMessage,
+          cause: errorDetail.cause,
+          solution: errorDetail.solution,
+        });
       }
 
       return result;
@@ -751,16 +775,9 @@ export async function registerOrder(
 
     return result;
   } catch (error) {
-    // ========== 에러 로깅 ==========
-    console.log("\n" + "=".repeat(80));
-    console.log("[네이버페이 주문등록] ERROR");
-    console.log("=".repeat(80));
-    console.log("Error:", error instanceof Error ? error.message : String(error));
-    if (error instanceof Error && error.stack) {
-      console.log("Stack:", error.stack);
-    }
-    console.log("=".repeat(80) + "\n");
-
+    logger.error("주문등록 API 호출 실패", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw error;
   }
 }
