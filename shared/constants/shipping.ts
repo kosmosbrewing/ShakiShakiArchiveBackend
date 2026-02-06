@@ -34,13 +34,13 @@ export const RETURN_INFO = {
 } as const;
 
 /**
- * 반품/교환 배송비 (편도/왕복)
+ * 반품/교환 배송비 (편도)
  */
 export const RETURN_SHIPPING_FEE = {
   /** 반품 배송비 (편도) */
   RETURN: 3500,
-  /** 교환 배송비 (왕복) */
-  EXCHANGE: 7000,
+  /** 교환 배송비 (편도) */
+  EXCHANGE: 3500,
 } as const;
 
 /**
