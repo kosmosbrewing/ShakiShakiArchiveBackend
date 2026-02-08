@@ -5,7 +5,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
-import { db } from "../db";
+import { db, pool } from "../db";
 import { isAuthenticated } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
 import { paymentRateLimiter } from "../config/security";
@@ -204,8 +204,25 @@ router.post(
         partnerUserId,
       });
 
-      // 8. 주문 상태를 paying으로 업데이트
-      await storage.updateOrderStatus(orderId, "paying");
+      // 8. 주문 상태를 paying으로 업데이트 (orders + order_items 동시)
+      const payingClient = await pool.connect();
+      try {
+        await payingClient.query("BEGIN");
+        await payingClient.query(
+          `UPDATE orders SET status = 'paying', updated_at = NOW() WHERE id = $1`,
+          [orderId]
+        );
+        await payingClient.query(
+          `UPDATE order_items SET status = 'paying' WHERE order_id = $1`,
+          [orderId]
+        );
+        await payingClient.query("COMMIT");
+      } catch (payingError) {
+        await payingClient.query("ROLLBACK");
+        throw payingError;
+      } finally {
+        payingClient.release();
+      }
 
       logger.info("카카오페이 결제 준비 완료", {
         orderId,

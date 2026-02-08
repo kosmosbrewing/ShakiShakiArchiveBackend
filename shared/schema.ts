@@ -558,12 +558,16 @@ export const orderItems = pgTable(
     // [추가] 택배사 정보
     courierCompany: varchar("courier_company", { length: 50 }),
 
+    // [추가] 배송 완료 일시 (자동 구매확정 기준)
+    deliveredAt: timestamp("delivered_at"),
+
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [
     index("IDX_order_items_order_id").on(table.orderId),
     index("IDX_order_items_product_id").on(table.productId),
     index("IDX_order_items_courier_company").on(table.courierCompany),
+    index("IDX_order_items_auto_confirm").on(table.status, table.deliveredAt),
   ]
 );
 

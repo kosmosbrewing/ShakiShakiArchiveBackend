@@ -215,8 +215,9 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
   }
 
   // 4. 결제 금액 검증 (중요: 클라이언트 조작 방지)
-  const serverAmount = parseFloat(order.totalAmount);
-  if (serverAmount !== amount) {
+  // 부동소수점 오차 방지를 위해 정수(원 단위) 비교
+  const serverAmount = Math.round(parseFloat(order.totalAmount));
+  if (serverAmount !== Math.round(amount)) {
     logger.error("금액 불일치", { serverAmount, clientAmount: amount });
     return res.status(400).json({ message: PAYMENT_MESSAGES.AMOUNT_MISMATCH });
   }

@@ -21,6 +21,8 @@ export const ORDER_STATUS = {
   PURCHASE_CONFIRMED: "purchase_confirmed",
   /** 주문 취소 (결제 전) */
   CANCELLED: "cancelled",
+  /** 환불 진행 중 (PG사 호출 중) */
+  REFUNDING: "refunding",
   /** 환불 완료 (결제 후 취소) */
   REFUNDED: "refunded",
   /** 부분 환불 완료 */
@@ -41,6 +43,7 @@ export const ORDER_STATUS_ENUM = [
   ORDER_STATUS.DELIVERED,
   ORDER_STATUS.PURCHASE_CONFIRMED,
   ORDER_STATUS.CANCELLED,
+  ORDER_STATUS.REFUNDING,
   ORDER_STATUS.REFUNDED,
   ORDER_STATUS.PARTIAL_REFUNDED,
 ] as const;
@@ -53,6 +56,7 @@ export const NON_CANCELABLE_STATUSES = [
   ORDER_STATUS.SHIPPED,
   ORDER_STATUS.DELIVERED,
   ORDER_STATUS.CANCELLED,
+  ORDER_STATUS.REFUNDING,
   ORDER_STATUS.REFUNDED,
 ] as const;
 
@@ -70,6 +74,8 @@ export const ORDER_ITEM_STATUS = {
   /** 구매 확정 (배송 완료 7일 후 자동 또는 수동) */
   PURCHASE_CONFIRMED: "purchase_confirmed",
   CANCELLED: "cancelled",
+  /** 환불 진행 중 (PG사 호출 중) */
+  REFUNDING: "refunding",
   REFUNDED: "refunded",
   /** 반품 요청됨 */
   RETURN_REQUESTED: "return_requested",

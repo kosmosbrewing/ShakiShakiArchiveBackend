@@ -94,7 +94,8 @@ router.post(
     }
 
     // 6. 반품 기간 확인 (배송 완료 후 7일 이내)
-    const deliveredDate = order.updatedAt;
+    // 아이템별 deliveredAt 기준 (없으면 주문 updatedAt 폴백)
+    const deliveredDate = orderItem.deliveredAt || order.updatedAt;
     const daysSinceDelivered = Math.floor(
       (Date.now() - new Date(deliveredDate).getTime()) / (1000 * 60 * 60 * 24)
     );
@@ -323,7 +324,20 @@ router.patch(
         note,
       });
 
-      logger.info("반품 검수 거절", { returnId, note });
+      // 아이템 상태를 delivered로 복구 (재반품 가능하도록)
+      await storage.updateOrderItemStatus(
+        returnRequest.orderItemId,
+        ORDER_ITEM_STATUS.DELIVERED
+      );
+
+      // 부모 주문 상태 동기화
+      await storage.syncOrderStatusFromItems(returnRequest.orderId);
+
+      logger.info("반품 검수 거절 - 아이템 상태 복구", {
+        returnId,
+        orderItemId: returnRequest.orderItemId,
+        note,
+      });
 
       return res.json({
         message: ORDER_MESSAGES.RETURN_INSPECTION_REJECTED,

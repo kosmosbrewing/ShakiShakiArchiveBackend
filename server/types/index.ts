@@ -50,6 +50,7 @@ export interface OrderItemStatusUpdate {
   status: string;
   trackingNumber?: string;
   courierCompany?: string;
+  deliveredAt?: Date | SQL<unknown>; // 배송 완료 일시 (자동 구매확정 기준)
 }
 
 // 소프트 락 결제 승인 결과 타입

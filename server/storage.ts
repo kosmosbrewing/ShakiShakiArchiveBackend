@@ -379,6 +379,9 @@ export interface IStorage {
     }
   ): Promise<void>;
 
+  // 아이템 상태 기반으로 부모 주문 상태 동기화
+  syncOrderStatusFromItems(orderId: string): Promise<void>;
+
   // 주문 아이템 조회
   getOrderItemById(itemId: number): Promise<OrderItem | undefined>;
   getOrderItemsByOrderId(orderId: string): Promise<OrderItem[]>;
@@ -1408,6 +1411,11 @@ export class DatabaseStorage implements IStorage {
     }
     if (courierCompany !== undefined) {
       updateData.courierCompany = courierCompany;
+    }
+
+    // 배송 완료 시 delivered_at 기록 (자동 구매확정 기준일)
+    if (status === "delivered") {
+      updateData.deliveredAt = sql`NOW()`;
     }
 
     const [updated] = await db
@@ -3007,6 +3015,104 @@ export class DatabaseStorage implements IStorage {
       await client.query("ROLLBACK");
       logger.error("부분 취소 실패", {
         orderId: params.orderId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // 아이템 상태 기반 주문 상태 동기화
+  // ------------------------------------------------------------------
+  async syncOrderStatusFromItems(orderId: string): Promise<void> {
+    const client = await pool.connect();
+    const logger = createLogger("SyncOrderStatus");
+
+    try {
+      await client.query("BEGIN");
+
+      // 1. 해당 주문의 전체 아이템 status 조회
+      const itemsResult = await client.query(
+        `SELECT status FROM order_items WHERE order_id = $1`,
+        [orderId]
+      );
+
+      if (itemsResult.rows.length === 0) {
+        await client.query("COMMIT");
+        return;
+      }
+
+      const statuses = itemsResult.rows.map((r: { status: string }) => r.status);
+      const finalStatuses = ["purchase_confirmed", "refunded", "cancelled"];
+
+      // 2. 모든 아이템이 purchase_confirmed → 주문도 purchase_confirmed
+      if (statuses.every((s: string) => s === "purchase_confirmed")) {
+        await client.query(
+          `UPDATE orders
+           SET status = 'purchase_confirmed',
+               confirmed_at = COALESCE(confirmed_at, NOW()),
+               updated_at = NOW()
+           WHERE id = $1`,
+          [orderId]
+        );
+        logger.info("주문 상태 동기화: purchase_confirmed", { orderId });
+      }
+      // 3. 모든 아이템이 최종 상태 (purchase_confirmed, refunded, cancelled) → 다수결
+      else if (statuses.every((s: string) => finalStatuses.includes(s))) {
+        // 다수결로 주문 상태 결정
+        const statusCounts: Record<string, number> = {};
+        for (const s of statuses) {
+          statusCounts[s] = (statusCounts[s] || 0) + 1;
+        }
+
+        let dominantStatus = "purchase_confirmed";
+        let maxCount = 0;
+        for (const [status, cnt] of Object.entries(statusCounts)) {
+          if (cnt > maxCount) {
+            maxCount = cnt;
+            dominantStatus = status;
+          }
+        }
+
+        const updateFields: string[] = [
+          `status = $2`,
+          `updated_at = NOW()`,
+        ];
+        const params: (string | null)[] = [orderId, dominantStatus];
+
+        if (dominantStatus === "purchase_confirmed") {
+          updateFields.push(`confirmed_at = COALESCE(confirmed_at, NOW())`);
+        }
+
+        await client.query(
+          `UPDATE orders SET ${updateFields.join(", ")} WHERE id = $1`,
+          params
+        );
+        logger.info("주문 상태 동기화: 최종 상태", { orderId, dominantStatus });
+      }
+      // 4. 모든 아이템이 delivered 이상이고, delivered 아이템이 1개 이상 → delivered
+      else if (
+        statuses.every((s: string) => s === "delivered" || finalStatuses.includes(s)) &&
+        statuses.some((s: string) => s === "delivered")
+      ) {
+        await client.query(
+          `UPDATE orders
+           SET status = 'delivered',
+               delivered_at = COALESCE(delivered_at, NOW()),
+               updated_at = NOW()
+           WHERE id = $1`,
+          [orderId]
+        );
+        logger.info("주문 상태 동기화: delivered", { orderId });
+      }
+
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      logger.error("주문 상태 동기화 실패", {
+        orderId,
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;

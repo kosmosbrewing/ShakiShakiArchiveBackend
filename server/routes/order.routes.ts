@@ -842,7 +842,7 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
   // 환불 진행 중 상태로 먼저 변경 (PG사 환불 성공했지만 DB 실패 방지)
   // canceledAt은 storage에서 NOW() 사용 (DB 세션 KST)
   await storage.cancelOrderPayment(orderId, {
-    status: "refunding" as any,  // 중간 상태
+    status: ORDER_STATUS.REFUNDING,
     cancelReason: `${cancelReason} (환불 진행 중)`,
   });
 
@@ -1204,24 +1204,29 @@ router.post("/:orderId/items/:itemId/confirm", isAuthenticated, asyncHandler(asy
     });
   }
 
-  // 5. 상태 업데이트 (purchase_confirmed)
-  await db
-    .update(orderItemsTable)
-    .set({
-      status: "purchase_confirmed",
-    })
-    .where(eq(orderItemsTable.id, itemIdNum));
+  // 5. 트랜잭션으로 아이템 상태 업데이트 + 주문 동기화
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
 
-  // 6. 주문의 confirmedAt 업데이트 (첫 구매 확정 시)
-  if (!order.confirmedAt) {
-    await db
-      .update(orders)
-      .set({
-        confirmedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(orders.id, orderId));
+    // 아이템 상태 → purchase_confirmed
+    await client.query(
+      `UPDATE order_items
+       SET status = 'purchase_confirmed'
+       WHERE id = $1`,
+      [itemIdNum]
+    );
+
+    await client.query("COMMIT");
+  } catch (txError) {
+    await client.query("ROLLBACK");
+    throw txError;
+  } finally {
+    client.release();
   }
+
+  // 6. 부모 주문 상태 동기화
+  await storage.syncOrderStatusFromItems(orderId);
 
   logger.info("구매 확정 완료", {
     orderId,

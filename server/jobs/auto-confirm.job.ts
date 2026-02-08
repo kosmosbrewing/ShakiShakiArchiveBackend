@@ -1,24 +1,25 @@
 // server/jobs/auto-confirm.job.ts
-// 배송 완료 7일 후 자동 구매확정 스케줄러
+// 배송 완료 7일 후 자동 구매확정 스케줄러 (아이템 단위)
 
 import cron from "node-cron";
 import { pool } from "../db";
+import { storage } from "../storage";
 import { createLogger } from "../utils/logger";
 import { AUTO_CONFIRM_SCHEDULER, SCHEDULER_TIMEZONE } from "@shared/constants";
 
 const logger = createLogger("AutoConfirm");
 
 /**
- * 자동 구매확정 처리
+ * 자동 구매확정 처리 (아이템 단위)
  *
  * 조건:
- * 1. 주문 상태가 delivered(배송완료)
+ * 1. 아이템 상태가 delivered(배송완료)
  * 2. delivered_at으로부터 7일(168시간) 경과
- * 3. 반품 진행 중인 주문 제외 (return_requested, return_in_transit, return_received)
  *
  * 처리:
- * - 주문 상태를 purchase_confirmed로 변경
- * - confirmed_at에 현재 시간 기록
+ * - 아이템 상태를 purchase_confirmed로 변경
+ * - 아이템별 SAVEPOINT로 에러 격리
+ * - 처리 후 syncOrderStatusFromItems로 부모 주문 동기화
  */
 async function processAutoConfirm(): Promise<{
   processed: number;
@@ -31,81 +32,91 @@ async function processAutoConfirm(): Promise<{
   try {
     await client.query("BEGIN");
 
-    // 1. 자동 구매확정 대상 주문 조회
-    // - 배송완료(delivered) 상태
-    // - delivered_at으로부터 N일 경과 (상수에서 설정)
-    // - 반품 진행 중인 아이템이 없는 주문
+    // 1. 자동 구매확정 대상 아이템 조회
+    // - 아이템 상태가 delivered
+    // - delivered_at으로부터 N일 경과
+    // - FOR UPDATE SKIP LOCKED로 동시 실행 방지
     const query = `
-      SELECT o.id, o.external_order_id, o.delivered_at, o.user_id
-      FROM orders o
-      WHERE o.status = 'delivered'
-        AND o.delivered_at IS NOT NULL
-        AND o.delivered_at <= NOW() - INTERVAL '${AUTO_CONFIRM_SCHEDULER.DAYS_AFTER_DELIVERY} days'
-        AND NOT EXISTS (
-          SELECT 1 FROM order_items oi
-          WHERE oi.order_id = o.id
-          AND oi.status IN ('return_requested', 'return_in_transit', 'return_received')
-        )
+      SELECT oi.id, oi.order_id, oi.delivered_at, oi.product_name
+      FROM order_items oi
+      WHERE oi.status = 'delivered'
+        AND oi.delivered_at IS NOT NULL
+        AND oi.delivered_at <= NOW() - INTERVAL '${AUTO_CONFIRM_SCHEDULER.DAYS_AFTER_DELIVERY} days'
       FOR UPDATE SKIP LOCKED
     `;
 
-    const ordersResult = await client.query(query);
-    const orders = ordersResult.rows;
+    const itemsResult = await client.query(query);
+    const items = itemsResult.rows;
 
-    logger.info("자동 구매확정 대상 조회", {
-      count: orders.length,
+    logger.info("자동 구매확정 대상 아이템 조회", {
+      count: items.length,
     });
 
-    if (orders.length === 0) {
+    if (items.length === 0) {
       await client.query("COMMIT");
       return result;
     }
 
-    // 2. 각 주문을 구매확정 처리
-    for (const order of orders) {
-      try {
-        // 주문 상태 업데이트
-        await client.query(
-          `UPDATE orders
-           SET status = 'purchase_confirmed',
-               confirmed_at = NOW(),
-               updated_at = NOW()
-           WHERE id = $1`,
-          [order.id]
-        );
+    // 2. 각 아이템을 SAVEPOINT로 격리하여 구매확정 처리
+    // 처리된 주문 ID 수집 (동기화용)
+    const affectedOrderIds = new Set<string>();
 
-        // 주문 아이템 상태도 업데이트 (배송완료 → 구매확정)
+    for (const item of items) {
+      const savepointName = `item_${item.id}`;
+      try {
+        await client.query(`SAVEPOINT ${savepointName}`);
+
+        // 아이템 상태 업데이트
         await client.query(
           `UPDATE order_items
-           SET status = 'purchase_confirmed',
-               updated_at = NOW()
-           WHERE order_id = $1 AND status = 'delivered'`,
-          [order.id]
+           SET status = 'purchase_confirmed'
+           WHERE id = $1`,
+          [item.id]
         );
 
+        await client.query(`RELEASE SAVEPOINT ${savepointName}`);
+
+        affectedOrderIds.add(item.order_id);
         result.processed++;
 
-        logger.info("자동 구매확정 완료", {
-          orderId: order.id,
-          externalOrderId: order.external_order_id,
-          userId: order.user_id,
-          deliveredAt: order.delivered_at,
+        logger.info("자동 구매확정 아이템 완료", {
+          itemId: item.id,
+          orderId: item.order_id,
+          productName: item.product_name,
+          deliveredAt: item.delivered_at,
         });
-      } catch (orderError) {
+      } catch (itemError) {
+        await client.query(`ROLLBACK TO SAVEPOINT ${savepointName}`);
         result.errors++;
-        logger.error("자동 구매확정 실패", {
-          orderId: order.id,
-          error: orderError instanceof Error ? orderError.message : String(orderError),
+
+        logger.error("자동 구매확정 아이템 실패", {
+          itemId: item.id,
+          orderId: item.order_id,
+          error: itemError instanceof Error ? itemError.message : String(itemError),
         });
       }
     }
 
     await client.query("COMMIT");
 
+    // 3. 영향받은 주문들의 상태 동기화 (트랜잭션 외부에서 개별 처리)
+    const orderIds = Array.from(affectedOrderIds);
+    for (const orderId of orderIds) {
+      try {
+        await storage.syncOrderStatusFromItems(orderId);
+      } catch (syncError) {
+        logger.error("주문 상태 동기화 실패", {
+          orderId,
+          error: syncError instanceof Error ? syncError.message : String(syncError),
+        });
+      }
+    }
+
     logger.info("자동 구매확정 배치 완료", {
       processed: result.processed,
       skipped: result.skipped,
       errors: result.errors,
+      affectedOrders: orderIds.length,
     });
 
     return result;
