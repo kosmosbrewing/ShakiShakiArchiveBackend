@@ -25,10 +25,25 @@ const adminItemStatusSchema = z.object({
   courierCompany: z.string().max(50).optional(),
 });
 
-// 전체 주문 목록 조회 (관리자)
+// 전체 주문 목록 조회 (관리자, 페이지네이션 지원)
 router.get("/orders", isAuthenticated, isAdmin, cacheStrategies.admin, asyncHandler(async (req, res) => {
-  const orders = await storage.getAllOrdersWithItems();
-  res.json(orders);
+  const page = Math.max(1, parseInt(req.query.page as string) || 1);
+  const limit = Math.min(500, Math.max(1, parseInt(req.query.limit as string) || 200));
+
+  const { orders, total } = await storage.getAllOrdersWithItems({ page, limit });
+
+  const totalPages = Math.ceil(total / limit);
+
+  res.json({
+    orders,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages,
+      hasMore: page < totalPages,
+    },
+  });
 }));
 
 // 주문 상태 수정 (관리자, UUID 기반)

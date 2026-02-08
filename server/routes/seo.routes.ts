@@ -35,7 +35,7 @@ router.get("/home", cacheStrategies.staticData, (_req, res) => {
  * 캐시: 브라우저 10초, CDN 1분
  */
 router.get("/products", cacheStrategies.productList, asyncHandler(async (_req, res) => {
-  const products = await storage.getProducts({});
+  const { products } = await storage.getProducts({});
   const seoData = generateProductListSeo(products);
   res.json(seoData);
 }));
@@ -104,7 +104,7 @@ router.get("/categories/:idOrSlug", cacheStrategies.staticData, asyncHandler(asy
   }
 
   // 해당 카테고리의 상품 목록 조회
-  const products = await storage.getProducts({ categoryId: category.id });
+  const { products } = await storage.getProducts({ categoryId: category.id });
 
   const seoData = generateCategorySeo(category, products);
   res.json(seoData);
@@ -125,8 +125,8 @@ router.get("/search", cacheStrategies.productList, asyncHandler(async (req, res)
   }
 
   // 검색 결과 수 조회
-  const products = await storage.getProducts({ search: query });
-  const seoData = generateSearchSeo(query, products.length);
+  const { total } = await storage.getProducts({ search: query });
+  const seoData = generateSearchSeo(query, total);
 
   res.json(seoData);
 }));
@@ -139,13 +139,13 @@ router.get("/search", cacheStrategies.productList, asyncHandler(async (req, res)
  * 캐시: 브라우저 5분, CDN 10분
  */
 router.get("/sitemap-data", cacheStrategies.staticData, asyncHandler(async (_req, res) => {
-  const [products, categories] = await Promise.all([
+  const [productsResult, categories] = await Promise.all([
     storage.getProducts({}),
     storage.getCategories(),
   ]);
 
   const sitemapData = {
-    products: products.map((p) => ({
+    products: productsResult.products.map((p) => ({
       slug: p.slug,
       updatedAt: p.updatedAt,
       imageUrl: p.imageUrl,

@@ -46,7 +46,7 @@ router.get("/", etagMiddleware(), cacheStrategies.productList, asyncHandler(asyn
   // Meilisearch가 비활성화된 경우 DB 폴백
   if (!meilisearchService.isEnabled()) {
     logger.info("Meilisearch 비활성화 - DB 검색으로 폴백");
-    const products = await storage.getProducts({
+    const { products } = await storage.getProducts({
       search: query || undefined,
       categoryId,
     });
@@ -136,7 +136,7 @@ router.post("/reindex", isAdmin, asyncHandler(async (_req, res) => {
   }
 
   // 모든 상품과 카테고리 조회
-  const [products, categories] = await Promise.all([
+  const [productsResult, categories] = await Promise.all([
     storage.getProducts({}),
     storage.getCategories(),
   ]);
@@ -145,11 +145,11 @@ router.post("/reindex", isAdmin, asyncHandler(async (_req, res) => {
   const categoryMap = new Map(categories.map((c) => [c.id, c]));
 
   // 재인덱싱 실행
-  await meilisearchService.rebuildIndex(products, categoryMap);
+  await meilisearchService.rebuildIndex(productsResult.products, categoryMap);
 
   res.json({
     message: SUCCESS_MESSAGES.REINDEX_STARTED,
-    totalProducts: products.length,
+    totalProducts: productsResult.products.length,
   });
 }));
 

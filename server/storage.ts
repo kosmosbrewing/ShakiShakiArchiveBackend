@@ -46,7 +46,7 @@ import {
   type InsertReturn,
 } from "@shared/schema";
 import { db, pool } from "./db";
-import { eq, and, like, desc, isNull, gt, lt, count, sum, sql, inArray } from "drizzle-orm";
+import { eq, and, like, asc, desc, isNull, gt, lt, count, sum, sql, inArray } from "drizzle-orm";
 import { createLogger } from "./utils/logger";
 import type {
   OrderItemCreateData,
@@ -100,7 +100,9 @@ export interface IStorage {
   getProducts(filters?: {
     search?: string;
     categoryId?: number;
-  }): Promise<(Product & { totalStock: number })[]>;
+    page?: number;
+    limit?: number;
+  }): Promise<{ products: (Product & { totalStock: number })[]; total: number }>;
   getProduct(id: string): Promise<Product | undefined>;
   getProductBySlug(slug: string): Promise<Product | undefined>;
   createProduct(product: InsertProduct): Promise<Product>;
@@ -174,9 +176,13 @@ export interface IStorage {
     (Order & { orderItems: (OrderItem & { product: Product })[] }) | undefined
   >;
   getAllOrders(): Promise<Order[]>;
-  getAllOrdersWithItems(): Promise<
-    (Order & { orderItems: (OrderItem & { product: Product | null })[] })[]
-  >;
+  getAllOrdersWithItems(options?: {
+    page?: number;
+    limit?: number;
+  }): Promise<{
+    orders: (Order & { orderItems: (OrderItem & { product: Product | null })[] })[];
+    total: number;
+  }>;
 
   updateOrderStatus(
     orderId: string, // UUID
@@ -654,7 +660,9 @@ export class DatabaseStorage implements IStorage {
   async getProducts(filters?: {
     search?: string;
     categoryId?: number;
-  }): Promise<(Product & { totalStock: number })[]> {
+    page?: number;
+    limit?: number;
+  }): Promise<{ products: (Product & { totalStock: number })[]; total: number }> {
     // LEFT JOIN + SUM을 사용하여 N+1 문제 해결
     // 한 번의 쿼리로 각 상품의 총 재고를 계산
     const conditions = [];
@@ -665,7 +673,21 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(products.categoryId, filters.categoryId));
     }
 
-    // products와 productVariants를 LEFT JOIN하여 총 재고 계산
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    // COUNT 쿼리: 전체 상품 수 (같은 WHERE 조건)
+    let countQuery = db
+      .select({ total: count() })
+      .from(products);
+
+    if (whereClause) {
+      // @ts-ignore: Drizzle query builder type complexity
+      countQuery = countQuery.where(whereClause);
+    }
+
+    const [{ total }] = await countQuery;
+
+    // 데이터 쿼리: products와 productVariants를 LEFT JOIN하여 총 재고 계산
     let query = db
       .select({
         id: products.id,
@@ -689,32 +711,31 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(productVariants, eq(products.id, productVariants.productId))
       .groupBy(products.id);
 
-    if (conditions.length > 0) {
+    if (whereClause) {
       // @ts-ignore: Drizzle query builder type complexity
-      query = query.where(and(...conditions));
+      query = query.where(whereClause);
     }
 
-    const results = await query.orderBy(desc(products.updatedAt));
+    // DB 레벨 정렬: isAvailable DESC → 재고 유무 ASC(있으면 0, 없으면 1) → updatedAt DESC
+    // HAVING 없이 ORDER BY에서 집계값 사용 가능 (GROUP BY 이후)
+    // @ts-ignore: Drizzle query builder type complexity
+    query = query.orderBy(
+      desc(products.isAvailable),
+      asc(sql`CASE WHEN COALESCE(SUM(${productVariants.stockQuantity}), 0) > 0 THEN 0 ELSE 1 END`),
+      desc(products.updatedAt),
+    );
 
-    // 정렬 우선순위 (애플리케이션 레벨):
-    // 1. isAvailable: true (판매중) 먼저
-    // 2. isAvailable: true + totalStock > 0 (재고 있음) 먼저
-    // 3. isAvailable: true + totalStock = 0 (SOLD OUT)
-    // 4. isAvailable: false (판매중단) - 마지막
-    return results.sort((a, b) => {
-      // 1. isAvailable: true 먼저
-      if (a.isAvailable !== b.isAvailable) {
-        return a.isAvailable ? -1 : 1;
-      }
-      // 2. 재고 있는 상품 먼저
-      const aHasStock = a.totalStock > 0 ? 1 : 0;
-      const bHasStock = b.totalStock > 0 ? 1 : 0;
-      if (aHasStock !== bHasStock) {
-        return bHasStock - aHasStock;
-      }
-      // 3. updatedAt 최신순 (이미 DB에서 정렬됨)
-      return 0;
-    });
+    // 페이지네이션 적용 (page/limit이 전달된 경우)
+    const page = filters?.page;
+    const limit = filters?.limit;
+    if (page && limit) {
+      // @ts-ignore: Drizzle query builder type complexity
+      query = query.limit(limit).offset((page - 1) * limit);
+    }
+
+    const results = await query;
+
+    return { products: results, total };
   }
 
   async getProduct(id: string): Promise<Product | undefined> {
@@ -1330,34 +1351,55 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(orders).orderBy(desc(orders.createdAt));
   }
 
-  async getAllOrdersWithItems(): Promise<
-    (Order & { orderItems: (OrderItem & { product: Product | null })[] })[]
-  > {
-    // N+1 쿼리 개선: 단일 JOIN 쿼리로 모든 데이터 조회
-    const result = await db
+  async getAllOrdersWithItems(options?: {
+    page?: number;
+    limit?: number;
+  }): Promise<{
+    orders: (Order & { orderItems: (OrderItem & { product: Product | null })[] })[];
+    total: number;
+  }> {
+    // 기본값: page=1, limit=200 (options 미전달 시에도 안전하게 동작)
+    const effectivePage = options?.page ?? 1;
+    const effectiveLimit = options?.limit ?? 200;
+
+    // 1단계: 전체 주문 수 COUNT
+    const [{ total }] = await db.select({ total: count() }).from(orders);
+
+    // 2단계: orders 테이블만 페이지네이션
+    const paginatedOrders = await db
       .select()
       .from(orders)
-      .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
+      .orderBy(desc(orders.createdAt))
+      .limit(effectiveLimit)
+      .offset((effectivePage - 1) * effectiveLimit);
+
+    if (paginatedOrders.length === 0) {
+      return { orders: [], total };
+    }
+
+    // 3단계: 해당 order IDs로 orderItems + products JOIN
+    const orderIds = paginatedOrders.map((o) => o.id);
+    const itemsResult = await db
+      .select()
+      .from(orderItems)
       .leftJoin(products, eq(orderItems.productId, products.id))
-      .orderBy(desc(orders.createdAt));
+      .where(inArray(orderItems.orderId, orderIds));
 
     // 결과를 주문별로 그룹화 (UUID 기반)
     const orderMap = new Map<
-      string, // UUID
+      string,
       Order & { orderItems: (OrderItem & { product: Product | null })[] }
     >();
 
-    for (const row of result) {
-      const orderId = row.orders.id;
+    // 먼저 주문 데이터 초기화 (순서 보장)
+    for (const order of paginatedOrders) {
+      orderMap.set(order.id, { ...order, orderItems: [] });
+    }
 
-      if (!orderMap.has(orderId)) {
-        orderMap.set(orderId, {
-          ...row.orders,
-          orderItems: [],
-        });
-      }
-
-      if (row.order_items) {
+    // 아이템 데이터 매핑
+    for (const row of itemsResult) {
+      const orderId = row.order_items.orderId;
+      if (orderMap.has(orderId)) {
         orderMap.get(orderId)!.orderItems.push({
           ...row.order_items,
           product: row.products,
@@ -1365,7 +1407,7 @@ export class DatabaseStorage implements IStorage {
       }
     }
 
-    return Array.from(orderMap.values());
+    return { orders: Array.from(orderMap.values()), total };
   }
 
   async updateOrderStatus(
