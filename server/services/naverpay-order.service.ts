@@ -876,6 +876,239 @@ export function formatErrorMessage(code: string, originalMessage: string): strin
 }
 
 // ============================================================
+// 주문관리 API URL 설정 (판매자 → 네이버페이)
+// ============================================================
+
+/**
+ * 상품주문 상세내역 조회 API URL
+ * 주문형 판매자 API: 알림 수신 후 상세 정보 조회
+ */
+function getOrderDetailUrl(): string {
+  return config.naverpayOrder.mode === "production"
+    ? "https://api.pay.naver.com/o/v2/seller/order/getChangeDetailList"
+    : "https://test-api.pay.naver.com/o/v2/seller/order/getChangeDetailList";
+}
+
+/**
+ * 발주확인 API URL
+ * 판매자가 주문을 확인하고 처리했음을 네이버페이에 알림
+ */
+function getOrderConfirmUrl(): string {
+  return config.naverpayOrder.mode === "production"
+    ? "https://api.pay.naver.com/o/v2/seller/order/confirm"
+    : "https://test-api.pay.naver.com/o/v2/seller/order/confirm";
+}
+
+// ============================================================
+// XML 파싱 헬퍼
+// ============================================================
+
+/**
+ * XML에서 단일 태그 값 추출 (CDATA 지원)
+ * @param xml XML 문자열
+ * @param tag 태그명
+ * @returns 태그 내부 텍스트 (없으면 빈 문자열)
+ */
+export function extractXmlValue(xml: string, tag: string): string {
+  const regex = new RegExp(
+    `<${tag}>(?:<!\\[CDATA\\[)?(.*?)(?:\\]\\]>)?</${tag}>`,
+    "s"
+  );
+  const match = xml.match(regex);
+  return match?.[1]?.trim() || "";
+}
+
+/**
+ * XML에서 반복 블록 추출
+ * @param xml XML 문자열
+ * @param tag 블록 태그명
+ * @returns 각 블록의 내부 XML 배열
+ */
+export function extractXmlBlocks(xml: string, tag: string): string[] {
+  const blocks: string[] = [];
+  const regex = new RegExp(`<${tag}>(.*?)</${tag}>`, "gs");
+  let match;
+  while ((match = regex.exec(xml)) !== null) {
+    blocks.push(match[1]);
+  }
+  return blocks;
+}
+
+// ============================================================
+// 주문관리 타입 정의
+// ============================================================
+
+/**
+ * 네이버페이 주문형 상품주문 상세 정보
+ */
+export interface NaverPayOrderDetail {
+  orderId: string;            // 네이버페이 주문번호
+  productOrderId: string;     // 상품주문번호
+  productOrderStatus: string; // PAYMENT_COMPLETE, CANCEL_REQUEST, CANCEL_DONE 등
+  productId: string;          // 상품ID (shortId)
+  productName: string;
+  quantity: number;
+  unitPrice: number;          // 단가
+  optionPrice: number;        // 옵션추가금액
+  optionManageCode: string;   // 옵션 관리코드
+  totalPaymentAmount: number; // 총 결제금액
+  shippingFee: number;        // 배송비
+  shippingAddress: {
+    name: string;
+    tel: string;
+    zipcode: string;
+    address1: string;
+    address2: string;
+  };
+  merchantCustomCode1: string; // userId (주문등록 시 저장)
+  paymentMeans: string;        // 결제수단
+  paymentDate: string;         // 결제일시
+}
+
+// ============================================================
+// 주문관리 API 함수
+// ============================================================
+
+/**
+ * 주문변경 상세내역 조회
+ * 알림으로 받은 상품주문번호의 상세 정보를 네이버페이에서 조회
+ *
+ * @param productOrderIds 상품주문번호 배열
+ * @returns 조회 결과
+ */
+export async function getOrderChangeDetails(
+  productOrderIds: string[]
+): Promise<{
+  success: boolean;
+  details: NaverPayOrderDetail[];
+  errorMessage?: string;
+}> {
+  const url = getOrderDetailUrl();
+  const { merchantId, certiKey } = config.naverpayOrder;
+
+  try {
+    const response = await postFormUrlEncoded<string>(
+      url,
+      {
+        merchantId,
+        certiKey,
+        productOrderId: productOrderIds.join(","),
+      },
+      {},
+      { timeout: 30000 }
+    );
+
+    const responseText = response.data;
+    // certiKey 마스킹 후 로깅
+    logger.debug("주문상세조회 응답", {
+      status: response.status,
+      body: responseText.substring(0, 1000),
+    });
+
+    // 응답 코드 확인
+    const code = extractXmlValue(responseText, "code");
+    if (code !== "Success") {
+      const message = extractXmlValue(responseText, "message");
+      return { success: false, details: [], errorMessage: message || code };
+    }
+
+    // 상품주문 블록 파싱
+    const detailBlocks = extractXmlBlocks(responseText, "productOrder");
+    const details: NaverPayOrderDetail[] = detailBlocks.map((block) => ({
+      orderId: extractXmlValue(block, "orderId"),
+      productOrderId: extractXmlValue(block, "productOrderId"),
+      productOrderStatus: extractXmlValue(block, "productOrderStatus"),
+      productId: extractXmlValue(block, "productId"),
+      productName: extractXmlValue(block, "productName"),
+      quantity: parseInt(extractXmlValue(block, "quantity"), 10) || 1,
+      unitPrice: parseInt(extractXmlValue(block, "unitPrice"), 10) || 0,
+      optionPrice: parseInt(extractXmlValue(block, "optionPrice"), 10) || 0,
+      optionManageCode: extractXmlValue(block, "optionManageCode"),
+      totalPaymentAmount:
+        parseInt(extractXmlValue(block, "totalPaymentAmount"), 10) || 0,
+      shippingFee: parseInt(extractXmlValue(block, "deliveryFee"), 10) || 0,
+      // shippingAddress 블록을 먼저 추출 후 내부 파싱 (태그명 충돌 방지)
+      shippingAddress: (() => {
+        const addrBlock = extractXmlValue(block, "shippingAddress");
+        return {
+          name: extractXmlValue(addrBlock, "name"),
+          tel: extractXmlValue(addrBlock, "tel1"),
+          zipcode: extractXmlValue(addrBlock, "zipcode"),
+          address1: extractXmlValue(addrBlock, "baseAddress"),
+          address2: extractXmlValue(addrBlock, "detailAddress"),
+        };
+      })(),
+      merchantCustomCode1: extractXmlValue(block, "merchantCustomCode1"),
+      paymentMeans: extractXmlValue(block, "paymentMeans"),
+      paymentDate: extractXmlValue(block, "paymentDate"),
+    }));
+
+    logger.info("주문상세조회 성공", {
+      count: details.length,
+      productOrderIds: details.map((d) => d.productOrderId),
+    });
+
+    return { success: true, details };
+  } catch (error) {
+    logger.error("주문상세조회 API 호출 실패", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { success: false, details: [], errorMessage: String(error) };
+  }
+}
+
+/**
+ * 발주확인 (주문 처리 완료 통보)
+ * 내부 주문 생성 + 재고 차감 후 네이버페이에 발주확인 전송
+ *
+ * @param productOrderIds 상품주문번호 배열
+ * @returns 성공 여부
+ */
+export async function confirmOrders(
+  productOrderIds: string[]
+): Promise<{
+  success: boolean;
+  errorMessage?: string;
+}> {
+  const url = getOrderConfirmUrl();
+  const { merchantId, certiKey } = config.naverpayOrder;
+
+  try {
+    const response = await postFormUrlEncoded<string>(
+      url,
+      {
+        merchantId,
+        certiKey,
+        productOrderId: productOrderIds.join(","),
+      },
+      {},
+      { timeout: 30000 }
+    );
+
+    const responseText = response.data;
+    logger.debug("발주확인 응답", {
+      status: response.status,
+      body: responseText.substring(0, 500),
+    });
+
+    const code = extractXmlValue(responseText, "code");
+    if (code !== "Success") {
+      const message = extractXmlValue(responseText, "message");
+      logger.error("발주확인 실패", { code, message });
+      return { success: false, errorMessage: message || code };
+    }
+
+    logger.info("발주확인 성공", { productOrderIds });
+    return { success: true };
+  } catch (error) {
+    logger.error("발주확인 API 호출 실패", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { success: false, errorMessage: String(error) };
+  }
+}
+
+// ============================================================
 // 에러 클래스
 // ============================================================
 

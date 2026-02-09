@@ -24,6 +24,8 @@ import {
   getNaverPayOrderSDKConfig,
   getErrorDetail,
   formatErrorMessage,
+  getOrderChangeDetails,
+  confirmOrders,
   type OrderRegisterRequest,
   type OrderProduct,
   type ProductInfoXml,
@@ -31,7 +33,9 @@ import {
   type SelectedItem,
   type OptionItemXml,
   type CombinationXml,
+  type NaverPayOrderDetail,
 } from "../services/naverpay-order.service";
+import type { OrderItemCreateData } from "../types";
 import { decodeBase64Url, toNaverPayValueId, validateOptionPrice } from "../utils/naverpay-validators";
 import {
   toNaverPayProductId,
@@ -784,6 +788,313 @@ router.get(
 
     res.set("Content-Type", "application/xml; charset=utf-8");
     res.send(xml);
+  })
+);
+
+// ============================================================
+// 주문 알림 수신 API (네이버페이 → 가맹점)
+// ============================================================
+
+/**
+ * 결제 완료 시 내부 주문 생성 + 재고 차감 + 발주확인
+ */
+async function handlePaymentComplete(
+  naverOrderId: string,
+  orderDetails: NaverPayOrderDetail[]
+) {
+  // 멱등성: 이미 처리된 주문인지 확인
+  const existingOrder = await storage.getOrderByExternalOrderId(naverOrderId);
+  if (existingOrder) {
+    logger.info("이미 처리된 주문 (멱등성)", {
+      naverOrderId,
+      existingOrderId: existingOrder.id,
+    });
+    return;
+  }
+
+  const firstDetail = orderDetails[0];
+
+  // userId 확인 (주문등록 시 merchantCustomCode1에 저장)
+  const userIdStr = firstDetail.merchantCustomCode1;
+  const isValidUuid =
+    userIdStr &&
+    userIdStr !== "guest" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      userIdStr
+    );
+
+  if (!isValidUuid) {
+    // 비회원 주문: userId FK 제약으로 현재 미지원
+    logger.warn("비회원 네이버페이 주문 - 처리 불가", {
+      naverOrderId,
+      merchantCustomCode1: userIdStr,
+    });
+    return;
+  }
+  const userId = userIdStr;
+
+  // 배송 정보 (첫 번째 상품의 배송지 사용)
+  const shipping = firstDetail.shippingAddress;
+
+  // 주문 상품 목록 구성
+  const orderItems: OrderItemCreateData[] = [];
+  let itemsAmount = 0;
+  let totalShippingFee = firstDetail.shippingFee;
+
+  for (const detail of orderDetails) {
+    // 상품ID 변환 (shortId → UUID)
+    let productId: string;
+    try {
+      productId = shortIdToUuid(detail.productId);
+    } catch {
+      productId = detail.productId;
+      logger.warn("상품ID shortId→UUID 변환 실패, 원본 사용", {
+        shortId: detail.productId,
+      });
+    }
+
+    // 상품 조회
+    const product = await storage.getProduct(productId);
+    if (!product) {
+      logger.error("알림 처리: 상품을 찾을 수 없음", {
+        productId,
+        shortId: detail.productId,
+        naverOrderId,
+      });
+      continue;
+    }
+
+    // 옵션(variant) 매칭: optionManageCode → variant
+    let options: string | null = null;
+
+    if (detail.optionManageCode) {
+      const variants = await storage.getProductVariants(productId);
+
+      // 1순위: SKU 매칭
+      let variant = variants.find((v) => v.sku === detail.optionManageCode);
+
+      // 2순위: Base62 → UUID 매칭
+      if (!variant) {
+        try {
+          const variantUuid = shortIdToUuid(detail.optionManageCode);
+          variant = variants.find((v) => v.id === variantUuid);
+        } catch {
+          // 변환 실패 시 무시
+        }
+      }
+
+      if (variant) {
+        // createOrder 재고 차감이 사용하는 형식: "Size: xxx"
+        const optionParts: string[] = [];
+        if (variant.size) optionParts.push(`Size: ${variant.size}`);
+        if (variant.color) optionParts.push(`Color: ${variant.color}`);
+        options = optionParts.join("\n") || null;
+      } else {
+        logger.warn("variant 매칭 실패", {
+          optionManageCode: detail.optionManageCode,
+          productId,
+          availableVariants: variants.map((v) => ({
+            id: v.id,
+            sku: v.sku,
+            size: v.size,
+          })),
+        });
+      }
+    }
+
+    const price = detail.unitPrice + detail.optionPrice;
+    itemsAmount += price * detail.quantity;
+
+    orderItems.push({
+      productId,
+      productName: product.name,
+      productPrice: price.toString(),
+      quantity: detail.quantity,
+      options,
+    });
+  }
+
+  if (orderItems.length === 0) {
+    logger.error("주문 상품 구성 실패 - 아이템 없음", { naverOrderId });
+    return;
+  }
+
+  const totalAmount = itemsAmount + totalShippingFee;
+
+  try {
+    // 1. 주문 생성 (재고 차감 포함, 트랜잭션 내 처리)
+    const orderId = await storage.createOrder(
+      {
+        userId,
+        itemsAmount: itemsAmount.toString(),
+        shippingFee: totalShippingFee.toString(),
+        totalAmount: totalAmount.toString(),
+        status: "paying", // createOrder 후 updateOrderPayment로 확정
+        shippingName: shipping.name || "네이버페이 주문",
+        shippingPhone: shipping.tel || "",
+        shippingPostalCode: shipping.zipcode || "",
+        shippingAddress: shipping.address1 || "",
+        shippingDetailAddress: shipping.address2 || null,
+        externalOrderId: naverOrderId,
+      },
+      orderItems
+    );
+
+    // 2. 결제 정보 업데이트 + 상태 확정
+    await storage.updateOrderPayment(orderId, {
+      paymentProvider: "naverpay_order",
+      paymentKey: naverOrderId,
+      externalOrderId: naverOrderId,
+      paymentMethod: firstDetail.paymentMeans?.toLowerCase() || "naverpay",
+      status: "payment_confirmed",
+      paidAt: new Date(),
+    });
+
+    logger.info("네이버페이 주문형 주문 생성 완료", {
+      orderId,
+      naverOrderId,
+      userId,
+      totalAmount,
+      itemCount: orderItems.length,
+    });
+
+    // 3. 발주확인 (네이버페이에 주문 처리 완료 통보)
+    const productOrderIds = orderDetails.map((d) => d.productOrderId);
+    const confirmResult = await confirmOrders(productOrderIds);
+
+    if (!confirmResult.success) {
+      // 발주확인 실패해도 내부 주문은 이미 생성됨 - 수동 재시도 필요
+      logger.error("발주확인 실패 (주문은 생성됨, 수동 재시도 필요)", {
+        naverOrderId,
+        orderId,
+        error: confirmResult.errorMessage,
+      });
+    } else {
+      logger.info("발주확인 완료", { naverOrderId, orderId, productOrderIds });
+    }
+  } catch (error) {
+    logger.error("네이버페이 주문 생성 실패", {
+      naverOrderId,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+  }
+}
+
+/**
+ * 주문 알림 수신
+ * POST /api/naverpay-order/notification
+ *
+ * 네이버페이에서 결제 완료, 취소 등 상태 변경 시 호출
+ * Body (form-urlencoded): product_order_id[0]=xxx&product_order_id[1]=yyy
+ *
+ * ⚠️ express.urlencoded({ extended: false }) 사용 시
+ * product_order_id[0]=xxx → literal key 'product_order_id[0]' (배열 아님)
+ */
+router.post(
+  "/notification",
+  checkNaverPayOrderEnabled,
+  asyncHandler(async (req: Request, res: Response) => {
+    logger.info("네이버페이 주문 알림 수신", {
+      contentType: req.headers["content-type"],
+      bodyKeys: Object.keys(req.body),
+    });
+
+    // product_order_id 파싱 (extended:true/false 모두 대응)
+    const productOrderIds: string[] = [];
+
+    // Case 1: extended:true (qs) → 배열로 파싱됨
+    if (Array.isArray(req.body.product_order_id)) {
+      productOrderIds.push(...req.body.product_order_id);
+    }
+    // Case 2: 단일값
+    else if (typeof req.body.product_order_id === "string") {
+      productOrderIds.push(req.body.product_order_id);
+    }
+    // Case 3: extended:false → literal bracket keys
+    else {
+      for (const key of Object.keys(req.body)) {
+        const match = key.match(/^product_order_id\[(\d+)\]$/);
+        if (match && typeof req.body[key] === "string") {
+          productOrderIds.push(req.body[key]);
+        }
+      }
+    }
+
+    if (productOrderIds.length === 0) {
+      logger.warn("알림: product_order_id 없음", { body: req.body });
+      // 네이버페이에 항상 성공 응답 (재전송 방지)
+      return res
+        .status(200)
+        .type("xml")
+        .send("<result><code>00</code></result>");
+    }
+
+    logger.info("알림: 상품주문번호", { productOrderIds });
+
+    // 네이버페이 API로 주문 상세 조회
+    const detailResult = await getOrderChangeDetails(productOrderIds);
+    if (!detailResult.success) {
+      logger.error("주문상세조회 실패", {
+        error: detailResult.errorMessage,
+        productOrderIds,
+      });
+      // 에러여도 성공 응답 (네이버페이 재전송 방지, 로그로 추적)
+      return res
+        .status(200)
+        .type("xml")
+        .send("<result><code>00</code></result>");
+    }
+
+    const details = detailResult.details;
+    if (details.length === 0) {
+      logger.warn("알림: 조회된 주문 상세 없음", { productOrderIds });
+      return res
+        .status(200)
+        .type("xml")
+        .send("<result><code>00</code></result>");
+    }
+
+    // 주문번호(orderId)별로 그룹핑
+    const orderGroups = new Map<string, NaverPayOrderDetail[]>();
+    for (const detail of details) {
+      const group = orderGroups.get(detail.orderId) || [];
+      group.push(detail);
+      orderGroups.set(detail.orderId, group);
+    }
+
+    // 각 주문 처리
+    const groupEntries = Array.from(orderGroups.entries());
+    for (const [naverOrderId, orderDetails] of groupEntries) {
+      const status = orderDetails[0].productOrderStatus;
+
+      logger.info("주문 상태 처리", {
+        naverOrderId,
+        status,
+        itemCount: orderDetails.length,
+      });
+
+      if (status === "PAYMENT_COMPLETE") {
+        await handlePaymentComplete(naverOrderId, orderDetails);
+      } else if (
+        status === "CANCEL_REQUEST" ||
+        status === "CANCEL_DONE"
+      ) {
+        // 취소는 관리자 페이지에서 수동 처리 (추후 자동화 가능)
+        logger.warn("네이버페이 취소 알림 수신 (수동 처리 필요)", {
+          naverOrderId,
+          status,
+          productOrderIds: orderDetails.map(
+            (d: NaverPayOrderDetail) => d.productOrderId
+          ),
+        });
+      } else {
+        logger.info("처리 불필요한 상태", { naverOrderId, status });
+      }
+    }
+
+    // 항상 성공 응답
+    res.status(200).type("xml").send("<result><code>00</code></result>");
   })
 );
 
