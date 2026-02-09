@@ -442,7 +442,7 @@ router.get(
     });
 
     // 쿼리 파라미터에서 상품 ID 추출
-    // product[0][id]=xxx&product[1][id]=yyy 형식
+    // Express qs 파서가 product[0][id]=xxx를 { product: [{ id: 'xxx' }] } 로 변환
     const productIds: string[] = [];
     const optionCodes: Map<string, string[]> = new Map();
 
@@ -450,26 +450,29 @@ router.get(
     const optionSearch = req.query.optionSearch === "true";
     const supplementSearch = req.query.supplementSearch === "true";
 
-    // 쿼리 파라미터 파싱 (2-pass: 순서 의존성 버그 방지)
-    // 1st pass: 상품 ID 전체 수집
-    const indexToId: Map<number, string> = new Map();
-    for (const [key, value] of Object.entries(req.query)) {
-      const idMatch = key.match(/^product\[(\d+)\]\[id\]$/);
-      if (idMatch && typeof value === "string") {
-        const index = parseInt(idMatch[1], 10);
-        indexToId.set(index, value);
-        productIds.push(value);
-      }
-    }
+    // Express qs 파서가 중첩 객체로 변환한 결과 처리
+    const productQuery = req.query.product;
 
-    // 2nd pass: optionManageCodes 수집 (productIds가 모두 준비된 후)
-    for (const [key, value] of Object.entries(req.query)) {
-      const optionMatch = key.match(/^product\[(\d+)\]\[optionManageCodes\]$/);
-      if (optionMatch && typeof value === "string") {
-        const index = parseInt(optionMatch[1], 10);
-        const productId = indexToId.get(index);
-        if (productId) {
-          optionCodes.set(productId, value.split(","));
+    if (Array.isArray(productQuery)) {
+      // product[0][id]=xxx&product[1][id]=yyy → [{ id: 'xxx' }, { id: 'yyy' }]
+      for (const item of productQuery) {
+        if (item && typeof item === "object") {
+          const pItem = item as Record<string, any>;
+          if (typeof pItem.id === "string") {
+            productIds.push(pItem.id);
+            if (typeof pItem.optionManageCodes === "string") {
+              optionCodes.set(pItem.id, pItem.optionManageCodes.split(","));
+            }
+          }
+        }
+      }
+    } else if (productQuery && typeof productQuery === "object") {
+      // 단일 상품: product[id]=xxx → { id: 'xxx' }
+      const pItem = productQuery as Record<string, any>;
+      if (typeof pItem.id === "string") {
+        productIds.push(pItem.id);
+        if (typeof pItem.optionManageCodes === "string") {
+          optionCodes.set(pItem.id, pItem.optionManageCodes.split(","));
         }
       }
     }
@@ -710,13 +713,22 @@ router.get(
   asyncHandler(async (req: Request, res: Response) => {
     const { zipcode, address1: address1Encoded } = req.query;
 
-    // 상품 ID 추출
+    // Express qs 파서가 productId[0]=xxx를 { productId: ['xxx'] } 로 변환
     const productIds: string[] = [];
-    for (const [key, value] of Object.entries(req.query)) {
-      const match = key.match(/^productId\[(\d+)\]$/);
-      if (match && typeof value === "string") {
-        productIds.push(value);
+    const productIdQuery = req.query.productId;
+
+    if (Array.isArray(productIdQuery)) {
+      for (const id of productIdQuery) {
+        if (typeof id === "string") {
+          productIds.push(id);
+        }
       }
+    } else if (typeof productIdQuery === "string") {
+      productIds.push(productIdQuery);
+    }
+
+    if (productIds.length === 0) {
+      return res.status(400).send("상품 ID가 필요합니다");
     }
 
     if (!zipcode || typeof zipcode !== "string") {

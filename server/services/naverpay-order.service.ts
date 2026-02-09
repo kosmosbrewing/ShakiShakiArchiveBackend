@@ -797,6 +797,8 @@ export function getNaverPayOrderSDKConfig() {
     // SDK 스크립트 URL (가이드 6.1절)
     buttonScriptUrl: getButtonScriptUrl(),
     buttonScriptUrlMobile: getButtonScriptUrlMobile(),
+    // 주문서 열기 방식: PAGE = 현재 창 이동, POPUP = 새 창 (기본)
+    openType: "PAGE" as const,
   };
 }
 
