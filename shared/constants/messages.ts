@@ -111,7 +111,7 @@ export const PAYMENT_MESSAGES = {
 export const RATE_LIMIT_MESSAGES = {
   GLOBAL: "요청이 너무 많습니다. 잠시 후 다시 시도해주세요.",
   AUTH: "인증 요청이 너무 많습니다. 15분 후 다시 시도해주세요.",
-  API: "API 요청이 너무 많습니다. 잠시 후 다시 시도해주세요.",
+  EMAIL_SEND: "인증 메일 발송 요청이 너무 많습니다. 5분 후 다시 시도해주세요.",
   PAYMENT: "결제 요청이 너무 많습니다. 잠시 후 다시 시도해주세요.",
   ADMIN: "관리자 API 요청이 너무 많습니다. 잠시 후 다시 시도해주세요.",
 } as const;

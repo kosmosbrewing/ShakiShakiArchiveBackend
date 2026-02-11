@@ -394,46 +394,52 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
   // 10. 최종 주문 정보 조회
   const updatedOrder = await storage.getOrder(order.id);
 
-  // 11. 결제 완료 이메일 및 관리자 알림 발송 (비동기 - fire-and-forget)
+  // 11. 결제 완료 알림 발송 (비동기 - fire-and-forget)
   const user = await storage.getUser(userId);
-  if (user?.email && updatedOrder) {
+
+  if (updatedOrder) {
     const orderItems = await storage.getOrderItemsByOrderId(order.id);
     // 주문명 계산: "상품명" 또는 "상품명 외 N건"
     const orderName = orderItems.length > 1
       ? `${orderItems[0]?.productName} 외 ${orderItems.length - 1}건`
       : orderItems[0]?.productName || '주문';
 
-    // Telegram 관리자 알림
+    // Telegram 관리자 알림 (email 유무와 무관하게 항상 발송)
     notifyPaymentComplete({
       externalOrderId: order.externalOrderId || '',
-      userName: user.userName || '고객',
+      userName: user?.userName || '고객',
       orderName,
       totalAmount: parseFloat(updatedOrder.totalAmount),
       paymentMethod: payment.method,
       paymentProvider: "toss",
     }).catch(err => logger.error("결제 알림 발송 실패", { orderId: order.id, error: err instanceof Error ? err.message : String(err) }));
 
-    sendPaymentConfirmEmail({
-      orderId: order.id,
-      externalOrderId: order.externalOrderId || '',
-      userName: user.userName || '고객',
-      email: user.email,
-      orderName,
-      items: orderItems.map(item => ({
-        productName: item.productName,
-        quantity: item.quantity,
-        price: parseFloat(item.productPrice) * item.quantity,
-        options: item.options,
-      })),
-      itemsAmount: parseFloat(updatedOrder.itemsAmount),
-      shippingFee: parseFloat(updatedOrder.shippingFee),
-      totalAmount: parseFloat(updatedOrder.totalAmount),
-      shippingName: updatedOrder.shippingName,
-      shippingAddress: updatedOrder.shippingAddress,
-      shippingDetailAddress: updatedOrder.shippingDetailAddress,
-      shippingPhone: updatedOrder.shippingPhone,
-      paymentMethod: payment.method,
-    }).catch(err => logger.error("결제 완료 이메일 발송 실패", { orderId: order.id, error: err instanceof Error ? err.message : String(err) }));
+    // 이메일 알림 (email이 있는 사용자만)
+    if (user?.email) {
+      sendPaymentConfirmEmail({
+        orderId: order.id,
+        externalOrderId: order.externalOrderId || '',
+        userName: user.userName || '고객',
+        email: user.email,
+        orderName,
+        items: orderItems.map(item => ({
+          productName: item.productName,
+          quantity: item.quantity,
+          price: parseFloat(item.productPrice) * item.quantity,
+          options: item.options,
+        })),
+        itemsAmount: parseFloat(updatedOrder.itemsAmount),
+        shippingFee: parseFloat(updatedOrder.shippingFee),
+        totalAmount: parseFloat(updatedOrder.totalAmount),
+        shippingName: updatedOrder.shippingName,
+        shippingAddress: updatedOrder.shippingAddress,
+        shippingDetailAddress: updatedOrder.shippingDetailAddress,
+        shippingPhone: updatedOrder.shippingPhone,
+        paymentMethod: payment.method,
+      }).catch(err => logger.error("결제 완료 이메일 발송 실패", { orderId: order.id, error: err instanceof Error ? err.message : String(err) }));
+    }
+  } else {
+    logger.warn("결제 완료 알림 스킵: 주문 조회 실패", { orderId: order.id });
   }
 
   logger.info("결제 승인 완료 (재고 차감 + 장바구니 비움)", { orderId: order.id, paymentKey });

@@ -64,33 +64,30 @@ export const helmetMiddleware = helmet({
 /**
  * 전역 Rate Limiter
  * - 모든 API 요청에 적용
- * - 기본: 15분당 100회 요청 제한
+ * - 기본: 15분당 1000회 (이커머스 브라우징 패턴: 페이지당 15~25 요청 고려)
+ * - 환경변수로 오버라이드 가능
  */
 export const globalRateLimiter = rateLimit({
-  windowMs: config.rateLimit?.windowMs || RATE_LIMIT.GLOBAL.WINDOW_MS,
-  max: config.rateLimit?.maxRequests || RATE_LIMIT.GLOBAL.MAX_REQUESTS,
+  windowMs: config.rateLimit?.windowMs ?? RATE_LIMIT.GLOBAL.WINDOW_MS,
+  max: config.rateLimit?.maxRequests ?? RATE_LIMIT.GLOBAL.MAX_REQUESTS,
   message: {
     success: false,
     error: RATE_LIMIT_MESSAGES.GLOBAL,
   },
-  standardHeaders: true, // RateLimit-* 헤더 포함
-  legacyHeaders: false, // X-RateLimit-* 헤더 비활성화
-  // 프록시 환경에서 Forwarded/X-Forwarded-For 경고 비활성화
-  // Express trust proxy 설정으로 req.ip가 이미 클라이언트 IP를 반환함
+  standardHeaders: true,
+  legacyHeaders: false,
   validate: { xForwardedForHeader: false, forwardedHeader: false },
-  // 제한 초과 시 로깅
   handler: (req, res, next, options) => {
     logger.warn("Rate limit 초과", { ip: req.ip, url: req.originalUrl });
     res.status(429).json(options.message);
   },
-  // 성공한 요청만 카운트 (4xx, 5xx 제외)
   skipFailedRequests: false,
-  // 개발 환경에서는 완화된 제한 적용
-  // 관리자 API는 전역 제한 우회 (별도 adminRateLimiter 적용)
   skip: (req) => {
-    // 관리자 API는 전역 제한 우회 (정확한 경로 매칭)
-    // /api/admin 또는 /api/admin/으로 시작하는 경로만 매칭
-    // /api/administrator, /api/admins 등은 우회 불가
+    // 헬스체크는 로드밸런서가 빈번히 호출하므로 카운트 제외
+    if (req.path === '/health' || req.path === '/api/health') {
+      return true;
+    }
+    // 관리자 API는 전역 제한 우회 (별도 adminRateLimiter 적용)
     if (req.path === '/api/admin' || req.path.startsWith('/api/admin/')) {
       return true;
     }
@@ -100,60 +97,56 @@ export const globalRateLimiter = rateLimit({
 });
 
 /**
- * 인증 관련 Rate Limiter (더 엄격한 제한)
- * - 로그인, 회원가입, 비밀번호 재설정 등에 적용
- * - 15분당 10회 제한 (Brute Force 방지)
+ * 인증 관련 Rate Limiter (Brute Force 방지)
+ * - 로그인, 회원가입, 비밀번호 재설정/변경, 이메일 인증 확인에 적용
+ * - 15분당 15회 (회원가입 플로우 4회 + 재시도 여유)
+ * - 이메일 발송은 별도 emailSendRateLimiter로 분리
  */
 export const authRateLimiter = rateLimit({
-  windowMs: config.rateLimit?.authWindowMs || RATE_LIMIT.AUTH.WINDOW_MS,
-  max: config.rateLimit?.authMaxRequests || RATE_LIMIT.AUTH.MAX_REQUESTS,
+  windowMs: config.rateLimit?.authWindowMs ?? RATE_LIMIT.AUTH.WINDOW_MS,
+  max: config.rateLimit?.authMaxRequests ?? RATE_LIMIT.AUTH.MAX_REQUESTS,
   message: {
     success: false,
     error: RATE_LIMIT_MESSAGES.AUTH,
   },
   standardHeaders: true,
   legacyHeaders: false,
-  // 프록시 환경에서 Forwarded/X-Forwarded-For 경고 비활성화
   validate: { xForwardedForHeader: false, forwardedHeader: false },
   handler: (req, res, next, options) => {
     logger.warn("Auth rate limit 초과", { ip: req.ip, url: req.originalUrl });
     res.status(429).json(options.message);
   },
-  // 개발 환경에서는 스킵
   skip: () => config.isDev && !config.rateLimit?.enableInDev,
 });
 
 /**
- * API Rate Limiter (일반 API용)
- * - 인증된 사용자의 API 요청에 적용
- * - 1분당 60회 제한
+ * 이메일 발송 Rate Limiter (인증 리미터와 분리)
+ * - 인증 메일 발송(send-verification)에만 적용
+ * - 5분당 3회 (발송 비용 절감 + 어뷰징 방지)
+ * - IP 기반: 미인증 상태에서 호출되므로
  */
-export const apiRateLimiter = rateLimit({
-  windowMs: config.rateLimit?.apiWindowMs || RATE_LIMIT.API.WINDOW_MS,
-  max: config.rateLimit?.apiMaxRequests || RATE_LIMIT.API.MAX_REQUESTS,
+export const emailSendRateLimiter = rateLimit({
+  windowMs: RATE_LIMIT.EMAIL_SEND.WINDOW_MS,
+  max: RATE_LIMIT.EMAIL_SEND.MAX_REQUESTS,
   message: {
     success: false,
-    error: RATE_LIMIT_MESSAGES.API,
+    error: RATE_LIMIT_MESSAGES.EMAIL_SEND,
   },
   standardHeaders: true,
   legacyHeaders: false,
-  // 인증된 사용자는 userId 기반, 그 외는 IP 기반
-  keyGenerator: (req) => {
-    const userId = (req as any).user?.id;
-    if (userId) {
-      return `user_${userId}`;
-    }
-    return req.ip || "unknown";
+  validate: { xForwardedForHeader: false, forwardedHeader: false },
+  handler: (req, res, next, options) => {
+    logger.warn("Email send rate limit 초과", { ip: req.ip, url: req.originalUrl });
+    res.status(429).json(options.message);
   },
-  validate: { xForwardedForHeader: false, forwardedHeader: false, keyGeneratorIpFallback: false },
-  // 개발 환경에서는 스킵
-  skip: () => config.isDev && !config.rateLimit?.enableInDev,
+  // 이메일 발송은 개발 환경에서도 제한 (외부 API 비용)
+  skip: () => false,
 });
 
 /**
- * 결제 관련 Rate Limiter (매우 엄격한 제한)
- * - 결제 요청에 적용
- * - 1분당 5회 제한
+ * 결제 관련 Rate Limiter
+ * - 결제 승인/취소 요청에 적용
+ * - 1분당 10회 (결제 실패 재시도 여유 확보)
  */
 export const paymentRateLimiter = rateLimit({
   windowMs: RATE_LIMIT.PAYMENT.WINDOW_MS,
@@ -164,8 +157,10 @@ export const paymentRateLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  // 세션 기반 인증: rate limiter가 isAuthenticated보다 먼저 실행되므로
+  // req.user가 아닌 req.session.userId 사용
   keyGenerator: (req) => {
-    const userId = (req as any).user?.id;
+    const userId = (req as any).session?.userId;
     if (userId) {
       return `payment_user_${userId}`;
     }
@@ -176,11 +171,10 @@ export const paymentRateLimiter = rateLimit({
     logger.warn("Payment rate limit 초과", {
       ip: req.ip,
       url: req.originalUrl,
-      userId: (req as any).user?.id,
+      userId: (req as any).session?.userId,
     });
     res.status(429).json(options.message);
   },
-  // 결제는 개발 환경에서도 제한 적용
   skip: () => false,
 });
 

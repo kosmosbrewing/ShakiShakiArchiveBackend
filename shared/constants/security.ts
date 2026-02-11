@@ -22,33 +22,33 @@ export const USER_CACHE = {
  * 환경변수로 오버라이드 가능
  */
 export const RATE_LIMIT = {
-  /** 전역 Rate Limit */
+  /** 전역 Rate Limit — 이커머스 브라우징 패턴 고려 (상품목록+상세+옵션 등 페이지당 15~25 요청) */
   GLOBAL: {
     /** 윈도우 시간 (15분, 밀리초) */
     WINDOW_MS: 15 * 60 * 1000,
     /** 최대 요청 수 */
-    MAX_REQUESTS: 500,
+    MAX_REQUESTS: 1000,
   },
-  /** 인증 Rate Limit (Brute Force 방지) */
+  /** 인증 Rate Limit (Brute Force 방지) — 회원가입 플로우(4회)+재시도 여유 고려 */
   AUTH: {
     /** 윈도우 시간 (15분, 밀리초) */
     WINDOW_MS: 15 * 60 * 1000,
     /** 최대 요청 수 */
-    MAX_REQUESTS: 10,
+    MAX_REQUESTS: 15,
   },
-  /** API Rate Limit */
-  API: {
-    /** 윈도우 시간 (1분, 밀리초) */
-    WINDOW_MS: 1 * 60 * 1000,
+  /** 이메일 발송 Rate Limit — 인증 리미터와 분리, 발송 비용/어뷰징 방지 */
+  EMAIL_SEND: {
+    /** 윈도우 시간 (5분, 밀리초) */
+    WINDOW_MS: 5 * 60 * 1000,
     /** 최대 요청 수 */
-    MAX_REQUESTS: 100,
+    MAX_REQUESTS: 3,
   },
-  /** 결제 Rate Limit (매우 엄격) */
+  /** 결제 Rate Limit — 결제 실패 재시도 여유 확보 */
   PAYMENT: {
     /** 윈도우 시간 (1분, 밀리초) */
     WINDOW_MS: 1 * 60 * 1000,
     /** 최대 요청 수 */
-    MAX_REQUESTS: 5,
+    MAX_REQUESTS: 10,
   },
   /** 관리자 Rate Limit (높은 제한) */
   ADMIN: {

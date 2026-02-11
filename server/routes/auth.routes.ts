@@ -9,7 +9,7 @@ import {
   invalidateUserCache,
 } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
-import { authRateLimiter } from "../config/security";
+import { authRateLimiter, emailSendRateLimiter } from "../config/security";
 import {
   signupSchema,
   loginSchema,
@@ -309,7 +309,7 @@ router.post("/reset-password", authRateLimiter, asyncHandler(async (req, res) =>
  * 이메일 인증코드 발송
  * POST /api/auth/send-verification
  */
-router.post("/send-verification", authRateLimiter, asyncHandler(async (req, res) => {
+router.post("/send-verification", emailSendRateLimiter, asyncHandler(async (req, res) => {
   const validatedData = sendVerificationCodeSchema.parse(req.body);
   const { email, type } = validatedData;
 

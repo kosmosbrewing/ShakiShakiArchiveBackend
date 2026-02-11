@@ -191,26 +191,22 @@ export const config = {
     },
   },
 
-  // Rate Limiting 설정
+  // Rate Limiting 설정 — 환경변수 미설정 시 shared/constants/security.ts 상수 사용
   rateLimit: {
-    // 전역 Rate Limit (15분 윈도우)
-    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "900000", 10), // 15분
-    maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || "100", 10),
+    // 전역 Rate Limit
+    windowMs: process.env.RATE_LIMIT_WINDOW_MS
+      ? parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10)
+      : undefined,
+    maxRequests: process.env.RATE_LIMIT_MAX_REQUESTS
+      ? parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10)
+      : undefined,
     // 인증 Rate Limit (Brute Force 방지)
-    authWindowMs: parseInt(
-      process.env.RATE_LIMIT_AUTH_WINDOW_MS || "900000",
-      10
-    ), // 15분
-    authMaxRequests: parseInt(
-      process.env.RATE_LIMIT_AUTH_MAX_REQUESTS || "10",
-      10
-    ),
-    // API Rate Limit (1분 윈도우)
-    apiWindowMs: parseInt(process.env.RATE_LIMIT_API_WINDOW_MS || "60000", 10), // 1분
-    apiMaxRequests: parseInt(
-      process.env.RATE_LIMIT_API_MAX_REQUESTS || "60",
-      10
-    ),
+    authWindowMs: process.env.RATE_LIMIT_AUTH_WINDOW_MS
+      ? parseInt(process.env.RATE_LIMIT_AUTH_WINDOW_MS, 10)
+      : undefined,
+    authMaxRequests: process.env.RATE_LIMIT_AUTH_MAX_REQUESTS
+      ? parseInt(process.env.RATE_LIMIT_AUTH_MAX_REQUESTS, 10)
+      : undefined,
     // 개발 환경에서도 Rate Limit 활성화 여부
     enableInDev: process.env.RATE_LIMIT_ENABLE_IN_DEV === "true",
   },
