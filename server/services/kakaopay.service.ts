@@ -4,11 +4,12 @@
 
 import { config } from "../config";
 import { postJson } from "../utils/http-client";
+import { createLogger } from "../utils/logger";
 import {
   KAKAOPAY_CONFIG,
-  KAKAOPAY_PAYMENT_STATUS,
-  ORDER_STATUS,
 } from "../constants";
+
+const logger = createLogger("KakaoPayService");
 
 // 카카오페이 API 기본 URL
 const API_BASE_URL = "https://open-api.kakaopay.com";
@@ -223,8 +224,8 @@ export class KakaoPayPaymentError extends Error {
 function getHeaders(): Record<string, string> {
   // 환경 변수 설정 확인
   if (!config.kakaopay.secretKey) {
-    console.error("[KakaoPay] 환경 변수 누락 감지!", {
-      secretKey: config.kakaopay.secretKey ? "SET" : "MISSING",
+    logger.error("환경 변수 누락 감지", {
+      secretKey: "MISSING",
       cid: config.kakaopay.cid,
     });
   }
@@ -246,7 +247,7 @@ function handleErrorResponse(
   const errorCode = errorData.error_code?.toString() || "UNKNOWN";
   const errorMessage = errorData.error_message || defaultMessage;
 
-  console.error("[KakaoPay] API 에러:", {
+  logger.error("API 에러", {
     code: errorCode,
     message: errorMessage,
     extras: errorData.extras,
@@ -276,7 +277,7 @@ export async function readyPayment(
 ): Promise<KakaoPayReadyResponse> {
   const url = `${API_BASE_URL}/online/v1/payment/ready`;
 
-  console.log("[KakaoPay] 결제 준비 API 호출:", {
+  logger.info("결제 준비 API 호출", {
     url,
     mode: config.kakaopay.mode,
     cid: config.kakaopay.cid,
@@ -323,7 +324,7 @@ export async function approvePayment(
 ): Promise<KakaoPayApproveResponse> {
   const url = `${API_BASE_URL}/online/v1/payment/approve`;
 
-  console.log("[KakaoPay] 결제 승인 API 호출:", {
+  logger.info("결제 승인 API 호출", {
     url,
     mode: config.kakaopay.mode,
     tid: params.tid,
@@ -362,7 +363,7 @@ export async function cancelPayment(
 ): Promise<KakaoPayCancelResponse> {
   const url = `${API_BASE_URL}/online/v1/payment/cancel`;
 
-  console.log("[KakaoPay] 결제 취소 API 호출:", {
+  logger.info("결제 취소 API 호출", {
     url,
     tid: params.tid,
     cancel_amount: params.cancel_amount,
@@ -414,7 +415,7 @@ export async function cancelPaymentSimple(
 export async function getPayment(tid: string): Promise<KakaoPayOrderResponse> {
   const url = `${API_BASE_URL}/online/v1/payment/order`;
 
-  console.log("[KakaoPay] 결제 조회 API 호출:", {
+  logger.info("결제 조회 API 호출", {
     url,
     tid,
   });
@@ -434,32 +435,6 @@ export async function getPayment(tid: string): Promise<KakaoPayOrderResponse> {
   }
 
   return response.data as KakaoPayOrderResponse;
-}
-
-// ============================================================
-// 상태 매핑 함수
-// ============================================================
-
-/**
- * 카카오페이 결제 상태 → 주문 상태 매핑
- */
-export function mapKakaoPayStatusToOrderStatus(
-  status: KakaoPayPaymentStatus
-): string {
-  switch (status) {
-    case KAKAOPAY_PAYMENT_STATUS.SUCCESS_PAYMENT:
-      return ORDER_STATUS.PAYMENT_CONFIRMED;
-    case KAKAOPAY_PAYMENT_STATUS.CANCEL_PAYMENT:
-      return ORDER_STATUS.CANCELLED;
-    case KAKAOPAY_PAYMENT_STATUS.PART_CANCEL_PAYMENT:
-      return ORDER_STATUS.PAYMENT_CONFIRMED; // 부분 취소는 결제 완료 상태 유지
-    case KAKAOPAY_PAYMENT_STATUS.FAIL_PAYMENT:
-    case KAKAOPAY_PAYMENT_STATUS.FAIL_AUTH_PASSWORD:
-    case KAKAOPAY_PAYMENT_STATUS.QUIT_PAYMENT:
-      return ORDER_STATUS.PENDING_PAYMENT;
-    default:
-      return ORDER_STATUS.PENDING_PAYMENT;
-  }
 }
 
 /**

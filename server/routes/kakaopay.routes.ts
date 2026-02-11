@@ -29,7 +29,7 @@ const router = Router();
 const logger = createLogger("KakaoPay");
 
 /**
- * tid 저장소 (메모리 기반)
+ * tid 저장소 (메모리 기반, TTL 자동 정리)
  *
  * ⚠️ 주의사항:
  * - 서버 재시작 시 tid 정보가 손실됩니다
@@ -40,7 +40,31 @@ const logger = createLogger("KakaoPay");
  * 1. Redis 사용: tidStore를 Redis로 교체 (TTL 15분 설정)
  * 2. DB 사용: orders 테이블에 kakaopay_tid 컬럼 추가
  */
-const tidStore = new Map<string, { tid: string; partnerUserId: string }>();
+const TID_TTL_MS = 15 * 60 * 1000; // 15분 (카카오페이 결제 유효 시간)
+const TID_CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5분마다 정리
+
+interface TidEntry {
+  tid: string;
+  partnerUserId: string;
+  createdAt: number;
+}
+
+const tidStore = new Map<string, TidEntry>();
+
+// TTL 만료된 엔트리 자동 정리
+setInterval(() => {
+  const now = Date.now();
+  let cleaned = 0;
+  tidStore.forEach((entry, key) => {
+    if (now - entry.createdAt > TID_TTL_MS) {
+      tidStore.delete(key);
+      cleaned++;
+    }
+  });
+  if (cleaned > 0) {
+    logger.debug("만료된 tid 엔트리 정리", { cleaned, remaining: tidStore.size });
+  }
+}, TID_CLEANUP_INTERVAL_MS);
 
 /**
  * 카카오페이 에러 코드를 사용자 친화적인 메시지로 변환
@@ -202,6 +226,7 @@ router.post(
       tidStore.set(orderId, {
         tid: readyResult.tid,
         partnerUserId,
+        createdAt: Date.now(),
       });
 
       // 8. 주문 상태를 paying으로 업데이트 (orders + order_items 동시)
