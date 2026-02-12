@@ -169,12 +169,29 @@ async function sendMessage(text: string, useAdminChat = false): Promise<Telegram
   }
 }
 
+/**
+ * 일반 채팅방 + 관리자 채팅방 양쪽에 발송
+ * TELEGRAM_ADMIN_CHAT_ID가 미설정이거나 TELEGRAM_CHAT_ID와 동일하면 중복 발송하지 않음
+ */
+async function sendToAllChats(text: string): Promise<TelegramResult> {
+  const result = await sendMessage(text);
+
+  // 관리자 채팅방이 별도로 설정된 경우에만 추가 발송
+  if (config.telegram.adminChatId && config.telegram.adminChatId !== config.telegram.chatId) {
+    sendMessage(text, true).catch(err =>
+      logger.error("관리자 채팅방 발송 실패", { error: err instanceof Error ? err.message : String(err) })
+    );
+  }
+
+  return result;
+}
+
 // ============================================================================
 // 알림 발송 함수
 // ============================================================================
 
 /**
- * 결제 완료 관리자 알림
+ * 결제 완료 알림 (일반 + 관리자 채팅방)
  */
 export async function notifyPaymentComplete(
   data: PaymentNotificationData
@@ -200,11 +217,11 @@ ${DIVIDER}
 결제: ${safePaymentMethod} (${providerName})
   `.trim();
 
-  return sendMessage(message);
+  return sendToAllChats(message);
 }
 
 /**
- * 반품 요청 관리자 알림
+ * 반품 요청 알림 (일반 + 관리자 채팅방)
  */
 export async function notifyReturnRequest(
   data: ReturnNotificationData
@@ -231,7 +248,7 @@ ${DIVIDER}
 ${safeReason ? `상세: ${safeReason}` : ""}
   `.trim();
 
-  return sendMessage(message);
+  return sendToAllChats(message);
 }
 
 /**
