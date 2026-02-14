@@ -13,6 +13,7 @@ import siteImageRoutes from "./siteImage.routes";
 import userRoutes from "./user.routes";
 import inquiryRoutes from "./inquiry.routes";
 import emailPreviewRoutes from "./emailPreview.routes";
+import analyticsRoutes from "./analytics.routes";
 
 const router = Router();
 
@@ -46,6 +47,9 @@ router.use("/users", userRoutes);
 
 // 문의 관리
 router.use("/inquiries", inquiryRoutes);
+
+// 통계 관리
+router.use("/analytics", analyticsRoutes);
 
 // 이메일 템플릿 미리보기
 router.use("/email-preview", emailPreviewRoutes);

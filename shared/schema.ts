@@ -317,6 +317,7 @@ export const products = pgTable(
     images: text("images").array(),
     detailImages: text("detail_images").array(),
     isAvailable: boolean("is_available").default(true).notNull(),
+    viewCount: integer("view_count").default(0).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -358,6 +359,7 @@ export const insertProductSchema = createInsertSchema(products)
   .omit({
     id: true,
     createdAt: true,
+    viewCount: true,
   })
   .extend({
     // updatedAt을 optional로 변경하여 직접 입력 가능하게 함 (입력하지 않으면 defaultNow 사용)

@@ -105,6 +105,11 @@ export interface IStorage {
   }): Promise<{ products: (Product & { totalStock: number })[]; total: number }>;
   getProduct(id: string): Promise<Product | undefined>;
   getProductBySlug(slug: string): Promise<Product | undefined>;
+  getProductViewStats(limit?: number): Promise<{
+    totalViewCount: number;
+    topViewedProducts: (Product & { totalStock: number })[];
+  }>;
+  incrementProductViewCount(productId: string): Promise<void>;
   createProduct(product: InsertProduct): Promise<Product>;
   updateProduct(
     id: string,
@@ -701,6 +706,7 @@ export class DatabaseStorage implements IStorage {
         images: products.images,
         detailImages: products.detailImages,
         isAvailable: products.isAvailable,
+        viewCount: products.viewCount,
         createdAt: products.createdAt,
         updatedAt: products.updatedAt,
         // SUM을 사용하여 모든 variants의 stockQuantity 합산
@@ -752,6 +758,57 @@ export class DatabaseStorage implements IStorage {
       .from(products)
       .where(eq(products.slug, slug));
     return product;
+  }
+
+  async getProductViewStats(limit: number = 10): Promise<{
+    totalViewCount: number;
+    topViewedProducts: (Product & { totalStock: number })[];
+  }> {
+    const safeLimit = Math.min(50, Math.max(1, limit));
+
+    const [totalResult] = await db
+      .select({
+        totalViewCount: sql<number>`COALESCE(SUM(${products.viewCount}), 0)`,
+      })
+      .from(products);
+
+    const topViewedProducts = await db
+      .select({
+        id: products.id,
+        name: products.name,
+        slug: products.slug,
+        description: products.description,
+        imageUrl: products.imageUrl,
+        price: products.price,
+        originalPrice: products.originalPrice,
+        categoryId: products.categoryId,
+        images: products.images,
+        detailImages: products.detailImages,
+        isAvailable: products.isAvailable,
+        viewCount: products.viewCount,
+        createdAt: products.createdAt,
+        updatedAt: products.updatedAt,
+        totalStock: sql<number>`COALESCE(SUM(${productVariants.stockQuantity}), 0)`,
+      })
+      .from(products)
+      .leftJoin(productVariants, eq(products.id, productVariants.productId))
+      .groupBy(products.id)
+      .orderBy(desc(products.viewCount), desc(products.updatedAt))
+      .limit(safeLimit);
+
+    return {
+      totalViewCount: Number(totalResult?.totalViewCount ?? 0),
+      topViewedProducts,
+    };
+  }
+
+  async incrementProductViewCount(productId: string): Promise<void> {
+    await db
+      .update(products)
+      .set({
+        viewCount: sql`${products.viewCount} + 1`,
+      })
+      .where(eq(products.id, productId));
   }
 
   async createProduct(product: InsertProduct): Promise<Product> {

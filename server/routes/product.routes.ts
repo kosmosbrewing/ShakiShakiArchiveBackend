@@ -2,6 +2,7 @@
 // 상품 관련 공개 라우트 (/api/products/*)
 
 import { Router } from "express";
+import { z } from "zod";
 import { storage } from "../storage";
 import { asyncHandler } from "../middleware/error.middleware";
 import { cacheStrategies, etagMiddleware } from "../middleware";
@@ -10,6 +11,9 @@ import { PRODUCT_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 const logger = createLogger("Product");
+
+// UUID 유효성 검증 스키마
+const uuidSchema = z.string().uuid("유효하지 않은 상품 ID 형식입니다");
 
 // 상품 목록 조회 (페이지네이션 지원)
 router.get("/", etagMiddleware(), cacheStrategies.productList, asyncHandler(async (req, res) => {
@@ -61,6 +65,28 @@ router.get("/", etagMiddleware(), cacheStrategies.productList, asyncHandler(asyn
       hasMore: page < totalPages,
     },
   });
+}));
+
+// 상품 조회수 증가 (UUID 기반)
+router.post("/:id/view", asyncHandler(async (req, res) => {
+  // UUID 유효성 검증
+  const parseResult = uuidSchema.safeParse(req.params.id);
+  if (!parseResult.success) {
+    return res.status(400).json({
+      message: "유효하지 않은 상품 ID 형식입니다.",
+      error: parseResult.error.errors[0].message,
+    });
+  }
+
+  // 빠른 응답을 위해 비동기 처리 (fire-and-forget)
+  void storage.incrementProductViewCount(req.params.id).catch((error) => {
+    logger.warn("상품 조회수 증가 실패", {
+      productId: req.params.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+
+  return res.status(204).send();
 }));
 
 // 상품 상세 조회 (UUID 기반)
