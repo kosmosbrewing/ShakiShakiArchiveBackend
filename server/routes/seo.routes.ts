@@ -7,6 +7,7 @@ import { asyncHandler } from "../middleware/error.middleware";
 import { cacheStrategies } from "../middleware";
 import {
   generateHomeSeo,
+  generateFaqSeo,
   generateProductSeo,
   generateCategorySeo,
   generateSearchSeo,
@@ -25,6 +26,17 @@ const router = Router();
 router.get("/home", cacheStrategies.staticData, (_req, res) => {
   // 동기 함수이므로 에러 발생 시 Express가 자동으로 처리
   const seoData = generateHomeSeo();
+  res.json(seoData);
+});
+
+/**
+ * GET /api/seo/faq
+ * FAQ 페이지 SEO 메타데이터 조회
+ *
+ * 캐시: 브라우저 5분, CDN 10분
+ */
+router.get("/faq", cacheStrategies.staticData, (_req, res) => {
+  const seoData = generateFaqSeo();
   res.json(seoData);
 });
 

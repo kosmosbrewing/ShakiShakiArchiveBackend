@@ -49,10 +49,21 @@ export interface OpenGraphMeta {
 // ============================================
 export interface JsonLdOrganization {
   "@context": "https://schema.org";
-  "@type": "Organization";
+  "@type": string | string[];
   name: string;
   url: string;
   logo: string;
+  description?: string;
+  address?: {
+    "@type": "PostalAddress";
+    streetAddress: string;
+    addressLocality: string;
+    addressRegion: string;
+    postalCode: string;
+    addressCountry: string;
+  };
+  priceRange?: string;
+  sameAs?: string[];
 }
 
 export interface JsonLdWebSite {
@@ -74,6 +85,7 @@ export interface JsonLdProduct {
   description?: string;
   image?: string[];
   sku?: string;
+  category?: string;
   brand?: {
     "@type": "Brand";
     name: string;
@@ -84,6 +96,20 @@ export interface JsonLdProduct {
     priceCurrency: string;
     price: string;
     availability: string;
+    itemCondition: string;
+    priceValidUntil: string;
+    shippingDetails?: {
+      "@type": "OfferShippingDetails";
+      shippingRate: {
+        "@type": "MonetaryAmount";
+        value: string;
+        currency: string;
+      };
+      shippingDestination?: {
+        "@type": "DefinedRegion";
+        addressCountry: string;
+      };
+    };
     seller: {
       "@type": "Organization";
       name: string;
@@ -116,6 +142,69 @@ export interface JsonLdItemList {
     image?: string;
   }>;
 }
+
+export interface JsonLdFaqPage {
+  "@context": "https://schema.org";
+  "@type": "FAQPage";
+  mainEntity: Array<{
+    "@type": "Question";
+    name: string;
+    acceptedAnswer: {
+      "@type": "Answer";
+      text: string;
+    };
+  }>;
+}
+
+interface FaqEntry {
+  question: string;
+  answer: string;
+}
+
+const FAQ_ENTRIES: FaqEntry[] = [
+  {
+    question: "배송비는 얼마인가요?",
+    answer:
+      "70,000원 이상 구매 시 무료배송이며, 미만 시 기본 배송비 3,500원입니다. 제주 및 도서산간 지역은 추가 배송비 2,500원입니다.",
+  },
+  {
+    question: "배송은 얼마나 걸리나요?",
+    answer:
+      "결제 완료 후 최대 7일 이내에 택배로 배송됩니다. 제주 및 도서산간 지역은 1~2일 추가 소요될 수 있습니다.",
+  },
+  {
+    question: "반품/환불은 어떻게 하나요?",
+    answer:
+      "상품 수령 후 7일 이내 신청 및 14일 이내 상품 도착 시 환불 가능합니다. 마이페이지 > 주문내역에서 반품 신청 후, 고객님께서 직접 택배로 발송해 주셔야 합니다.",
+  },
+  {
+    question: "반품 시 배송비는 어떻게 되나요?",
+    answer:
+      "고객 단순 변심의 경우 고객님께서 직접 택배를 발송이 필요하며, 배송비는 '선불' 결제가 원칙입니다. 만약 착불로 도착할 경우 해당 금액만큼 환불금에서 차감된 후 정산됩니다. 무료배송 혜택을 받으신 경우 반품 후 조건 미달 시 초기 배송비 3,500원이 추가로 차감될 수 있습니다. 상품 불량 및 오배송의 경우 배송비 부담 없이 전액 환불됩니다.",
+  },
+  {
+    question: "주문 후 배송지 변경이 가능한가요?",
+    answer:
+      "상품 발송 전이라면 고객센터 1:1문의를 통해 변경이 가능합니다. 발송 후에는 변경이 어려우니 빠른 연락 부탁드립니다.",
+  },
+  {
+    question: "환불은 언제 되나요?",
+    answer:
+      "환불은 결제 수단에 따라 즉시~3영업일 이내 완료됩니다. 정확한 환불 일정은 결제수단(네이버/카카오)에 따라 상이할 수 있습니다.",
+  },
+];
+
+const HOME_STORE_INFO = {
+  streetAddress: "덕곡2길 203-28",
+  addressLocality: "밀양시",
+  addressRegion: "경상남도",
+  postalCode: "50414",
+  addressCountry: "KR",
+  priceRange: "₩₩",
+};
+
+// src/components/Navbar.vue 의 INSTAGRAM_WEB_URL과 동일 값 사용
+const BRAND_SAME_AS = ["https://www.instagram.com/shakishaki_archive/"];
 
 // ============================================
 // SEO 생성 함수
@@ -151,10 +240,21 @@ export function generateHomeSeo(): {
   const jsonLd: (JsonLdOrganization | JsonLdWebSite)[] = [
     {
       "@context": "https://schema.org",
-      "@type": "Organization",
+      "@type": ["Organization", "ClothingStore"],
       name: SITE_CONFIG.name,
       url: SITE_CONFIG.url,
       logo: SITE_CONFIG.logo,
+      description: SITE_CONFIG.description,
+      address: {
+        "@type": "PostalAddress",
+        streetAddress: HOME_STORE_INFO.streetAddress,
+        addressLocality: HOME_STORE_INFO.addressLocality,
+        addressRegion: HOME_STORE_INFO.addressRegion,
+        postalCode: HOME_STORE_INFO.postalCode,
+        addressCountry: HOME_STORE_INFO.addressCountry,
+      },
+      priceRange: HOME_STORE_INFO.priceRange,
+      sameAs: BRAND_SAME_AS,
     },
     {
       "@context": "https://schema.org",
@@ -166,6 +266,59 @@ export function generateHomeSeo(): {
         target: `${SITE_CONFIG.url}/search?q={search_term_string}`,
         "query-input": "required name=search_term_string",
       },
+    },
+  ];
+
+  return { openGraph, jsonLd };
+}
+
+/**
+ * FAQ 페이지 SEO 데이터 생성
+ */
+export function generateFaqSeo(): {
+  openGraph: OpenGraphMeta;
+  jsonLd: (JsonLdFaqPage | JsonLdBreadcrumb)[];
+} {
+  const faqUrl = `${SITE_CONFIG.url}/faq`;
+  const description =
+    "배송비, 무료배송 기준, 배송 기간, 반품/환불 조건 등 자주 묻는 질문을 확인하세요.";
+
+  const openGraph: OpenGraphMeta = {
+    title: `자주 묻는 질문 | ${SITE_CONFIG.name}`,
+    description,
+    url: faqUrl,
+    type: "website",
+    image: SITE_CONFIG.logo,
+    siteName: SITE_CONFIG.name,
+    locale: SITE_CONFIG.locale,
+    twitter: {
+      card: "summary_large_image",
+      title: `자주 묻는 질문 | ${SITE_CONFIG.name}`,
+      description,
+      image: SITE_CONFIG.logo,
+    },
+  };
+
+  const jsonLd: (JsonLdFaqPage | JsonLdBreadcrumb)[] = [
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      mainEntity: FAQ_ENTRIES.map((item) => ({
+        "@type": "Question",
+        name: item.question,
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: item.answer,
+        },
+      })),
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        { "@type": "ListItem", position: 1, name: "홈", item: SITE_CONFIG.url },
+        { "@type": "ListItem", position: 2, name: "FAQ", item: faqUrl },
+      ],
     },
   ];
 
@@ -221,6 +374,11 @@ export function generateProductSeo(
     },
   };
 
+  // 가격 유효기간: 1년 후 (Google 리치 스니펫 권장 필드)
+  const priceValidUntil = new Date();
+  priceValidUntil.setFullYear(priceValidUntil.getFullYear() + 1);
+  const priceValidUntilStr = priceValidUntil.toISOString().split("T")[0];
+
   const jsonLd: (JsonLdProduct | JsonLdBreadcrumb)[] = [
     {
       "@context": "https://schema.org",
@@ -229,6 +387,8 @@ export function generateProductSeo(
       description: product.description || undefined,
       image: productImages.length > 0 ? productImages.map(optimizeForOg) : undefined,
       sku: product.id,
+      // 카테고리 정보 (검색 관련성 향상)
+      category: categoryName || undefined,
       brand: {
         "@type": "Brand",
         name: SITE_CONFIG.name,
@@ -239,6 +399,21 @@ export function generateProductSeo(
         priceCurrency: SITE_CONFIG.currency,
         price: String(product.price),
         availability,
+        // 빈티지/구제 상품임을 명시 → Google 중고품 검색 필터에서 노출
+        itemCondition: "https://schema.org/UsedCondition",
+        priceValidUntil: priceValidUntilStr,
+        shippingDetails: {
+          "@type": "OfferShippingDetails",
+          shippingRate: {
+            "@type": "MonetaryAmount",
+            value: "3500",
+            currency: SITE_CONFIG.currency,
+          },
+          shippingDestination: {
+            "@type": "DefinedRegion",
+            addressCountry: "KR",
+          },
+        },
         seller: {
           "@type": "Organization",
           name: SITE_CONFIG.name,
