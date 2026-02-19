@@ -89,9 +89,19 @@ router.post("/:id/view", asyncHandler(async (req, res) => {
   return res.status(204).send();
 }));
 
-// 상품 상세 조회 (UUID 기반)
+// UUID 패턴 (하이픈 포함 36자)
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// 상품 상세 조회 (UUID 또는 slug 자동 감지)
+// - UUID 형식: storage.getProduct(uuid)
+// - slug 형식: storage.getProductBySlug(slug)
+// 기존 UUID 기반 경로(/productDetail/:uuid)와 신규 slug 기반 경로(/productDetail/:slug) 모두 지원
 router.get("/:id", cacheStrategies.productDetail, asyncHandler(async (req, res) => {
-  const product = await storage.getProduct(req.params.id); // UUID 문자열
+  const { id } = req.params;
+  const isUuid = UUID_REGEX.test(id);
+  const product = isUuid
+    ? await storage.getProduct(id)
+    : await storage.getProductBySlug(id);
   if (!product) {
     return res.status(404).json({ message: PRODUCT_MESSAGES.NOT_FOUND });
   }

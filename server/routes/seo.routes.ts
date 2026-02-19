@@ -68,14 +68,16 @@ router.get("/products/:idOrSlug", cacheStrategies.staticData, asyncHandler(async
     return res.status(404).json({ message: PRODUCT_MESSAGES.NOT_FOUND });
   }
 
-  // 카테고리명 조회 (브레드크럼브용)
+  // 카테고리 조회 (브레드크럼브 name + slug 모두 필요)
   let categoryName: string | undefined;
+  let categorySlug: string | undefined;
   if (product.categoryId) {
     const category = await storage.getCategory(product.categoryId);
     categoryName = category?.name;
+    categorySlug = category?.slug;
   }
 
-  const seoData = generateProductSeo(product, categoryName);
+  const seoData = generateProductSeo(product, categoryName, categorySlug);
   res.json(seoData);
 }));
 

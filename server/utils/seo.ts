@@ -173,12 +173,15 @@ export function generateHomeSeo(): {
  */
 export function generateProductSeo(
   product: Product,
-  categoryName?: string
+  categoryName?: string,
+  categorySlug?: string // 브레드크럼브 URL 생성용
 ): {
   openGraph: OpenGraphMeta;
   jsonLd: (JsonLdProduct | JsonLdBreadcrumb)[];
 } {
-  const productUrl = `${SITE_CONFIG.url}/products/${product.slug}`;
+  // 실제 프론트엔드 라우트: /productDetail/:slug
+  const productPathKey = product.slug || product.id;
+  const productUrl = `${SITE_CONFIG.url}/productDetail/${productPathKey}`;
   const productImages = product.images?.length
     ? product.images
     : product.imageUrl
@@ -243,14 +246,17 @@ export function generateProductSeo(
   // 브레드크럼브 추가
   const breadcrumbItems = [
     { position: 1, name: "홈", item: SITE_CONFIG.url },
-    { position: 2, name: "상품", item: `${SITE_CONFIG.url}/products` },
+    { position: 2, name: "상품", item: `${SITE_CONFIG.url}/product/all` },
   ];
 
   if (categoryName) {
     breadcrumbItems.push({
       position: 3,
       name: categoryName,
-      item: `${SITE_CONFIG.url}/category/${categoryName}`,
+      // categorySlug가 있으면 실제 카테고리 페이지 URL, 없으면 전체 상품 목록으로 fallback
+      item: categorySlug
+        ? `${SITE_CONFIG.url}/product/${categorySlug}`
+        : `${SITE_CONFIG.url}/product/all`,
     });
     breadcrumbItems.push({
       position: 4,
@@ -287,7 +293,8 @@ export function generateCategorySeo(
   openGraph: OpenGraphMeta;
   jsonLd: (JsonLdItemList | JsonLdBreadcrumb)[];
 } {
-  const categoryUrl = `${SITE_CONFIG.url}/category/${category.slug}`;
+  // 실제 프론트엔드 라우트: /product/:categorySlug
+  const categoryUrl = `${SITE_CONFIG.url}/product/${category.slug}`;
   // 🔒 SEO 최적화: description이 너무 짧으면(20자 미만) fallback 사용
   const description =
     category.description && category.description.trim().length >= 20
@@ -327,7 +334,7 @@ export function generateCategorySeo(
       itemListElement: products.slice(0, 20).map((product, index) => ({
         "@type": "ListItem" as const,
         position: index + 1,
-        url: `${SITE_CONFIG.url}/products/${product.slug}`,
+        url: `${SITE_CONFIG.url}/productDetail/${product.slug || product.id}`,
         name: product.name,
         image: product.imageUrl ? optimizeForList(product.imageUrl) : undefined,
       })),
@@ -401,7 +408,7 @@ export function generateProductListSeo(products: Product[]): {
   openGraph: OpenGraphMeta;
   jsonLd: JsonLdItemList;
 } {
-  const listUrl = `${SITE_CONFIG.url}/products`;
+  const listUrl = `${SITE_CONFIG.url}/product/all`;
   const description = `전체 상품 ${products.length}개 - ${SITE_CONFIG.name}`;
 
   const openGraph: OpenGraphMeta = {
@@ -428,7 +435,7 @@ export function generateProductListSeo(products: Product[]): {
     itemListElement: products.slice(0, 30).map((product, index) => ({
       "@type": "ListItem" as const,
       position: index + 1,
-      url: `${SITE_CONFIG.url}/products/${product.slug}`,
+      url: `${SITE_CONFIG.url}/productDetail/${product.slug || product.id}`,
       name: product.name,
       image: product.imageUrl ? optimizeForList(product.imageUrl) : undefined,
     })),
