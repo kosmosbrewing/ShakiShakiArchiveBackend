@@ -24,6 +24,20 @@ interface UploadedImage {
   height: number;
 }
 
+/**
+ * slug 기반 Cloudinary public_id 생성
+ * - productSlug가 없으면 undefined 반환 (Cloudinary 자동 생성)
+ * - 영소문자·숫자·하이픈만 허용 (최대 50자)
+ * - 동일 slug 중복 방지를 위해 타임스탬프 + 인덱스 suffix 추가
+ */
+function buildPublicId(productSlug: unknown, suffix: string): string | undefined {
+  if (!productSlug || typeof productSlug !== "string") return undefined;
+  const cleanSlug = productSlug.replace(/[^a-z0-9-]/g, "").replace(/^-+|-+$/g, "").slice(0, 50);
+  // 영숫자가 하나도 없으면 (한국어 slug 등) Cloudinary 자동 생성으로 fallback
+  if (!cleanSlug || !/[a-z0-9]/.test(cleanSlug)) return undefined;
+  return `${cleanSlug}-${suffix}-${Date.now()}`;
+}
+
 // 삭제 요청 스키마
 const deleteImageSchema = z.object({
   publicId: z.string().min(1, "publicId가 필요합니다"),
@@ -59,6 +73,7 @@ router.post(
 
     const result = await uploadToCloudinary(req.file.buffer, {
       folder: "shakishaki/products",
+      publicId: buildPublicId(req.body.productSlug, "main"),
     });
 
     res.json({
@@ -83,10 +98,11 @@ router.post(
       return res.status(400).json({ message: IMAGE_MESSAGES.FILE_REQUIRED });
     }
 
-    // 병렬로 모든 이미지 업로드
-    const uploadPromises = files.map((file) =>
+    // 병렬로 모든 이미지 업로드 (중복 방지: 인덱스를 suffix에 포함)
+    const uploadPromises = files.map((file, i) =>
       uploadToCloudinary(file.buffer, {
         folder: "shakishaki/products",
+        publicId: buildPublicId(req.body.productSlug, String(i + 1)),
       })
     );
 
@@ -114,10 +130,11 @@ router.post(
       return res.status(400).json({ message: IMAGE_MESSAGES.FILE_REQUIRED });
     }
 
-    // 병렬로 모든 이미지 업로드 (상세 이미지용 폴더)
-    const uploadPromises = files.map((file) =>
+    // 병렬로 모든 이미지 업로드 (상세 이미지용 폴더, 인덱스 포함)
+    const uploadPromises = files.map((file, i) =>
       uploadToCloudinary(file.buffer, {
         folder: "shakishaki/products/details",
+        publicId: buildPublicId(req.body.productSlug, `detail-${i + 1}`),
       })
     );
 

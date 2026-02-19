@@ -41,7 +41,7 @@ function validateRequiredEnvVars(): void {
         `예시:\n` +
         `  DATABASE_URL=postgresql://user:password@localhost:5432/dbname\n` +
         `  SESSION_SECRET=your-secure-secret-key-here\n` +
-        `========================================\n`
+        `========================================\n`,
     );
   }
 }
@@ -66,7 +66,7 @@ export const config = {
   // CORS (쉼표로 구분된 origin 목록)
   cors: {
     allowedOrigins: process.env.CORS_ORIGINS?.split(",").map((o) =>
-      o.trim()
+      o.trim(),
     ) || ["*"],
   },
 
@@ -141,9 +141,17 @@ export const config = {
 
   // SEO 설정
   seo: {
-    siteName: process.env.SITE_NAME || "ShakiShaki Archive",
+    // 상품·카테고리 페이지 Title에 suffix로 사용: "{상품명} | {siteName}"
+    siteName: process.env.SITE_NAME || "샤키샤키 아카이브",
     siteDescription:
-      process.env.SITE_DESCRIPTION || "ShakiShaki Archive - 빈티지 의류 쇼핑몰",
+      process.env.SITE_DESCRIPTION || "여성 빈티지 쇼핑몰 | 샤키샤키 아카이브",
+    // 홈페이지 전용 Title / Description (다른 페이지와 별도 관리)
+    homeTitle:
+      process.env.HOME_SEO_TITLE ||
+      "여성 빈티지 쇼핑몰 | 샤키샤키 아카이브 일본 구제 셀렉",
+    homeDescription:
+      process.env.HOME_SEO_DESCRIPTION ||
+      "오직 단 하나뿐인 빈티지를 샤키샤키 아카이브에서 찾아보세요. 여성 빈티지 의류·일본 구제·셀렉샵. 원피스, 자켓, 니트, 팬츠 등 엄선된 빈티지 아이템.",
     siteLogo: process.env.SITE_LOGO || "",
   },
 
@@ -154,7 +162,9 @@ export const config = {
     // fromName은 SITE_NAME 재사용 (중복 제거)
     // 개별 설정 필요 시 EMAIL_FROM_NAME 환경변수로 오버라이드 가능
     fromName:
-      process.env.EMAIL_FROM_NAME || process.env.SITE_NAME || "ShakiShaki Archive",
+      process.env.EMAIL_FROM_NAME ||
+      process.env.SITE_NAME ||
+      "ShakiShaki Archive",
     isEnabled: !!process.env.RESEND_API_KEY,
     verificationCodeExpiry: 10, // 인증코드 만료 시간 (분)
   },
@@ -164,8 +174,10 @@ export const config = {
     botToken: process.env.TELEGRAM_BOT_TOKEN || "",
     chatId: process.env.TELEGRAM_CHAT_ID || "",
     // 관리자 전용 Chat ID (시스템 오류 알림용, 미설정 시 기본 chatId 사용)
-    adminChatId: process.env.TELEGRAM_ADMIN_CHAT_ID || process.env.TELEGRAM_CHAT_ID || "",
-    isEnabled: !!process.env.TELEGRAM_BOT_TOKEN && !!process.env.TELEGRAM_CHAT_ID,
+    adminChatId:
+      process.env.TELEGRAM_ADMIN_CHAT_ID || process.env.TELEGRAM_CHAT_ID || "",
+    isEnabled:
+      !!process.env.TELEGRAM_BOT_TOKEN && !!process.env.TELEGRAM_CHAT_ID,
   },
 
   // Cloudinary 이미지 업로드 설정

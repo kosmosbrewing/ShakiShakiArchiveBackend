@@ -128,9 +128,13 @@ export function generateHomeSeo(): {
   openGraph: OpenGraphMeta;
   jsonLd: (JsonLdOrganization | JsonLdWebSite)[];
 } {
+  // 홈 전용 title/description — 상품·카테고리 페이지와 별도로 관리
+  const homeTitle = config.seo.homeTitle || SITE_CONFIG.name;
+  const homeDescription = config.seo.homeDescription || SITE_CONFIG.description;
+
   const openGraph: OpenGraphMeta = {
-    title: SITE_CONFIG.name,
-    description: SITE_CONFIG.description,
+    title: homeTitle,
+    description: homeDescription,
     url: SITE_CONFIG.url,
     type: "website",
     image: SITE_CONFIG.logo,
@@ -138,8 +142,8 @@ export function generateHomeSeo(): {
     locale: SITE_CONFIG.locale,
     twitter: {
       card: "summary_large_image",
-      title: SITE_CONFIG.name,
-      description: SITE_CONFIG.description,
+      title: homeTitle,
+      description: homeDescription,
       image: SITE_CONFIG.logo,
     },
   };
