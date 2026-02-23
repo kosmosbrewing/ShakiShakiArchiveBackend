@@ -109,6 +109,31 @@ export interface JsonLdProduct {
         "@type": "DefinedRegion";
         addressCountry: string;
       };
+      // 배송 소요시간 (handling + transit = 최대 7일)
+      deliveryTime?: {
+        "@type": "ShippingDeliveryTime";
+        handlingTime: {
+          "@type": "QuantitativeValue";
+          minValue: number;
+          maxValue: number;
+          unitCode: string;
+        };
+        transitTime: {
+          "@type": "QuantitativeValue";
+          minValue: number;
+          maxValue: number;
+          unitCode: string;
+        };
+      };
+    };
+    // 반품 정책 (Google 리치 스니펫 권장 필드)
+    hasMerchantReturnPolicy?: {
+      "@type": "MerchantReturnPolicy";
+      applicableCountry: string;
+      returnPolicyCategory: string;
+      merchantReturnDays: number;
+      returnMethod: string;
+      returnFees: string;
     };
     seller: {
       "@type": "Organization";
@@ -413,6 +438,32 @@ export function generateProductSeo(
             "@type": "DefinedRegion",
             addressCountry: "KR",
           },
+          // 배송 소요시간: 처리 0-2일 + 운송 1-5일 = 총 최대 7일 이내
+          deliveryTime: {
+            "@type": "ShippingDeliveryTime",
+            handlingTime: {
+              "@type": "QuantitativeValue",
+              minValue: 0,
+              maxValue: 2,
+              unitCode: "DAY",
+            },
+            transitTime: {
+              "@type": "QuantitativeValue",
+              minValue: 1,
+              maxValue: 5,
+              unitCode: "DAY",
+            },
+          },
+        },
+        // 반품 정책: 수령 후 7일 이내, 고객 변심 시 왕복 배송비 부담
+        hasMerchantReturnPolicy: {
+          "@type": "MerchantReturnPolicy",
+          applicableCountry: "KR",
+          returnPolicyCategory:
+            "https://schema.org/MerchantReturnFiniteReturnWindow",
+          merchantReturnDays: 7,
+          returnMethod: "https://schema.org/ReturnByMail",
+          returnFees: "https://schema.org/ReturnShippingFees",
         },
         seller: {
           "@type": "Organization",
