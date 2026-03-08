@@ -1,4 +1,4 @@
-# ShakiShaki Archive Backend
+# ShakiShaki Archive Backend 2026-03
 
 > 빈티지 의류 커머스의 복잡한 재고 관리와 멀티 PG 결제를 안전하게 처리하는 고가용성 API 서버
 
@@ -335,19 +335,19 @@ server/
 
 ### 메시지 카테고리
 
-| 카테고리 | 용도 |
-|---------|------|
-| `AUTH_MESSAGES` | 인증/로그인/OAuth |
-| `ORDER_MESSAGES` | 주문 |
-| `PAYMENT_MESSAGES` | 결제 (토스/네이버페이) |
-| `PRODUCT_MESSAGES` | 상품/옵션 |
-| `CART_MESSAGES` | 장바구니 |
-| `INQUIRY_MESSAGES` | 문의 |
-| `IMAGE_MESSAGES` | 이미지 업로드 |
-| `VALIDATION_MESSAGES` | 입력값 검증 |
-| `SEARCH_MESSAGES` | 검색 (카카오/Meilisearch) |
-| `SUCCESS_MESSAGES` | 성공 응답 |
-| `COMMON_MESSAGES` | 공통 에러 |
+| 카테고리              | 용도                      |
+| --------------------- | ------------------------- |
+| `AUTH_MESSAGES`       | 인증/로그인/OAuth         |
+| `ORDER_MESSAGES`      | 주문                      |
+| `PAYMENT_MESSAGES`    | 결제 (토스/네이버페이)    |
+| `PRODUCT_MESSAGES`    | 상품/옵션                 |
+| `CART_MESSAGES`       | 장바구니                  |
+| `INQUIRY_MESSAGES`    | 문의                      |
+| `IMAGE_MESSAGES`      | 이미지 업로드             |
+| `VALIDATION_MESSAGES` | 입력값 검증               |
+| `SEARCH_MESSAGES`     | 검색 (카카오/Meilisearch) |
+| `SUCCESS_MESSAGES`    | 성공 응답                 |
+| `COMMON_MESSAGES`     | 공통 에러                 |
 
 ### 사용 방법
 
@@ -356,7 +356,7 @@ server/
 ```typescript
 export const ORDER_MESSAGES = {
   NOT_FOUND: "주문을 찾을 수 없습니다",
-  NEW_MESSAGE: "새로운 메시지",  // 추가
+  NEW_MESSAGE: "새로운 메시지", // 추가
 } as const;
 ```
 
@@ -374,15 +374,16 @@ res.status(404).json({ message: ORDER_MESSAGES.NOT_FOUND });
 
 ```typescript
 // 에러: 명사형 또는 상태
-NOT_FOUND: "찾을 수 없습니다"
-FORBIDDEN: "권한이 없습니다"
+NOT_FOUND: "찾을 수 없습니다";
+FORBIDDEN: "권한이 없습니다";
 
 // 성공: 과거형
-DELETED: "삭제되었습니다"
-PASSWORD_CHANGED: "비밀번호가 변경되었습니다"
+DELETED: "삭제되었습니다";
+PASSWORD_CHANGED: "비밀번호가 변경되었습니다";
 
 // 동적 메시지: 함수 사용
-CANNOT_CANCEL: (status: string) => `현재 상태(${status})에서는 취소할 수 없습니다`
+CANNOT_CANCEL: (status: string) =>
+  `현재 상태(${status})에서는 취소할 수 없습니다`;
 ```
 
 ### PG사 에러 메시지
