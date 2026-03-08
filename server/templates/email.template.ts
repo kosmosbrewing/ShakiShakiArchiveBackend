@@ -23,7 +23,7 @@ export const COLORS = {
 
   // 로고 이미지 URL (Cloudinary 최적화)
   logoUrl:
-    "https://res.cloudinary.com/diyuvt3qg/image/upload/f_auto,q_auto,w_400,c_scale/v1769605869/shakishaki/products/i686ekdc6fqhanbx7mai.png",
+    "https://res.cloudinary.com/diyuvt3qg/image/upload/f_auto,q_auto,w_400,c_pad,b_white/v1772943671/shakishaki/products/z2afzjbay7yjyl4lyoxr.png",
 } as const;
 
 /**
