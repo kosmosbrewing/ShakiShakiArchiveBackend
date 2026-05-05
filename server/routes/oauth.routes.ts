@@ -1,7 +1,7 @@
 // server/routes/oauth.routes.ts
 // OAuth 인증 관련 라우트 (/api/oauth/*)
 
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { config } from "../config";
 import { storage } from "../storage";
 import { asyncHandler } from "../middleware/error.middleware";
@@ -24,6 +24,22 @@ import { AUTH_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 const logger = createLogger("OAuth");
+const ADMIN_OAUTH_BLOCK_MESSAGE =
+  "관리자 계정은 이메일/비밀번호 로그인만 사용할 수 있습니다";
+
+function redirectAdminOAuthBlocked(
+  res: Response,
+  frontendUrl: string,
+  provider: "naver" | "kakao",
+  userId: string,
+) {
+  logger.warn("Admin OAuth login blocked", { provider, userId });
+  return res.redirect(
+    `${frontendUrl}/oauth/callback?error=${encodeURIComponent(
+      ADMIN_OAUTH_BLOCK_MESSAGE,
+    )}`,
+  );
+}
 
 /**
  * returnUrl 검증 함수 (Open Redirect 방지)
@@ -153,6 +169,10 @@ router.get("/naver/callback", asyncHandler(async (req, res) => {
     let user = await storage.getUserByNaverId(profile.id);
 
     if (user) {
+      if (user.isAdmin) {
+        return redirectAdminOAuthBlocked(res, frontendUrl, "naver", user.id);
+      }
+
       // 기존 네이버 연동 사용자 → 바로 로그인
       req.session.userId = user.id;
       const callbackUrl = new URL(`${frontendUrl}/oauth/callback`);
@@ -166,6 +186,10 @@ router.get("/naver/callback", asyncHandler(async (req, res) => {
       user = await storage.getUserByEmail(profile.email);
 
       if (user) {
+        if (user.isAdmin) {
+          return redirectAdminOAuthBlocked(res, frontendUrl, "naver", user.id);
+        }
+
         // 기존 이메일 사용자에 네이버 계정 연동
         await storage.updateUser(user.id, {
           naverId: profile.id,
@@ -308,6 +332,10 @@ router.get("/kakao/callback", asyncHandler(async (req, res) => {
     let user = await storage.getUserByKakaoId(kakaoId);
 
     if (user) {
+      if (user.isAdmin) {
+        return redirectAdminOAuthBlocked(res, frontendUrl, "kakao", user.id);
+      }
+
       // 기존 카카오 연동 사용자 → 바로 로그인
       req.session.userId = user.id;
       const callbackUrl = new URL(`${frontendUrl}/oauth/callback`);
@@ -321,6 +349,10 @@ router.get("/kakao/callback", asyncHandler(async (req, res) => {
       user = await storage.getUserByEmail(kakaoAccount.email);
 
       if (user) {
+        if (user.isAdmin) {
+          return redirectAdminOAuthBlocked(res, frontendUrl, "kakao", user.id);
+        }
+
         // 기존 이메일 사용자에 카카오 계정 연동
         await storage.updateUser(user.id, {
           kakaoId: kakaoId,

@@ -20,9 +20,15 @@ declare global {
 // express-session 확장
 declare module "express-session" {
   interface SessionData {
-    userId: string; // UUID
+    userId?: string; // UUID
     oauthState?: string; // OAuth CSRF 방지용 상태 토큰
     oauthReturnUrl?: string; // OAuth 완료 후 리다이렉트할 URL
+    pendingAdminUserId?: string; // 관리자 2차 인증 대기 중인 사용자 UUID
+    admin2faChallengeId?: string; // 관리자 2차 인증 challenge UUID
+    admin2faCodeHash?: string; // 관리자 2차 인증 코드 HMAC
+    admin2faExpiresAt?: string; // ISO datetime
+    admin2faAttemptCount?: number;
+    admin2faVerifiedAt?: string; // ISO datetime
   }
 }
 

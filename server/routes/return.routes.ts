@@ -3,7 +3,7 @@
 
 import { Router } from "express";
 import { storage } from "../storage";
-import { isAuthenticated, isAdmin } from "../middleware/auth.middleware";
+import { hasVerifiedAdminSession, isAuthenticated, isAdmin } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
 import {
   returnRequestSchema,
@@ -246,7 +246,7 @@ router.get(
 
     // 본인 또는 관리자만 조회 가능
     const user = await storage.getUser(userId);
-    if (returnRequest.userId !== userId && !user?.isAdmin) {
+    if (returnRequest.userId !== userId && !hasVerifiedAdminSession(req, user)) {
       return res.status(403).json({ message: AUTH_MESSAGES.FORBIDDEN });
     }
 

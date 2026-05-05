@@ -6,7 +6,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
 import { db, pool } from "../db";
-import { isAuthenticated } from "../middleware/auth.middleware";
+import { hasVerifiedAdminSession, isAuthenticated } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
 import { paymentRateLimiter } from "../config/security";
 import { config } from "../config";
@@ -644,7 +644,7 @@ router.get(
 
     // 권한 검증
     const user = await storage.getUser(userId);
-    if (order.userId !== userId && !user?.isAdmin) {
+    if (order.userId !== userId && !hasVerifiedAdminSession(req, user)) {
       return res.status(403).json({ message: AUTH_MESSAGES.FORBIDDEN });
     }
 
@@ -730,7 +730,7 @@ router.post(
 
     // 3. 권한 검증
     const user = await storage.getUser(userId);
-    if (order.userId !== userId && !user?.isAdmin) {
+    if (order.userId !== userId && !hasVerifiedAdminSession(req, user)) {
       return res.status(403).json({ message: AUTH_MESSAGES.FORBIDDEN });
     }
 

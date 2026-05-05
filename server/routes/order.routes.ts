@@ -4,7 +4,7 @@
 import { Router } from "express";
 import { storage } from "../storage";
 import { db, pool } from "../db";
-import { isAuthenticated } from "../middleware/auth.middleware";
+import { hasVerifiedAdminSession, isAuthenticated } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
 import { cacheStrategies } from "../middleware";
 import { insertOrderSchema, createOrderRequestSchema, partialCancelRequestSchema, stockReservations, orders, orderItems as orderItemsTable } from "@shared/schema";
@@ -346,7 +346,7 @@ router.get("/:id", isAuthenticated, cacheStrategies.private, asyncHandler(async 
   // 본인 주문 확인
   const userId = req.session.userId!;
   const user = await storage.getUser(userId);
-  if (order.userId !== userId && !user?.isAdmin) {
+  if (order.userId !== userId && !hasVerifiedAdminSession(req, user)) {
     return res.status(403).json({ message: AUTH_MESSAGES.FORBIDDEN });
   }
 
@@ -556,7 +556,7 @@ router.post("/:id/partial-cancel", isAuthenticated, asyncHandler(async (req, res
 
   // 2. 권한 검증 (본인 또는 관리자)
   const user = await storage.getUser(userId);
-  if (order.userId !== userId && !user?.isAdmin) {
+  if (order.userId !== userId && !hasVerifiedAdminSession(req, user)) {
     return res.status(403).json({ message: AUTH_MESSAGES.FORBIDDEN });
   }
 
@@ -770,7 +770,7 @@ router.post("/:id/cancel", isAuthenticated, asyncHandler(async (req, res) => {
 
   // 2. 권한 검증 (본인 또는 관리자)
   const user = await storage.getUser(userId);
-  if (order.userId !== userId && !user?.isAdmin) {
+  if (order.userId !== userId && !hasVerifiedAdminSession(req, user)) {
     return res.status(403).json({ message: AUTH_MESSAGES.FORBIDDEN });
   }
 

@@ -61,6 +61,14 @@ export interface SystemErrorNotificationData {
   requestBody?: Record<string, unknown>;
 }
 
+/** 관리자 로그인 2차 인증 알림 데이터 */
+export interface AdminLogin2FANotificationData {
+  email: string;
+  code: string;
+  expiresInMinutes: number;
+  ip?: string;
+}
+
 // ============================================================================
 // 유틸리티 함수
 // ============================================================================
@@ -218,6 +226,24 @@ ${DIVIDER}
   `.trim();
 
   return sendToAllChats(message);
+}
+
+/**
+ * 관리자 로그인 2차 인증 코드 알림 (관리자 채팅방 전용)
+ */
+export async function notifyAdminLogin2FA(
+  data: AdminLogin2FANotificationData
+): Promise<TelegramResult> {
+  const safeEmail = escapeHtml(maskEmail(data.email) || "***");
+  const safeIp = escapeHtml(data.ip || "unknown");
+
+  const message = `
+🔐 <b>관리자 인증</b> <code>${escapeHtml(data.code)}</code>
+계정: ${safeEmail}
+IP: <code>${safeIp}</code> · ${data.expiresInMinutes}분
+  `.trim();
+
+  return sendMessage(message, true);
 }
 
 /**

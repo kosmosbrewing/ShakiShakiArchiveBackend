@@ -3,7 +3,7 @@
 
 import { Router } from "express";
 import { storage } from "../storage";
-import { isAuthenticated, isAdmin, populateUser } from "../middleware/auth.middleware";
+import { hasVerifiedAdminSession, isAuthenticated, isAdmin, populateUser } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
 import {
   createInquirySchema,
@@ -213,7 +213,7 @@ router.delete("/:id", isAuthenticated, asyncHandler(async (req, res) => {
 
   // 본인 확인 (관리자도 삭제 가능)
   const user = await storage.getUser(userId);
-  if (inquiry.userId !== userId && !user?.isAdmin) {
+  if (inquiry.userId !== userId && !hasVerifiedAdminSession(req, user)) {
     return res.status(403).json({ message: INQUIRY_MESSAGES.DELETE_FORBIDDEN });
   }
 

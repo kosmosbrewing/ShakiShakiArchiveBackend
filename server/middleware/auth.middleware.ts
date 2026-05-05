@@ -42,6 +42,17 @@ export function invalidateUserCache(userId: string): void {
 }
 
 /**
+ * 관리자 권한을 직접 판정하는 라우트용 헬퍼.
+ * 관리자 계정이어도 2차 인증이 끝난 세션만 관리자 권한으로 취급한다.
+ */
+export function hasVerifiedAdminSession(
+  req: Request,
+  user: { isAdmin?: boolean } | null | undefined,
+): boolean {
+  return !!user?.isAdmin && !!req.session?.admin2faVerifiedAt;
+}
+
+/**
  * 세션 인증 체크 미들웨어
  * - DB 조회 없이 세션만 확인
  */
@@ -102,6 +113,13 @@ export async function isAdmin(req: Request, res: Response, next: NextFunction) {
       return res.status(403).json({ message: AUTH_MESSAGES.ADMIN_REQUIRED });
     }
 
+    if (!req.session.admin2faVerifiedAt) {
+      return res.status(403).json({
+        message: "관리자 2차 인증이 필요합니다.",
+        code: "ADMIN_2FA_REQUIRED",
+      });
+    }
+
     req.user = cachedUser;
     next();
   } catch (error) {
@@ -141,6 +159,11 @@ export async function populateUser(
       }
 
       if (cachedUser) {
+        if (cachedUser.isAdmin && !req.session.admin2faVerifiedAt) {
+          next();
+          return;
+        }
+
         req.user = cachedUser;
       }
     }

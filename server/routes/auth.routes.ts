@@ -1,7 +1,9 @@
 // server/routes/auth.routes.ts
 // 인증 관련 라우트 (/api/auth/*)
 
-import { Router } from "express";
+import { createHmac, randomInt, randomUUID, timingSafeEqual } from "crypto";
+import { Router, type Request } from "express";
+import { z } from "zod";
 import { storage } from "../storage";
 import { hashPassword, verifyPassword } from "../utils/password";
 import {
@@ -25,6 +27,8 @@ import {
   sendVerificationEmail,
   sendPasswordResetEmail,
 } from "../services/email.service";
+import { notifyAdminLogin2FA } from "../services/telegram.service";
+import { config } from "../config";
 import { createLogger } from "../utils/logger";
 import {
   AUTH_MESSAGES,
@@ -33,6 +37,57 @@ import {
 
 const router = Router();
 const logger = createLogger("Auth");
+
+const ADMIN_2FA_TTL_MS = 5 * 60 * 1000;
+const ADMIN_2FA_EXPIRES_IN_MINUTES = ADMIN_2FA_TTL_MS / 60_000;
+const ADMIN_2FA_MAX_ATTEMPTS = 5;
+
+const admin2FAVerifySchema = z.object({
+  challengeId: z.string().uuid(),
+  code: z.string().regex(/^\d{4}$/),
+});
+
+function regenerateSession(req: Request): Promise<void> {
+  return new Promise((resolve, reject) => {
+    req.session.regenerate((err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+}
+
+function saveSession(req: Request): Promise<void> {
+  return new Promise((resolve, reject) => {
+    req.session.save((err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+}
+
+function generateAdmin2FACode(): string {
+  return String(randomInt(0, 10000)).padStart(4, "0");
+}
+
+function hashAdmin2FACode(challengeId: string, code: string): string {
+  return createHmac("sha256", config.sessionSecret)
+    .update(`${challengeId}:${code}`)
+    .digest("hex");
+}
+
+function isSameHash(expectedHex: string, actualHex: string): boolean {
+  const expected = Buffer.from(expectedHex, "hex");
+  const actual = Buffer.from(actualHex, "hex");
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+function clearAdmin2FAChallenge(req: Request): void {
+  delete req.session.pendingAdminUserId;
+  delete req.session.admin2faChallengeId;
+  delete req.session.admin2faCodeHash;
+  delete req.session.admin2faExpiresAt;
+  delete req.session.admin2faAttemptCount;
+}
 
 // ------------------------------------------------------------------
 // 유틸리티 함수: 이메일 마스킹 (개인정보 보호)
@@ -136,10 +191,163 @@ router.post("/login", authRateLimiter, asyncHandler(async (req, res) => {
       .json({ message: AUTH_MESSAGES.INVALID_CREDENTIALS });
   }
 
+  await regenerateSession(req);
+
+  if (user.isAdmin) {
+    if (config.isProd && !config.telegram.isEnabled) {
+      logger.error("Admin 2FA is not configured in production", {
+        userId: user.id,
+        email: maskEmail(user.email),
+      });
+      return res.status(503).json({
+        message: "관리자 2차 인증 설정이 완료되지 않았습니다.",
+        code: "ADMIN_2FA_NOT_CONFIGURED",
+      });
+    }
+
+    const challengeId = randomUUID();
+    const code = generateAdmin2FACode();
+
+    req.session.pendingAdminUserId = user.id;
+    req.session.admin2faChallengeId = challengeId;
+    req.session.admin2faCodeHash = hashAdmin2FACode(challengeId, code);
+    req.session.admin2faExpiresAt = new Date(Date.now() + ADMIN_2FA_TTL_MS).toISOString();
+    req.session.admin2faAttemptCount = 0;
+    delete req.session.userId;
+    delete req.session.admin2faVerifiedAt;
+
+    const telegramResult = config.telegram.isEnabled
+      ? await notifyAdminLogin2FA({
+          email: user.email,
+          code,
+          expiresInMinutes: ADMIN_2FA_EXPIRES_IN_MINUTES,
+          ip: req.ip,
+        })
+      : { success: false, error: "Telegram is not configured" };
+
+    if (!telegramResult.success && config.isProd) {
+      clearAdmin2FAChallenge(req);
+      logger.error("Admin 2FA delivery failed", {
+        userId: user.id,
+        email: maskEmail(user.email),
+        error: telegramResult.error,
+      });
+      await saveSession(req);
+      return res.status(503).json({
+        message: "관리자 2차 인증번호 발송에 실패했습니다. 잠시 후 다시 시도해주세요.",
+        code: "ADMIN_2FA_DELIVERY_FAILED",
+      });
+    }
+
+    if (!telegramResult.success && !config.isProd) {
+      logger.warn("Admin 2FA Telegram delivery skipped in local environment", {
+        userId: user.id,
+        email: maskEmail(user.email),
+        error: telegramResult.error,
+        devCode: code,
+      });
+    }
+
+    await saveSession(req);
+
+    logger.info(`Admin login requires 2FA - userId=${user.id}, email=${maskEmail(validatedData.email)}`);
+    return res.status(202).json({
+      requiresAdmin2FA: true,
+      challengeId,
+      expiresInSeconds: ADMIN_2FA_TTL_MS / 1000,
+      ...(config.isProd ? {} : { devCode: code }),
+    });
+  }
+
   req.session.userId = user.id;
+  delete req.session.admin2faVerifiedAt;
+  clearAdmin2FAChallenge(req);
+  await saveSession(req);
 
   // 보안 로깅: 성공한 로그인
   logger.info(`Login successful - userId=${user.id}, email=${maskEmail(validatedData.email)}`);
+
+  const { passwordHash: _, ...userWithoutPassword } = user;
+  res.json(userWithoutPassword);
+}));
+
+// 관리자 로그인 2차 인증 확인
+router.post("/admin-2fa/verify", authRateLimiter, asyncHandler(async (req, res) => {
+  const validatedData = admin2FAVerifySchema.parse(req.body);
+  const {
+    pendingAdminUserId,
+    admin2faChallengeId,
+    admin2faCodeHash,
+    admin2faExpiresAt,
+  } = req.session;
+
+  if (
+    !pendingAdminUserId ||
+    !admin2faChallengeId ||
+    !admin2faCodeHash ||
+    !admin2faExpiresAt ||
+    admin2faChallengeId !== validatedData.challengeId
+  ) {
+    return res.status(401).json({
+      message: "관리자 2차 인증이 필요합니다.",
+      code: "ADMIN_2FA_REQUIRED",
+    });
+  }
+
+  const expiresAtMs = Date.parse(admin2faExpiresAt);
+  if (!Number.isFinite(expiresAtMs) || Date.now() > expiresAtMs) {
+    clearAdmin2FAChallenge(req);
+    await saveSession(req);
+    return res.status(401).json({
+      message: "관리자 인증번호가 만료되었습니다. 다시 로그인해주세요.",
+      code: "ADMIN_2FA_EXPIRED",
+    });
+  }
+
+  const attemptCount = req.session.admin2faAttemptCount ?? 0;
+  if (attemptCount >= ADMIN_2FA_MAX_ATTEMPTS) {
+    clearAdmin2FAChallenge(req);
+    await saveSession(req);
+    return res.status(429).json({
+      message: "관리자 인증 시도 횟수를 초과했습니다. 다시 로그인해주세요.",
+      code: "ADMIN_2FA_ATTEMPTS_EXCEEDED",
+    });
+  }
+
+  req.session.admin2faAttemptCount = attemptCount + 1;
+  const actualHash = hashAdmin2FACode(admin2faChallengeId, validatedData.code);
+
+  if (!isSameHash(admin2faCodeHash, actualHash)) {
+    await saveSession(req);
+    logger.warn("Admin 2FA verification failed", {
+      userId: pendingAdminUserId,
+      attemptCount: req.session.admin2faAttemptCount,
+    });
+    return res.status(401).json({
+      message: "관리자 인증번호가 올바르지 않습니다.",
+      code: "ADMIN_2FA_INVALID_CODE",
+    });
+  }
+
+  const user = await storage.getUser(pendingAdminUserId);
+  if (!user?.isAdmin) {
+    clearAdmin2FAChallenge(req);
+    await saveSession(req);
+    return res.status(403).json({
+      message: AUTH_MESSAGES.ADMIN_REQUIRED,
+      code: "ADMIN_REQUIRED",
+    });
+  }
+
+  req.session.userId = user.id;
+  req.session.admin2faVerifiedAt = new Date().toISOString();
+  clearAdmin2FAChallenge(req);
+  await saveSession(req);
+
+  logger.info("Admin 2FA verification successful", {
+    userId: user.id,
+    email: maskEmail(user.email),
+  });
 
   const { passwordHash: _, ...userWithoutPassword } = user;
   res.json(userWithoutPassword);

@@ -7,7 +7,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
 import { db } from "../db";
-import { isAuthenticated } from "../middleware/auth.middleware";
+import { hasVerifiedAdminSession, isAuthenticated } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
 import { paymentRateLimiter } from "../config/security";
 import { config } from "../config";
@@ -505,7 +505,7 @@ router.get(
 
     // 권한 검증
     const user = await storage.getUser(userId);
-    if (order.userId !== userId && !user?.isAdmin) {
+    if (order.userId !== userId && !hasVerifiedAdminSession(req, user)) {
       return res.status(403).json({ message: AUTH_MESSAGES.FORBIDDEN });
     }
 
@@ -605,7 +605,7 @@ router.post(
 
     // 3. 권한 검증
     const user = await storage.getUser(userId);
-    if (order.userId !== userId && !user?.isAdmin) {
+    if (order.userId !== userId && !hasVerifiedAdminSession(req, user)) {
       return res.status(403).json({ message: AUTH_MESSAGES.FORBIDDEN });
     }
 
@@ -634,7 +634,7 @@ router.post(
         paymentId: order.paymentKey,
         cancelAmount: amount,
         cancelReason,
-        cancelRequester: user?.isAdmin ? "2" : "1", // 관리자면 가맹점 관리자로 표시
+        cancelRequester: hasVerifiedAdminSession(req, user) ? "2" : "1", // 관리자면 가맹점 관리자로 표시
         taxScopeAmount: taxScopeAmount ?? amount, // 과세 금액 (미지정 시 전액 과세)
         taxExScopeAmount: taxExScopeAmount ?? 0, // 면세 금액
       });

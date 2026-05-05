@@ -4,7 +4,7 @@
 import { Router } from "express";
 import { storage } from "../storage";
 import { db } from "../db";
-import { isAuthenticated } from "../middleware/auth.middleware";
+import { hasVerifiedAdminSession, isAuthenticated } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
 import { paymentRateLimiter } from "../config/security";
 import { config } from "../config";
@@ -485,7 +485,7 @@ router.post("/:orderId/cancel", paymentRateLimiter, isAuthenticated, asyncHandle
 
   // 3. 권한 검증 (본인 또는 관리자)
   const user = await storage.getUser(userId);
-  if (order.userId !== userId && !user?.isAdmin) {
+  if (order.userId !== userId && !hasVerifiedAdminSession(req, user)) {
     return res.status(403).json({ message: AUTH_MESSAGES.FORBIDDEN });
   }
 
@@ -622,7 +622,7 @@ router.get("/:orderId/status", isAuthenticated, asyncHandler(async (req, res) =>
 
   // 권한 검증
   const user = await storage.getUser(userId);
-  if (order.userId !== userId && !user?.isAdmin) {
+  if (order.userId !== userId && !hasVerifiedAdminSession(req, user)) {
     return res.status(403).json({ message: AUTH_MESSAGES.FORBIDDEN });
   }
 

@@ -71,11 +71,6 @@ export interface JsonLdWebSite {
   "@type": "WebSite";
   name: string;
   url: string;
-  potentialAction?: {
-    "@type": "SearchAction";
-    target: string;
-    "query-input": string;
-  };
 }
 
 export interface JsonLdProduct {
@@ -215,7 +210,7 @@ const FAQ_ENTRIES: FaqEntry[] = [
   {
     question: "환불은 언제 되나요?",
     answer:
-      "환불은 결제 수단에 따라 즉시~3영업일 이내 완료됩니다.\n정확한 환불 일정은 결제수단(네이버/카카오)에 따라 상이할 수 있습니다.",
+      "환불은 결제 수단에 따라 즉시~3영업일 이내 완료됩니다.\n정확한 환불 일정은 결제수단 및 카드사 정책에 따라 상이할 수 있습니다.",
   },
 ];
 
@@ -229,7 +224,7 @@ const HOME_STORE_INFO = {
 };
 
 // src/components/Navbar.vue 의 INSTAGRAM_WEB_URL과 동일 값 사용
-const BRAND_SAME_AS = ["https://www.instagram.com/shakishaki_archive/"];
+const BRAND_SAME_AS = ["https://www.instagram.com/shaki.arc/"];
 
 // ============================================
 // SEO 생성 함수
@@ -286,11 +281,6 @@ export function generateHomeSeo(): {
       "@type": "WebSite",
       name: SITE_CONFIG.name,
       url: SITE_CONFIG.url,
-      potentialAction: {
-        "@type": "SearchAction",
-        target: `${SITE_CONFIG.url}/search?q={search_term_string}`,
-        "query-input": "required name=search_term_string",
-      },
     },
   ];
 
@@ -621,11 +611,6 @@ export function generateSearchSeo(
     "@type": "WebSite",
     name: SITE_CONFIG.name,
     url: SITE_CONFIG.url,
-    potentialAction: {
-      "@type": "SearchAction",
-      target: `${SITE_CONFIG.url}/search?q={search_term_string}`,
-      "query-input": "required name=search_term_string",
-    },
   };
 
   return { openGraph, jsonLd };
