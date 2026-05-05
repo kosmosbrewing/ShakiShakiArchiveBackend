@@ -243,7 +243,7 @@ export async function notifyAdminLogin2FA(
 IP: <code>${safeIp}</code> · ${data.expiresInMinutes}분
   `.trim();
 
-  return sendMessage(message, true);
+  return sendToAllChats(message);
 }
 
 /**
