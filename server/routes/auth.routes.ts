@@ -477,15 +477,13 @@ router.post("/reset-password", authRateLimiter, asyncHandler(async (req, res) =>
   }
 
   // 사용자 조회
+  // 보안: 이메일 enumeration 방지를 위해 미존재/소셜 사용자 모두 통일된 응답
+  // (이미 isEmailVerified 가드를 통과했으므로, 여기서의 분기는 정보 누설을 줄이는 깊이 방어)
   const user = await storage.getUserByEmail(email);
-  if (!user) {
-    return res.status(404).json({ message: AUTH_MESSAGES.USER_NOT_FOUND });
-  }
-
-  // 소셜 로그인 사용자는 비밀번호 재설정 불가
-  if (!user.passwordHash) {
+  if (!user || !user.passwordHash) {
     return res.status(400).json({
-      message: AUTH_MESSAGES.SOCIAL_PASSWORD_RESET_FORBIDDEN,
+      message: AUTH_MESSAGES.EMAIL_NOT_VERIFIED,
+      code: "EMAIL_NOT_VERIFIED",
     });
   }
 

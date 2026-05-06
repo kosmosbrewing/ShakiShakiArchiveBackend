@@ -374,11 +374,15 @@ router.post("/confirm", paymentRateLimiter, isAuthenticated, asyncHandler(async 
         });
       }
 
+      // 보안: 정확한 가용 재고 수량은 노출하지 않고 상품명만 반환 (재고 정찰/스나이핑 방지)
+      const insufficientStockProducts = (stockResult.insufficientStock || []).map(
+        (item: { productName: string }) => ({ productName: item.productName }),
+      );
       return res.status(409).json({
         success: false,
         message: stockResult.error || PAYMENT_MESSAGES.OUT_OF_STOCK,
         code: "INSUFFICIENT_STOCK",
-        insufficientStock: stockResult.insufficientStock,
+        insufficientStock: insufficientStockProducts,
       });
     }
   }

@@ -1123,7 +1123,7 @@ export type InsertStockReservation = z.infer<typeof insertStockReservationSchema
 export const reserveStockItemSchema = z.object({
   productId: z.string().uuid("유효한 상품 ID가 아닙니다"),
   variantId: z.string().uuid("유효한 옵션 ID가 아닙니다").optional(),
-  quantity: z.number().int().min(1, "최소 1개 이상"),
+  quantity: z.number().int().min(1, "최소 1개 이상").max(99, "최대 99개까지"),
 });
 export type ReserveStockItem = z.infer<typeof reserveStockItemSchema>;
 

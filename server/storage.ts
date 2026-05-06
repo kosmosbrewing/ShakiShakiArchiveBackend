@@ -1008,35 +1008,42 @@ export class DatabaseStorage implements IStorage {
   }
 
   async addCartItem(item: InsertCartItem): Promise<CartItem> {
-    // variantId 비교 조건 추가 (버그 수정: 같은 상품이라도 다른 옵션이면 별도 아이템)
-    const conditions = [
-      eq(cartItems.userId, item.userId),
-      eq(cartItems.productId, item.productId),
-    ];
+    // race condition 방지: 동일 (user, product, variant) 조합에 대해 advisory lock 획득
+    // unique constraint 없이 마이그레이션 없이 안전하게 직렬화
+    // pg_advisory_xact_lock는 트랜잭션 종료 시 자동 해제됨
+    return await db.transaction(async (tx) => {
+      const lockKey = `cart:${item.userId}:${item.productId}:${item.variantId ?? "null"}`;
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
 
-    // variantId가 있으면 해당 조건 추가, 없으면 null 체크
-    if (item.variantId) {
-      conditions.push(eq(cartItems.variantId, item.variantId));
-    } else {
-      conditions.push(isNull(cartItems.variantId));
-    }
+      // variantId 비교 조건 (같은 상품이라도 다른 옵션이면 별도 아이템)
+      const conditions = [
+        eq(cartItems.userId, item.userId),
+        eq(cartItems.productId, item.productId),
+      ];
 
-    const existing = await db
-      .select()
-      .from(cartItems)
-      .where(and(...conditions));
+      if (item.variantId) {
+        conditions.push(eq(cartItems.variantId, item.variantId));
+      } else {
+        conditions.push(isNull(cartItems.variantId));
+      }
 
-    if (existing.length > 0) {
-      const [updated] = await db
-        .update(cartItems)
-        .set({ quantity: existing[0].quantity + (item.quantity || 1) })
-        .where(eq(cartItems.id, existing[0].id))
-        .returning();
-      return updated;
-    }
+      const existing = await tx
+        .select()
+        .from(cartItems)
+        .where(and(...conditions));
 
-    const [newItem] = await db.insert(cartItems).values(item).returning();
-    return newItem;
+      if (existing.length > 0) {
+        const [updated] = await tx
+          .update(cartItems)
+          .set({ quantity: existing[0].quantity + (item.quantity || 1) })
+          .where(eq(cartItems.id, existing[0].id))
+          .returning();
+        return updated;
+      }
+
+      const [newItem] = await tx.insert(cartItems).values(item).returning();
+      return newItem;
+    });
   }
 
   async updateCartItem(
@@ -3076,29 +3083,25 @@ export class DatabaseStorage implements IStorage {
         }
       }
 
-      // 4. 주문 상태 및 환불 금액 업데이트
-      const currentOrder = await client.query(
-        `SELECT refunded_amount, shipping_penalty_applied FROM orders WHERE id = $1`,
-        [orderId]
-      );
-      const currentRefunded = parseFloat(currentOrder.rows[0].refunded_amount || "0");
-      const currentPenaltyApplied = currentOrder.rows[0].shipping_penalty_applied;
-
-      await client.query(
+      // 4. 주문 상태 및 환불 금액 업데이트 (atomic increment + RETURNING)
+      // race condition 방지: SELECT-modify-UPDATE 대신 단일 UPDATE에서 누적 처리
+      // updatePenaltyFlag=true일 때만 페널티 플래그를 강제 설정, 그 외에는 기존값 유지
+      const orderUpdateResult = await client.query(
         `UPDATE orders
          SET status = $1,
-             refunded_amount = $2,
+             refunded_amount = COALESCE(refunded_amount, '0')::numeric + $2::numeric,
              cancel_reason = $3,
              canceled_at = CASE WHEN $4 THEN NOW() ELSE canceled_at END,
-             shipping_penalty_applied = $5,
+             shipping_penalty_applied = CASE WHEN $5 THEN true ELSE shipping_penalty_applied END,
              updated_at = NOW()
-         WHERE id = $6`,
+         WHERE id = $6
+         RETURNING refunded_amount`,
         [
           isFullCancel ? "refunded" : "partial_refunded",
-          (currentRefunded + refundAmount).toString(),
+          refundAmount,
           cancelReason,
           isFullCancel,
-          updatePenaltyFlag ? true : currentPenaltyApplied,
+          updatePenaltyFlag,
           orderId,
         ]
       );
@@ -3108,7 +3111,7 @@ export class DatabaseStorage implements IStorage {
       logger.info("부분 취소 완료", {
         orderId,
         canceledItemCount: cancelItemIds.length,
-        totalRefundAmount: currentRefunded + refundAmount,
+        totalRefundAmount: orderUpdateResult.rows[0]?.refunded_amount,
       });
     } catch (error) {
       await client.query("ROLLBACK");
@@ -3323,25 +3326,20 @@ export class DatabaseStorage implements IStorage {
         }
       }
 
-      // 6. 주문 상태 업데이트
-      const orderResult = await client.query(
-        `SELECT refunded_amount, shipping_penalty_applied FROM orders WHERE id = $1`,
-        [orderId]
-      );
-      const currentRefunded = parseFloat(orderResult.rows[0].refunded_amount || "0");
-      const currentPenaltyApplied = orderResult.rows[0].shipping_penalty_applied;
-
-      await client.query(
+      // 6. 주문 상태 업데이트 (atomic increment)
+      // race condition 방지: SELECT-modify-UPDATE 대신 단일 UPDATE에서 누적 처리
+      const orderUpdate = await client.query(
         `UPDATE orders
          SET status = $1,
-             refunded_amount = $2,
-             shipping_penalty_applied = $3,
+             refunded_amount = COALESCE(refunded_amount, '0')::numeric + $2::numeric,
+             shipping_penalty_applied = CASE WHEN $3 THEN true ELSE shipping_penalty_applied END,
              updated_at = NOW()
-         WHERE id = $4`,
+         WHERE id = $4
+         RETURNING refunded_amount`,
         [
           params.isLastItem ? "refunded" : "partial_refunded",
-          (currentRefunded + params.refundAmount).toString(),
-          params.updatePenaltyFlag ? true : currentPenaltyApplied,
+          params.refundAmount,
+          params.updatePenaltyFlag,
           orderId,
         ]
       );
@@ -3352,6 +3350,7 @@ export class DatabaseStorage implements IStorage {
         returnId,
         orderId,
         refundAmount: params.refundAmount,
+        totalRefundedAmount: orderUpdate.rows[0]?.refunded_amount,
       });
     } catch (error) {
       await client.query("ROLLBACK");

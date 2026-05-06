@@ -2,6 +2,7 @@
 // OAuth 인증 관련 라우트 (/api/oauth/*)
 
 import { Router, type Response } from "express";
+import { timingSafeEqual } from "crypto";
 import { config } from "../config";
 import { storage } from "../storage";
 import { asyncHandler } from "../middleware/error.middleware";
@@ -26,6 +27,16 @@ const router = Router();
 const logger = createLogger("OAuth");
 const ADMIN_OAUTH_BLOCK_MESSAGE =
   "관리자 계정은 이메일/비밀번호 로그인만 사용할 수 있습니다";
+
+// OAuth state 비교: 길이 동일성 + timing-safe 비교 (timing attack 방지)
+function isStateValid(saved: unknown, received: unknown): boolean {
+  if (typeof saved !== "string" || typeof received !== "string") return false;
+  if (saved.length === 0 || saved.length !== received.length) return false;
+  const a = Buffer.from(saved, "utf8");
+  const b = Buffer.from(received, "utf8");
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
 
 function redirectAdminOAuthBlocked(
   res: Response,
@@ -139,9 +150,9 @@ router.get("/naver/callback", asyncHandler(async (req, res) => {
     );
   }
 
-  // CSRF 검증: 세션의 state와 비교
+  // CSRF 검증: 세션의 state와 timing-safe 비교
   const savedState = req.session.oauthState;
-  if (!savedState || savedState !== state) {
+  if (!isStateValid(savedState, state)) {
     return res.redirect(
       `${frontendUrl}/oauth/callback?error=${encodeURIComponent(
         "보안 검증에 실패했습니다"
@@ -297,9 +308,9 @@ router.get("/kakao/callback", asyncHandler(async (req, res) => {
     );
   }
 
-  // CSRF 검증: 세션의 state와 비교
+  // CSRF 검증: 세션의 state와 timing-safe 비교
   const savedState = req.session.oauthState;
-  if (!savedState || savedState !== state) {
+  if (!isStateValid(savedState, state)) {
     return res.redirect(
       `${frontendUrl}/oauth/callback?error=${encodeURIComponent(
         "보안 검증에 실패했습니다"

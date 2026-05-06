@@ -579,6 +579,16 @@ router.post("/:id/partial-cancel", isAuthenticated, asyncHandler(async (req, res
   }
 
   const { cancelReason, cancelItems } = validation.data;
+
+  // 보안: 동일 orderItemId가 배열에 중복 포함되면 환불 누적 위험 → 중복 차단
+  const uniqueItemIds = new Set(cancelItems.map((i) => i.orderItemId));
+  if (uniqueItemIds.size !== cancelItems.length) {
+    return res.status(400).json({
+      message: ORDER_MESSAGES.PARTIAL_CANCEL_INVALID_ITEMS,
+      code: "DUPLICATE_CANCEL_ITEM",
+    });
+  }
+
   const orderItems = await storage.getOrderItemsByOrderId(order.id);
 
   // 5. 취소 대상 아이템 검증
@@ -639,6 +649,24 @@ router.post("/:id/partial-cancel", isAuthenticated, asyncHandler(async (req, res
     refundResult,
     isLastItems,
   });
+
+  // 7-1. 환불 ceiling 검증: 누적 환불액이 결제 금액을 절대 초과할 수 없음
+  // 정수(원 단위) 비교로 부동소수점 오차 방지. PG 호출 전 가드.
+  const totalPaidAmount = Math.round(parseFloat(order.totalAmount));
+  const alreadyRefunded = Math.round(parseFloat(order.refundedAmount || "0"));
+  const refundToProcess = Math.round(refundResult.totalRefund);
+  if (refundToProcess < 0 || alreadyRefunded + refundToProcess > totalPaidAmount) {
+    logger.error("환불 ceiling 위반 차단", {
+      orderId,
+      totalPaidAmount,
+      alreadyRefunded,
+      refundToProcess,
+    });
+    return res.status(400).json({
+      message: "환불 가능 금액을 초과했습니다.",
+      code: "REFUND_CEILING_EXCEEDED",
+    });
+  }
 
   // 8. PG사 부분 취소 API 호출
   const provider = order.paymentProvider!;

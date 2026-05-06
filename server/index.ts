@@ -50,15 +50,16 @@ if (process.env.DEBUG_PROXY_HEADERS === "true") {
   app.use(debugHeadersMiddleware);
 }
 
-// Body 파싱
+// Body 파싱 (DoS 방지: 페이로드 크기 제한 명시. 이미지 업로드는 multer가 별도 처리)
 app.use(
   express.json({
+    limit: "1mb",
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
   })
 );
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: false, limit: "1mb" }));
 
 // CORS
 app.use(corsMiddleware);
