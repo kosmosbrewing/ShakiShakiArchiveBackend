@@ -15,14 +15,23 @@ const router = Router();
 // 관리자 주문 상태 수정 검증 스키마
 const adminOrderStatusSchema = z.object({
   status: z.enum(ORDER_STATUS_ENUM),
-  trackingNumber: z.string().max(100).optional(),
+  trackingNumber: z.preprocess(
+    (value) => value === null ? undefined : value,
+    z.string().max(100).optional(),
+  ),
 });
 
 // 관리자 아이템 상태 수정 검증 스키마
 const adminItemStatusSchema = z.object({
   status: z.string().min(1),
-  trackingNumber: z.string().max(100).optional(),
-  courierCompany: z.string().max(50).optional(),
+  trackingNumber: z.preprocess(
+    (value) => value === null ? undefined : value,
+    z.string().max(100).optional(),
+  ),
+  courierCompany: z.preprocess(
+    (value) => value === null ? undefined : value,
+    z.string().max(50).optional(),
+  ),
 });
 
 // 전체 주문 목록 조회 (관리자, 페이지네이션 지원)
@@ -72,10 +81,15 @@ router.patch("/order-items/:id", isAuthenticated, isAdmin, asyncHandler(async (r
     return res.status(400).json({ message: "유효하지 않은 요청입니다.", errors: validation.error.errors });
   }
 
-  const { status, trackingNumber, courierCompany } = validation.data;
+  const { trackingNumber, courierCompany } = validation.data;
+  let { status } = validation.data;
   const itemId = Number(req.params.id);
   if (isNaN(itemId)) {
     return res.status(400).json({ message: "유효하지 않은 아이템 ID입니다." });
+  }
+
+  if (status === ORDER_ITEM_STATUS.PREPARING && trackingNumber?.trim()) {
+    status = ORDER_ITEM_STATUS.SHIPPED;
   }
 
   const item = await storage.updateOrderItemStatus(
