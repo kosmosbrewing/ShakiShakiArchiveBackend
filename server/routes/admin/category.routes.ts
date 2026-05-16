@@ -9,6 +9,7 @@ import { insertCategorySchema } from "@shared/schema";
 import { CATEGORY_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
+const updateCategorySchema = insertCategorySchema.partial();
 
 // 카테고리 생성
 router.post("/", isAuthenticated, isAdmin, asyncHandler(async (req, res) => {
@@ -19,9 +20,10 @@ router.post("/", isAuthenticated, isAdmin, asyncHandler(async (req, res) => {
 
 // 카테고리 수정
 router.patch("/:id", isAuthenticated, isAdmin, asyncHandler(async (req, res) => {
+  const validatedData = updateCategorySchema.parse(req.body);
   const category = await storage.updateCategory(
     Number(req.params.id),
-    req.body
+    validatedData
   );
   if (!category) {
     return res.status(404).json({ message: CATEGORY_MESSAGES.NOT_FOUND });
