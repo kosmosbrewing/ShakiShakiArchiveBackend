@@ -5,11 +5,18 @@ import { Router } from "express";
 import { storage } from "../../storage";
 import { isAuthenticated, isAdmin } from "../../middleware/auth.middleware";
 import { asyncHandler } from "../../middleware/error.middleware";
+import { cacheStrategies } from "../../middleware";
 import { insertCategorySchema } from "@shared/schema";
 import { CATEGORY_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 const updateCategorySchema = insertCategorySchema.partial();
+
+// 카테고리 목록 조회 (관리자, 캐시 없음)
+router.get("/", isAuthenticated, isAdmin, cacheStrategies.admin, asyncHandler(async (_req, res) => {
+  const categories = await storage.getCategories();
+  res.json(categories);
+}));
 
 // 카테고리 생성
 router.post("/", isAuthenticated, isAdmin, asyncHandler(async (req, res) => {
