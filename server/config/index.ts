@@ -16,6 +16,40 @@ const REQUIRED_ENV_VARS = [
   },
 ] as const;
 
+function normalizeCorsOrigin(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "*") return trimmed;
+
+  try {
+    const url = new URL(trimmed);
+    if (url.pathname !== "/" || url.search || url.hash) {
+      throw new Error("origin must not include path, query, or hash");
+    }
+    return url.origin;
+  } catch {
+    throw new Error(`CORS_ORIGINS 값이 올바른 origin 형식이 아닙니다: ${value}`);
+  }
+}
+
+function parseAllowedCorsOrigins(): string[] {
+  const origins =
+    process.env.CORS_ORIGINS?.split(",")
+      .map(normalizeCorsOrigin)
+      .filter(Boolean) ?? [];
+
+  if (process.env.NODE_ENV === "production") {
+    if (origins.length === 0) {
+      throw new Error("운영 환경에서는 CORS_ORIGINS를 반드시 설정해야 합니다.");
+    }
+
+    if (origins.includes("*")) {
+      throw new Error("운영 환경에서는 CORS_ORIGINS에 '*'를 사용할 수 없습니다.");
+    }
+  }
+
+  return origins.length > 0 ? origins : ["*"];
+}
+
 /**
  * 필수 환경 변수 검증
  * 누락된 환경 변수가 있으면 명확한 에러 메시지와 함께 앱 실행을 중단
@@ -65,9 +99,7 @@ export const config = {
 
   // CORS (쉼표로 구분된 origin 목록)
   cors: {
-    allowedOrigins: process.env.CORS_ORIGINS?.split(",").map((o) =>
-      o.trim(),
-    ) || ["*"],
+    allowedOrigins: parseAllowedCorsOrigins(),
   },
 
   // 토스페이먼츠 설정

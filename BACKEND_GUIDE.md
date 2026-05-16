@@ -1013,7 +1013,7 @@ kakaopay: {
 | `NODE_ENV`      | 실행 환경                           | `development`            |
 | `PORT`          | 서버 포트                           | `8080`                   |
 | `SECURE_COOKIE` | HTTPS 쿠키 설정                     | `true` (프로덕션)        |
-| `CORS_ORIGINS`  | 허용된 CORS origin (쉼표 구분)      | `*`                      |
+| `CORS_ORIGINS`  | 허용된 CORS origin (쉼표 구분, 경로/끝 `/` 제외) | 개발: `*`, 운영: 필수    |
 | `FRONTEND_URL`  | 프론트엔드 URL (OAuth 리다이렉트용) | `http://localhost:8080`  |
 | `LOG_LEVEL`     | 로그 레벨 (`debug`, `info`, `warn`, `error`) | `info` (프로덕션), `debug` (개발) |
 
