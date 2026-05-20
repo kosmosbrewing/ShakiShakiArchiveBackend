@@ -103,6 +103,35 @@ function escapeHtml(text: string): string {
     .replace(/>/g, "&gt;");
 }
 
+function getErrorDetails(error: unknown): Record<string, unknown> {
+  if (!(error instanceof Error)) {
+    return { error: String(error) };
+  }
+
+  const details: Record<string, unknown> = {
+    error: error.message,
+    name: error.name,
+  };
+
+  const cause = error.cause;
+  if (cause instanceof Error) {
+    details.causeName = cause.name;
+    details.causeMessage = cause.message;
+  }
+
+  if (cause && typeof cause === "object") {
+    const causeRecord = cause as Record<string, unknown>;
+    if (causeRecord.code) details.causeCode = causeRecord.code;
+    if (causeRecord.errno) details.causeErrno = causeRecord.errno;
+    if (causeRecord.syscall) details.causeSyscall = causeRecord.syscall;
+    if (causeRecord.hostname) details.causeHostname = causeRecord.hostname;
+    if (causeRecord.host) details.causeHost = causeRecord.host;
+    if (causeRecord.port) details.causePort = causeRecord.port;
+  }
+
+  return details;
+}
+
 // ============================================================================
 // 기본 발송 함수
 // ============================================================================
@@ -181,7 +210,7 @@ async function sendMessage(text: string, useAdminChat = false): Promise<Telegram
 
     logger.error("Telegram 발송 중 오류", {
       chatType,
-      error: error instanceof Error ? error.message : String(error),
+      ...getErrorDetails(error),
     });
     return {
       success: false,

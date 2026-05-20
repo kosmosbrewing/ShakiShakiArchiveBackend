@@ -68,6 +68,8 @@ USER expressjs
 # 환경 변수 설정
 ENV NODE_ENV=production
 ENV PORT=8080
+# 운영 컨테이너에서 IPv6 경로가 없을 때 Node fetch가 IPv6를 우선 선택해 실패하는 것을 방지
+ENV NODE_OPTIONS=--dns-result-order=ipv4first
 # RDS SSL CA 인증서 경로 (애플리케이션에서 사용)
 ENV RDS_CA_BUNDLE=/app/certs/rds-ca-bundle.pem
 
