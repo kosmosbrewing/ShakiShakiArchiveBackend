@@ -28,6 +28,7 @@ declare module "express-session" {
     admin2faCodeHash?: string; // 관리자 2차 인증 코드 HMAC
     admin2faExpiresAt?: string; // ISO datetime
     admin2faAttemptCount?: number;
+    admin2faRecoveryAllowed?: boolean; // Telegram 발송 실패 시 임시 복구 코드 허용
     admin2faVerifiedAt?: string; // ISO datetime
   }
 }

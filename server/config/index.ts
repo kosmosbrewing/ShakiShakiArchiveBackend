@@ -97,6 +97,12 @@ export const config = {
   sessionSecret: process.env.SESSION_SECRET as string,
   secureCookie: process.env.SECURE_COOKIE !== "false",
 
+  // 관리자 2FA 임시 복구 코드
+  // Telegram 발송 장애 시에만 사용되며, 장애 복구 후 환경변수로 교체하거나 제거 권장
+  admin2fa: {
+    recoveryCode: process.env.ADMIN_2FA_RECOVERY_CODE || "010701",
+  },
+
   // CORS (쉼표로 구분된 origin 목록)
   cors: {
     allowedOrigins: parseAllowedCorsOrigins(),

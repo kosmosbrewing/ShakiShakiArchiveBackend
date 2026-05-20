@@ -44,7 +44,7 @@ const ADMIN_2FA_MAX_ATTEMPTS = 5;
 
 const admin2FAVerifySchema = z.object({
   challengeId: z.string().uuid(),
-  code: z.string().regex(/^\d{4}$/),
+  code: z.string().regex(/^(?:\d{4}|\d{6})$/),
 });
 
 function regenerateSession(req: Request): Promise<void> {
@@ -75,10 +75,29 @@ function hashAdmin2FACode(challengeId: string, code: string): string {
     .digest("hex");
 }
 
+function hashAdmin2FARecoveryCode(code: string): string {
+  return createHmac("sha256", config.sessionSecret)
+    .update(`admin-2fa-recovery:${code}`)
+    .digest("hex");
+}
+
 function isSameHash(expectedHex: string, actualHex: string): boolean {
   const expected = Buffer.from(expectedHex, "hex");
   const actual = Buffer.from(actualHex, "hex");
   return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+function isRecoveryCodeEnabled(): boolean {
+  return /^\d{6}$/.test(config.admin2fa.recoveryCode);
+}
+
+function isRecoveryCodeValid(code: string): boolean {
+  if (!isRecoveryCodeEnabled()) return false;
+
+  return isSameHash(
+    hashAdmin2FARecoveryCode(config.admin2fa.recoveryCode),
+    hashAdmin2FARecoveryCode(code)
+  );
 }
 
 function clearAdmin2FAChallenge(req: Request): void {
@@ -87,6 +106,7 @@ function clearAdmin2FAChallenge(req: Request): void {
   delete req.session.admin2faCodeHash;
   delete req.session.admin2faExpiresAt;
   delete req.session.admin2faAttemptCount;
+  delete req.session.admin2faRecoveryAllowed;
 }
 
 // ------------------------------------------------------------------
@@ -195,13 +215,9 @@ router.post("/login", authRateLimiter, asyncHandler(async (req, res) => {
 
   if (user.isAdmin) {
     if (config.isProd && !config.telegram.isEnabled) {
-      logger.error("Admin 2FA is not configured in production", {
+      logger.error("Admin 2FA Telegram is not configured in production; recovery fallback will be used if available", {
         userId: user.id,
         email: maskEmail(user.email),
-      });
-      return res.status(503).json({
-        message: "관리자 2차 인증 설정이 완료되지 않았습니다.",
-        code: "ADMIN_2FA_NOT_CONFIGURED",
       });
     }
 
@@ -213,6 +229,7 @@ router.post("/login", authRateLimiter, asyncHandler(async (req, res) => {
     req.session.admin2faCodeHash = hashAdmin2FACode(challengeId, code);
     req.session.admin2faExpiresAt = new Date(Date.now() + ADMIN_2FA_TTL_MS).toISOString();
     req.session.admin2faAttemptCount = 0;
+    req.session.admin2faRecoveryAllowed = false;
     delete req.session.userId;
     delete req.session.admin2faVerifiedAt;
 
@@ -226,16 +243,32 @@ router.post("/login", authRateLimiter, asyncHandler(async (req, res) => {
       : { success: false, error: "Telegram is not configured" };
 
     if (!telegramResult.success && config.isProd) {
-      clearAdmin2FAChallenge(req);
-      logger.error("Admin 2FA delivery failed", {
+      if (!isRecoveryCodeEnabled()) {
+        clearAdmin2FAChallenge(req);
+        logger.error("Admin 2FA delivery failed and recovery code is not configured", {
+          userId: user.id,
+          email: maskEmail(user.email),
+          error: telegramResult.error,
+        });
+        await saveSession(req);
+        return res.status(503).json({
+          message: "관리자 2차 인증번호 발송에 실패했습니다. 잠시 후 다시 시도해주세요.",
+          code: "ADMIN_2FA_DELIVERY_FAILED",
+        });
+      }
+
+      req.session.admin2faRecoveryAllowed = true;
+      logger.error("Admin 2FA delivery failed; recovery code fallback enabled", {
         userId: user.id,
         email: maskEmail(user.email),
         error: telegramResult.error,
       });
       await saveSession(req);
-      return res.status(503).json({
-        message: "관리자 2차 인증번호 발송에 실패했습니다. 잠시 후 다시 시도해주세요.",
-        code: "ADMIN_2FA_DELIVERY_FAILED",
+      return res.status(202).json({
+        requiresAdmin2FA: true,
+        challengeId,
+        expiresInSeconds: ADMIN_2FA_TTL_MS / 1000,
+        admin2faFallbackAvailable: true,
       });
     }
 
@@ -279,6 +312,7 @@ router.post("/admin-2fa/verify", authRateLimiter, asyncHandler(async (req, res) 
     admin2faChallengeId,
     admin2faCodeHash,
     admin2faExpiresAt,
+    admin2faRecoveryAllowed,
   } = req.session;
 
   if (
@@ -316,12 +350,15 @@ router.post("/admin-2fa/verify", authRateLimiter, asyncHandler(async (req, res) 
 
   req.session.admin2faAttemptCount = attemptCount + 1;
   const actualHash = hashAdmin2FACode(admin2faChallengeId, validatedData.code);
+  const isTelegramCodeValid = isSameHash(admin2faCodeHash, actualHash);
+  const isRecoveryLogin = !!admin2faRecoveryAllowed && isRecoveryCodeValid(validatedData.code);
 
-  if (!isSameHash(admin2faCodeHash, actualHash)) {
+  if (!isTelegramCodeValid && !isRecoveryLogin) {
     await saveSession(req);
     logger.warn("Admin 2FA verification failed", {
       userId: pendingAdminUserId,
       attemptCount: req.session.admin2faAttemptCount,
+      recoveryAllowed: !!admin2faRecoveryAllowed,
     });
     return res.status(401).json({
       message: "관리자 인증번호가 올바르지 않습니다.",
@@ -347,6 +384,7 @@ router.post("/admin-2fa/verify", authRateLimiter, asyncHandler(async (req, res) 
   logger.info("Admin 2FA verification successful", {
     userId: user.id,
     email: maskEmail(user.email),
+    method: isRecoveryLogin ? "recovery" : "telegram",
   });
 
   const { passwordHash: _, ...userWithoutPassword } = user;
