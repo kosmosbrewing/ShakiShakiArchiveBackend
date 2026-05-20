@@ -127,7 +127,16 @@ async function sendMessage(text: string, useAdminChat = false): Promise<Telegram
     return { success: true, messageId: 0 };
   }
 
-  const chatId = useAdminChat ? config.telegram.adminChatId : config.telegram.chatId;
+  const chatId = useAdminChat
+    ? config.telegram.adminChatId
+    : config.telegram.chatId || config.telegram.adminChatId;
+  const chatType = useAdminChat ? "admin" : "default";
+
+  if (!chatId) {
+    const error = `${chatType} Telegram chat id is not configured`;
+    logger.error("Telegram 채팅방 ID 누락", { chatType });
+    return { success: false, error };
+  }
 
   // 타임아웃 설정 (5초)
   const controller = new AbortController();
@@ -152,22 +161,26 @@ async function sendMessage(text: string, useAdminChat = false): Promise<Telegram
     const data = await response.json();
 
     if (!data.ok) {
-      logger.error("Telegram 발송 실패", { error: data.description });
+      logger.error("Telegram 발송 실패", { chatType, error: data.description });
       return { success: false, error: data.description };
     }
 
-    logger.info("Telegram 알림 발송 완료", { messageId: data.result.message_id });
+    logger.info("Telegram 알림 발송 완료", {
+      chatType,
+      messageId: data.result.message_id,
+    });
     return { success: true, messageId: data.result.message_id };
   } catch (error) {
     clearTimeout(timeoutId);
 
     // 타임아웃 에러 구분
     if (error instanceof Error && error.name === "AbortError") {
-      logger.error("Telegram 발송 타임아웃", { timeout: "5s" });
+      logger.error("Telegram 발송 타임아웃", { chatType, timeout: "5s" });
       return { success: false, error: "타임아웃" };
     }
 
     logger.error("Telegram 발송 중 오류", {
+      chatType,
       error: error instanceof Error ? error.message : String(error),
     });
     return {
@@ -182,16 +195,65 @@ async function sendMessage(text: string, useAdminChat = false): Promise<Telegram
  * TELEGRAM_ADMIN_CHAT_ID가 미설정이거나 TELEGRAM_CHAT_ID와 동일하면 중복 발송하지 않음
  */
 async function sendToAllChats(text: string): Promise<TelegramResult> {
-  const result = await sendMessage(text);
+  if (!config.telegram.isEnabled) {
+    logger.info("Telegram이 설정되지 않았습니다. 알림을 건너뜁니다.");
+    if (config.isDev) {
+      logger.debug("Telegram 알림 (개발모드)", { text: text.substring(0, 100) });
+    }
+    return { success: true, messageId: 0 };
+  }
+
+  const targets: Array<{ useAdminChat: boolean; chatType: string }> = [];
+
+  if (config.telegram.chatId) {
+    targets.push({ useAdminChat: false, chatType: "default" });
+  }
 
   // 관리자 채팅방이 별도로 설정된 경우에만 추가 발송
   if (config.telegram.adminChatId && config.telegram.adminChatId !== config.telegram.chatId) {
-    sendMessage(text, true).catch(err =>
-      logger.error("관리자 채팅방 발송 실패", { error: err instanceof Error ? err.message : String(err) })
-    );
+    targets.push({ useAdminChat: true, chatType: "admin" });
   }
 
-  return result;
+  if (targets.length === 0) {
+    logger.error("Telegram 발송 대상이 없습니다.");
+    return { success: false, error: "Telegram chat id is not configured" };
+  }
+
+  const results = await Promise.all(
+    targets.map(async target => {
+      const result = await sendMessage(text, target.useAdminChat);
+      return { ...result, chatType: target.chatType };
+    })
+  );
+
+  const successResult = results.find(result => result.success);
+  if (successResult) {
+    const failedResults = results.filter(result => !result.success);
+    if (failedResults.length > 0) {
+      logger.warn("일부 Telegram 채팅방 발송 실패", {
+        failedChats: failedResults.map(result => ({
+          chatType: result.chatType,
+          error: result.error,
+        })),
+      });
+    }
+    return successResult;
+  }
+
+  logger.error("모든 Telegram 채팅방 발송 실패", {
+    failedChats: results.map(result => ({
+      chatType: result.chatType,
+      error: result.error,
+    })),
+  });
+
+  return {
+    success: false,
+    error: results
+      .map(result => result.error)
+      .filter(Boolean)
+      .join("; ") || "Telegram delivery failed",
+  };
 }
 
 // ============================================================================

@@ -209,7 +209,8 @@ export const config = {
     adminChatId:
       process.env.TELEGRAM_ADMIN_CHAT_ID || process.env.TELEGRAM_CHAT_ID || "",
     isEnabled:
-      !!process.env.TELEGRAM_BOT_TOKEN && !!process.env.TELEGRAM_CHAT_ID,
+      !!process.env.TELEGRAM_BOT_TOKEN &&
+      (!!process.env.TELEGRAM_CHAT_ID || !!process.env.TELEGRAM_ADMIN_CHAT_ID),
   },
 
   // Cloudinary 이미지 업로드 설정
