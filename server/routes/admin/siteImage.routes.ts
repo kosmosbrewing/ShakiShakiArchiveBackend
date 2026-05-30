@@ -1,6 +1,6 @@
 // server/routes/admin/siteImage.routes.ts
 // 관리자 사이트 이미지 관리 라우트 (/api/admin/site-images/*)
-// Hero 이미지: 최대 3개, Marquee 이미지: 최대 6개
+// Main 이미지: 디바이스별 최대 3개, Hero 이미지는 Main PC legacy alias, Marquee 이미지: 최대 6개, Journal 이미지: 최대 30개
 
 import { Router, Request, Response } from "express";
 import { isAuthenticated, isAdmin } from "../../middleware/auth.middleware";
@@ -20,8 +20,11 @@ const router = Router();
 
 // 타입별 최대 이미지 개수
 const MAX_IMAGES: Record<SiteImageType, number> = {
+  main_desktop: 3,
+  main_mobile: 3,
   hero: 3,
   marquee: 6,
+  journal: 30,
 };
 
 // ------------------------------------------------------------------
@@ -82,7 +85,7 @@ router.get(
 
 // ------------------------------------------------------------------
 // POST /api/admin/site-images
-// 새 이미지 추가 (Hero: 최대 3개, Marquee: 최대 6개)
+// 새 이미지 추가 (Main: 디바이스별 최대 3개, Hero legacy 포함, Marquee: 최대 6개, Journal: 최대 30개)
 // ------------------------------------------------------------------
 router.post(
   "/",
@@ -99,7 +102,10 @@ router.post(
     const data = result.data;
 
     // 현재 해당 타입 이미지 개수 확인
-    const currentCount = await storage.countSiteImagesByType(data.type);
+    let currentCount = await storage.countSiteImagesByType(data.type);
+    if (data.type === "main_desktop") {
+      currentCount += await storage.countSiteImagesByType("hero");
+    }
     const maxCount = MAX_IMAGES[data.type];
 
     if (currentCount >= maxCount) {

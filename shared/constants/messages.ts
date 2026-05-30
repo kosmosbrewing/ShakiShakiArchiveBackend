@@ -223,7 +223,7 @@ export const IMAGE_MESSAGES = {
   NOT_FOUND: "이미지를 찾을 수 없습니다.",
   INVALID_ID: "유효하지 않은 이미지 ID입니다.",
   INVALID_TYPE: "유효하지 않은 이미지 타입입니다.",
-  INVALID_SITE_IMAGE_TYPE: "유효하지 않은 이미지 타입입니다. (hero 또는 marquee)",
+  INVALID_SITE_IMAGE_TYPE: "유효하지 않은 이미지 타입입니다. (main_desktop, main_mobile, hero, marquee 또는 journal)",
   DELETED: "이미지가 삭제되었습니다.",
   UPDATED: "이미지가 수정되었습니다.",
   ADDED: "이미지가 추가되었습니다.",

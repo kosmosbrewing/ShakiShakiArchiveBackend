@@ -20,6 +20,7 @@ router.get("/", etagMiddleware(), cacheStrategies.productList, asyncHandler(asyn
   const search = req.query.search as string | undefined;
   const categoryIdParam = req.query.categoryId as string | undefined;
   const categorySlugParam = req.query.category as string | undefined;
+  const soldOut = req.query.soldOut === "true";
 
   // 페이지네이션 파라미터 (기본: page=1, limit=40, 최대 limit=100)
   const page = Math.max(1, parseInt(req.query.page as string) || 1);
@@ -49,6 +50,7 @@ router.get("/", etagMiddleware(), cacheStrategies.productList, asyncHandler(asyn
   const { products, total } = await storage.getProducts({
     search,
     categoryId: targetCategoryId,
+    soldOut,
     page,
     limit,
   });

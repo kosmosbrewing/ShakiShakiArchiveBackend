@@ -100,6 +100,7 @@ export interface IStorage {
   getProducts(filters?: {
     search?: string;
     categoryId?: number;
+    soldOut?: boolean;
     page?: number;
     limit?: number;
   }): Promise<{ products: (Product & { totalStock: number })[]; total: number }>;
@@ -314,7 +315,7 @@ export interface IStorage {
   isEmailVerified(email: string, type: string): Promise<boolean>;
   clearEmailVerification(email: string, type: string): Promise<void>;
 
-  // Site Image operations (Hero, Marquee)
+  // Site Image operations (Main, Hero, Marquee, Journal)
   getSiteImages(type?: SiteImageType): Promise<SiteImage[]>;
   getSiteImage(id: number): Promise<SiteImage | undefined>;
   createSiteImage(image: InsertSiteImage): Promise<SiteImage>;
@@ -665,6 +666,7 @@ export class DatabaseStorage implements IStorage {
   async getProducts(filters?: {
     search?: string;
     categoryId?: number;
+    soldOut?: boolean;
     page?: number;
     limit?: number;
   }): Promise<{ products: (Product & { totalStock: number })[]; total: number }> {
@@ -677,20 +679,54 @@ export class DatabaseStorage implements IStorage {
     if (filters?.categoryId) {
       conditions.push(eq(products.categoryId, filters.categoryId));
     }
-
-    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-
-    // COUNT 쿼리: 전체 상품 수 (같은 WHERE 조건)
-    let countQuery = db
-      .select({ total: count() })
-      .from(products);
-
-    if (whereClause) {
-      // @ts-ignore: Drizzle query builder type complexity
-      countQuery = countQuery.where(whereClause);
+    if (filters?.soldOut) {
+      conditions.push(eq(products.isAvailable, true));
     }
 
-    const [{ total }] = await countQuery;
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    const totalStockExpression = sql<number>`COALESCE(SUM(${productVariants.stockQuantity}), 0)`;
+    const soldOutHavingClause = filters?.soldOut
+      ? sql`${totalStockExpression} = 0`
+      : undefined;
+
+    let total = 0;
+
+    if (filters?.soldOut) {
+      // soldOut은 variant 재고 합계 기준이라 GROUP BY/HAVING 이후의 행 수를 세야 한다.
+      let soldOutCountBaseQuery = db
+        .select({ id: products.id })
+        .from(products)
+        .leftJoin(productVariants, eq(products.id, productVariants.productId));
+
+      if (whereClause) {
+        // @ts-ignore: Drizzle query builder type complexity
+        soldOutCountBaseQuery = soldOutCountBaseQuery.where(whereClause);
+      }
+
+      // @ts-ignore: Drizzle query builder type complexity
+      soldOutCountBaseQuery = soldOutCountBaseQuery
+        .groupBy(products.id)
+        .having(soldOutHavingClause);
+
+      const soldOutCountSubquery = soldOutCountBaseQuery.as("sold_out_products");
+      const [countResult] = await db
+        .select({ total: count() })
+        .from(soldOutCountSubquery);
+      total = countResult?.total || 0;
+    } else {
+      // COUNT 쿼리: 전체 상품 수 (같은 WHERE 조건)
+      let countQuery = db
+        .select({ total: count() })
+        .from(products);
+
+      if (whereClause) {
+        // @ts-ignore: Drizzle query builder type complexity
+        countQuery = countQuery.where(whereClause);
+      }
+
+      const [countResult] = await countQuery;
+      total = countResult?.total || 0;
+    }
 
     // 데이터 쿼리: products와 productVariants를 LEFT JOIN하여 총 재고 계산
     let query = db
@@ -711,7 +747,7 @@ export class DatabaseStorage implements IStorage {
         updatedAt: products.updatedAt,
         // SUM을 사용하여 모든 variants의 stockQuantity 합산
         // COALESCE를 사용하여 NULL을 0으로 처리
-        totalStock: sql<number>`COALESCE(SUM(${productVariants.stockQuantity}), 0)`,
+        totalStock: totalStockExpression,
       })
       .from(products)
       .leftJoin(productVariants, eq(products.id, productVariants.productId))
@@ -720,6 +756,10 @@ export class DatabaseStorage implements IStorage {
     if (whereClause) {
       // @ts-ignore: Drizzle query builder type complexity
       query = query.where(whereClause);
+    }
+    if (soldOutHavingClause) {
+      // @ts-ignore: Drizzle query builder type complexity
+      query = query.having(soldOutHavingClause);
     }
 
     // DB 레벨 정렬: isAvailable DESC → 재고 유무 ASC(있으면 0, 없으면 1) → updatedAt DESC
@@ -2680,7 +2720,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ------------------------------------------------------------------
-  // Site Image operations (Hero, Marquee)
+  // Site Image operations (Main, Hero, Marquee, Journal)
   // ------------------------------------------------------------------
   async getSiteImages(type?: SiteImageType): Promise<SiteImage[]> {
     if (type) {

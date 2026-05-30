@@ -909,16 +909,22 @@ export const verifyEmailCodeSchema = z.object({
 export type VerifyEmailCodeInput = z.infer<typeof verifyEmailCodeSchema>;
 
 // ------------------------------------------------------------------
-// 사이트 이미지 테이블 (Hero, Marquee 이미지 관리)
+// 사이트 이미지 테이블 (Main, Hero, Marquee, Journal 이미지 관리)
 // ------------------------------------------------------------------
-export const siteImageTypeEnum = ["hero", "marquee"] as const;
+export const siteImageTypeEnum = [
+  "main_desktop",
+  "main_mobile",
+  "hero",
+  "marquee",
+  "journal",
+] as const;
 export type SiteImageType = (typeof siteImageTypeEnum)[number];
 
 export const siteImages = pgTable(
   "site_images",
   {
     id: serial("id").primaryKey(),
-    type: varchar("type", { length: 20 }).notNull(), // 'hero' | 'marquee'
+    type: varchar("type", { length: 20 }).notNull(), // 'main_desktop' | 'main_mobile' | 'hero' | 'marquee' | 'journal'
     imageUrl: varchar("image_url", { length: 500 }).notNull(),
     linkUrl: varchar("link_url", { length: 500 }), // 클릭 시 이동할 URL (선택)
     displayOrder: integer("display_order").default(0).notNull(), // 표시 순서
@@ -940,7 +946,7 @@ export const insertSiteImageSchema = createInsertSchema(siteImages).omit({
 });
 export type InsertSiteImage = z.infer<typeof insertSiteImageSchema>;
 
-// Hero/Marquee 이미지 생성/수정 요청 스키마
+// Main/Hero/Marquee/Journal 이미지 생성/수정 요청 스키마
 export const createSiteImageSchema = z.object({
   type: z.enum(siteImageTypeEnum),
   imageUrl: z.string().url("유효한 이미지 URL을 입력해주세요"),

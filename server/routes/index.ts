@@ -44,7 +44,7 @@ router.use("/categories", categoryRoutes);
 router.use("/variants", variantRoutes);
 router.use("/search", searchRoutes); // 주소 검색 API
 router.use("/search/products", productSearchRoutes); // 상품 검색 (Meilisearch)
-router.use("/site-images", siteImageRoutes); // Hero, Marquee 이미지 조회
+router.use("/site-images", siteImageRoutes); // Main, Hero, Marquee, Journal 이미지 조회
 router.use("/inquiries", inquiryRoutes); // Q&A 문의하기
 router.use("/seo", seoRoutes); // SEO 메타데이터 (JSON-LD, OpenGraph)
 router.use("/constants", constantsRoutes); // 프론트엔드 공용 상수

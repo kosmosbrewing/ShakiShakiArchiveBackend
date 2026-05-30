@@ -1,6 +1,6 @@
 // server/routes/siteImage.routes.ts
 // 사이트 이미지 공개 API (/api/site-images/*)
-// 인증 없이 접근 가능 - 프론트엔드에서 Hero, Marquee 이미지 조회용
+// 인증 없이 접근 가능 - 프론트엔드에서 Main, Hero, Marquee, Journal 이미지 조회용
 
 import { Router, Request, Response } from "express";
 import { storage } from "../storage";
@@ -40,6 +40,35 @@ router.get("/", etagMiddleware(), cacheStrategies.siteImages, asyncHandler(async
 }));
 
 // ------------------------------------------------------------------
+// GET /api/site-images/main-desktop
+// 메인 데스크톱 이미지만 조회 (활성화된 것만)
+// ------------------------------------------------------------------
+router.get("/main-desktop", etagMiddleware(), cacheStrategies.siteImages, asyncHandler(async (_req: Request, res: Response) => {
+  const mainDesktopImages = await storage.getSiteImages("main_desktop");
+  const images = mainDesktopImages.length > 0
+    ? mainDesktopImages
+    : await storage.getSiteImages("hero");
+  const activeImages = images.filter((img) => img.isActive);
+
+  res.json({
+    images: activeImages,
+  });
+}));
+
+// ------------------------------------------------------------------
+// GET /api/site-images/main-mobile
+// 메인 모바일 이미지만 조회 (활성화된 것만)
+// ------------------------------------------------------------------
+router.get("/main-mobile", etagMiddleware(), cacheStrategies.siteImages, asyncHandler(async (_req: Request, res: Response) => {
+  const images = await storage.getSiteImages("main_mobile");
+  const activeImages = images.filter((img) => img.isActive);
+
+  res.json({
+    images: activeImages,
+  });
+}));
+
+// ------------------------------------------------------------------
 // GET /api/site-images/hero
 // Hero 이미지만 조회 (활성화된 것만)
 // ------------------------------------------------------------------
@@ -58,6 +87,19 @@ router.get("/hero", etagMiddleware(), cacheStrategies.siteImages, asyncHandler(a
 // ------------------------------------------------------------------
 router.get("/marquee", etagMiddleware(), cacheStrategies.siteImages, asyncHandler(async (_req: Request, res: Response) => {
   const images = await storage.getSiteImages("marquee");
+  const activeImages = images.filter((img) => img.isActive);
+
+  res.json({
+    images: activeImages,
+  });
+}));
+
+// ------------------------------------------------------------------
+// GET /api/site-images/journal
+// Journal 이미지만 조회 (활성화된 것만)
+// ------------------------------------------------------------------
+router.get("/journal", etagMiddleware(), cacheStrategies.siteImages, asyncHandler(async (_req: Request, res: Response) => {
+  const images = await storage.getSiteImages("journal");
   const activeImages = images.filter((img) => img.isActive);
 
   res.json({

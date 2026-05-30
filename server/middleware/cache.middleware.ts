@@ -142,7 +142,7 @@ export const cacheStrategies = {
   }),
 
   /**
-   * 사이트 이미지 (Hero, Marquee)
+   * 사이트 이미지 (Main, Hero, Marquee, Journal)
    * - 브라우저: 10분 (600초)
    * - CDN: 1시간 (3600초)
    * - stale: 1일 (86400초)
