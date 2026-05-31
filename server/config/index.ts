@@ -190,7 +190,9 @@ export const config = {
     homeDescription:
       process.env.HOME_SEO_DESCRIPTION ||
       "오직 단 하나뿐인 빈티지를 샤키샤키 아카이브에서 찾아보세요. 여성 빈티지 의류·일본 구제·셀렉샵. 원피스, 자켓, 니트, 팬츠 등 엄선된 빈티지 아이템.",
-    siteLogo: process.env.SITE_LOGO || "",
+    siteLogo:
+      process.env.SITE_LOGO ||
+      "https://res.cloudinary.com/diyuvt3qg/image/upload/v1780209580/shakishaki/products/lssaxiwskg7htwddu6fo.png",
   },
 
   // Resend 이메일 설정

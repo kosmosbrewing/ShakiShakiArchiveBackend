@@ -1,7 +1,7 @@
 // server/routes/admin/payment.routes.ts
 // 관리자 결제 관리 라우트
 
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { storage } from "../../storage";
 import { isAuthenticated, isAdmin } from "../../middleware/auth.middleware";
 import { asyncHandler } from "../../middleware/error.middleware";
@@ -25,6 +25,15 @@ import { ORDER_MESSAGES, PAYMENT_MESSAGES } from "@shared/constants/messages";
 
 const router = Router();
 const logger = createLogger("AdminPayment");
+const FRESH_ADMIN_2FA_MS = 5 * 60 * 1000;
+
+function hasFreshAdmin2FA(req: Request): boolean {
+  const verifiedAt = req.session?.admin2faVerifiedAt;
+  if (!verifiedAt) return false;
+
+  const verifiedAtMs = Date.parse(verifiedAt);
+  return Number.isFinite(verifiedAtMs) && Date.now() - verifiedAtMs <= FRESH_ADMIN_2FA_MS;
+}
 
 /**
  * 관리자: 결제 상세 조회
@@ -84,6 +93,13 @@ router.post("/:orderId/cancel", isAuthenticated, isAdmin, asyncHandler(async (re
     if (!targetItem) {
       return res.status(404).json({ message: "취소할 주문 상품을 찾을 수 없습니다." });
     }
+  }
+
+  if (targetItem?.status === "return_received" && !hasFreshAdmin2FA(req)) {
+    return res.status(403).json({
+      message: "검수 후 환불 처리는 최근 관리자 2차 인증이 필요합니다.",
+      code: "ADMIN_FRESH_2FA_REQUIRED",
+    });
   }
 
   // 활성 상태인 아이템 필터링 (취소/환불 완료된 것 제외)

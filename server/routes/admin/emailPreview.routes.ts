@@ -25,6 +25,13 @@ import {
 
 const router = Router();
 
+const setEmailPreviewNoStoreHeaders = (res: Response) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.setHeader("Surrogate-Control", "no-store");
+};
+
 // 이메일 템플릿 타입
 type EmailTemplateType =
   | "payment_confirm"
@@ -256,6 +263,7 @@ function generateVerificationPreview(): string {
  * 사용 가능한 이메일 템플릿 목록 조회
  */
 router.get("/templates", isAdmin, (req: Request, res: Response) => {
+  setEmailPreviewNoStoreHeaders(res);
   res.json({
     templates: TEMPLATE_LIST,
     colors: COLORS,
@@ -293,6 +301,7 @@ router.get("/:type", isAdmin, (req: Request, res: Response) => {
   }
 
   // HTML 직접 반환 (미리보기용)
+  setEmailPreviewNoStoreHeaders(res);
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(html);
 });

@@ -265,6 +265,14 @@ export interface IStorage {
     amount: string
   ): Promise<Order | undefined>;
 
+  // 관리자 수기환불 처리 (PG 호출/재고 복구 없음)
+  manualRefundOrderItem(params: {
+    orderId: string;
+    orderItemId: number;
+    refundAmount: number;
+    cancelReason: string;
+  }): Promise<void>;
+
   // 주문 상태만 업데이트 (orderItems는 건드리지 않음)
   updateOrderStatusOnly(
     orderId: string,
@@ -2187,6 +2195,134 @@ export class DatabaseStorage implements IStorage {
       .where(eq(orders.id, orderId))
       .returning();
     return result[0];
+  }
+
+  async manualRefundOrderItem(params: {
+    orderId: string;
+    orderItemId: number;
+    refundAmount: number;
+    cancelReason: string;
+  }): Promise<void> {
+    const client = await pool.connect();
+    const logger = createLogger("ManualRefund");
+
+    try {
+      await client.query("BEGIN");
+
+      const itemResult = await client.query(
+        `SELECT id, order_id, status
+         FROM order_items
+         WHERE id = $1 AND order_id = $2
+         FOR UPDATE`,
+        [params.orderItemId, params.orderId],
+      );
+
+      if (itemResult.rows.length === 0) {
+        const error = new Error("수기환불 처리할 주문 상품을 찾을 수 없습니다.") as Error & {
+          statusCode?: number;
+          code?: string;
+        };
+        error.statusCode = 404;
+        error.code = "ORDER_ITEM_NOT_FOUND";
+        throw error;
+      }
+
+      const currentStatus = String(itemResult.rows[0].status);
+      if (["refunded", "cancelled"].includes(currentStatus)) {
+        const error = new Error("이미 취소/환불 처리된 주문 상품입니다.") as Error & {
+          statusCode?: number;
+          code?: string;
+        };
+        error.statusCode = 400;
+        error.code = "ORDER_ITEM_ALREADY_FINALIZED";
+        throw error;
+      }
+
+      const orderResult = await client.query(
+        `SELECT id, total_amount, refunded_amount
+         FROM orders
+         WHERE id = $1
+         FOR UPDATE`,
+        [params.orderId],
+      );
+
+      if (orderResult.rows.length === 0) {
+        const error = new Error("주문을 찾을 수 없습니다.") as Error & {
+          statusCode?: number;
+          code?: string;
+        };
+        error.statusCode = 404;
+        error.code = "ORDER_NOT_FOUND";
+        throw error;
+      }
+
+      const totalAmount = Number(orderResult.rows[0].total_amount || 0);
+      const alreadyRefundedAmount = Number(orderResult.rows[0].refunded_amount || 0);
+      if (alreadyRefundedAmount + params.refundAmount > totalAmount) {
+        const error = new Error("누적 환불 금액이 주문 결제 금액을 초과할 수 없습니다.") as Error & {
+          statusCode?: number;
+          code?: string;
+        };
+        error.statusCode = 400;
+        error.code = "REFUND_AMOUNT_EXCEEDS_TOTAL";
+        throw error;
+      }
+
+      await client.query(
+        `UPDATE order_items
+         SET status = 'refunded'
+         WHERE id = $1`,
+        [params.orderItemId],
+      );
+
+      const statusesResult = await client.query(
+        `SELECT status
+         FROM order_items
+         WHERE order_id = $1`,
+        [params.orderId],
+      );
+
+      const statuses = statusesResult.rows.map((row: { status: string }) => row.status);
+      const isFullRefund = statuses.every((status: string) =>
+        ["refunded", "cancelled"].includes(status),
+      );
+
+      await client.query(
+        `UPDATE orders
+         SET status = $1,
+             refunded_amount = COALESCE(refunded_amount, '0')::numeric + $2::numeric,
+             cancel_reason = $3,
+             canceled_at = CASE WHEN $4 THEN NOW() ELSE canceled_at END,
+             updated_at = NOW()
+         WHERE id = $5`,
+        [
+          isFullRefund ? "refunded" : "partial_refunded",
+          params.refundAmount,
+          params.cancelReason,
+          isFullRefund,
+          params.orderId,
+        ],
+      );
+
+      await client.query("COMMIT");
+
+      logger.info("관리자 수기환불 처리 완료", {
+        orderId: params.orderId,
+        orderItemId: params.orderItemId,
+        refundAmount: params.refundAmount,
+        isFullRefund,
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      logger.error("관리자 수기환불 처리 실패", {
+        orderId: params.orderId,
+        orderItemId: params.orderItemId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   // ------------------------------------------------------------------

@@ -8,6 +8,7 @@ import { storage } from "../storage";
 import { hashPassword, verifyPassword } from "../utils/password";
 import {
   isAuthenticated,
+  isAdmin,
   invalidateUserCache,
 } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
@@ -302,6 +303,91 @@ router.post("/login", authRateLimiter, asyncHandler(async (req, res) => {
 
   const { passwordHash: _, ...userWithoutPassword } = user;
   res.json(userWithoutPassword);
+}));
+
+// 로그인 완료된 관리자 세션의 고위험 작업용 2차 인증 challenge 발급
+router.post("/admin-2fa/challenge", authRateLimiter, isAuthenticated, isAdmin, asyncHandler(async (req, res) => {
+  const userId = req.session.userId;
+  const email = req.user?.email;
+
+  if (!userId || !email) {
+    return res.status(401).json({
+      message: AUTH_MESSAGES.REQUIRED,
+      code: "AUTH_REQUIRED",
+    });
+  }
+
+  const challengeId = randomUUID();
+  const code = generateAdmin2FACode();
+
+  req.session.pendingAdminUserId = userId;
+  req.session.admin2faChallengeId = challengeId;
+  req.session.admin2faCodeHash = hashAdmin2FACode(challengeId, code);
+  req.session.admin2faExpiresAt = new Date(Date.now() + ADMIN_2FA_TTL_MS).toISOString();
+  req.session.admin2faAttemptCount = 0;
+  req.session.admin2faRecoveryAllowed = false;
+
+  const telegramResult = config.telegram.isEnabled
+    ? await notifyAdminLogin2FA({
+        email,
+        code,
+        expiresInMinutes: ADMIN_2FA_EXPIRES_IN_MINUTES,
+        ip: req.ip,
+      })
+    : { success: false, error: "Telegram is not configured" };
+
+  if (!telegramResult.success && config.isProd) {
+    if (!isRecoveryCodeEnabled()) {
+      clearAdmin2FAChallenge(req);
+      logger.error("Admin action 2FA delivery failed and recovery code is not configured", {
+        userId,
+        email: maskEmail(email),
+        error: telegramResult.error,
+      });
+      await saveSession(req);
+      return res.status(503).json({
+        message: "관리자 2차 인증번호 발송에 실패했습니다. 잠시 후 다시 시도해주세요.",
+        code: "ADMIN_2FA_DELIVERY_FAILED",
+      });
+    }
+
+    req.session.admin2faRecoveryAllowed = true;
+    logger.error("Admin action 2FA delivery failed; recovery code fallback enabled", {
+      userId,
+      email: maskEmail(email),
+      error: telegramResult.error,
+    });
+    await saveSession(req);
+    return res.status(202).json({
+      requiresAdmin2FA: true,
+      challengeId,
+      expiresInSeconds: ADMIN_2FA_TTL_MS / 1000,
+      admin2faFallbackAvailable: true,
+    });
+  }
+
+  if (!telegramResult.success && !config.isProd) {
+    logger.warn("Admin action 2FA Telegram delivery skipped in local environment", {
+      userId,
+      email: maskEmail(email),
+      error: telegramResult.error,
+      devCode: code,
+    });
+  }
+
+  await saveSession(req);
+
+  logger.info("Admin action 2FA challenge issued", {
+    userId,
+    email: maskEmail(email),
+  });
+
+  return res.status(202).json({
+    requiresAdmin2FA: true,
+    challengeId,
+    expiresInSeconds: ADMIN_2FA_TTL_MS / 1000,
+    ...(config.isProd ? {} : { devCode: code }),
+  });
 }));
 
 // 관리자 로그인 2차 인증 확인

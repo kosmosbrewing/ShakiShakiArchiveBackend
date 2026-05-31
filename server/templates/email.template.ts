@@ -5,14 +5,14 @@
 // 디자인 시스템 색상 (프론트엔드 CSS 변수와 동기화 - Order.vue 참고)
 // ============================================================================
 export const COLORS = {
-  // Primary: hsl(335, 56%, 63%) → 로즈/핑크 (강조용)
-  primary: "#D77CA2",
+  // Primary / Foreground: 프론트엔드 메인 폰트 컬러와 동기화
+  primary: "#1A1714",
 
-  // Foreground: hsl(31, 34%, 28%) → 갈색 계열 (기본 텍스트)
-  foreground: "#5F4C38",
+  // Foreground: 기본 텍스트
+  foreground: "#1A1714",
 
-  // Muted: hsl(20, 13%, 44%) → 회갈색 (보조 텍스트)
-  muted: "#7D7067",
+  // Muted: 보조 텍스트
+  muted: "#6C6360",
 
   // Border: hsl(335, 10%, 90%) → 연한 그레이 (테두리)
   border: "#E8E4E5",
@@ -23,7 +23,7 @@ export const COLORS = {
 
   // 로고 이미지 URL (Cloudinary 최적화)
   logoUrl:
-    "https://res.cloudinary.com/diyuvt3qg/image/upload/f_auto,q_auto,w_400,c_pad,b_white/v1772943671/shakishaki/products/z2afzjbay7yjyl4lyoxr.png",
+    "https://res.cloudinary.com/diyuvt3qg/image/upload/v1780209580/shakishaki/products/lssaxiwskg7htwddu6fo.png",
 } as const;
 
 /**
