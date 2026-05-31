@@ -143,16 +143,16 @@ export const cacheStrategies = {
 
   /**
    * 사이트 이미지 (Main, Hero, Marquee, Journal)
-   * - 브라우저: 10분 (600초)
-   * - CDN: 1시간 (3600초)
-   * - stale: 1일 (86400초)
+   * - 브라우저: 5분 (300초)
+   * - CDN: 5분 (300초)
+   * - stale: 5분 (300초)
    *
    * 사용처: /api/site-images
    */
   siteImages: cacheControl({
-    maxAge: 600,
-    sMaxage: 3600,
-    staleWhileRevalidate: 86400,
+    maxAge: 300,
+    sMaxage: 300,
+    staleWhileRevalidate: 300,
   }),
 
   /**

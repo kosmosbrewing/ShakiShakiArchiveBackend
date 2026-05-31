@@ -42,13 +42,23 @@ router.get("/", etagMiddleware(), cacheStrategies.siteImages, asyncHandler(async
 // ------------------------------------------------------------------
 // GET /api/site-images/main-desktop
 // 메인 데스크톱 이미지만 조회 (활성화된 것만)
+// legacy hero 타입은 관리자 Main PC 탭에서도 같이 표시하므로 공개 API에서도 같이 반환한다.
 // ------------------------------------------------------------------
 router.get("/main-desktop", etagMiddleware(), cacheStrategies.siteImages, asyncHandler(async (_req: Request, res: Response) => {
-  const mainDesktopImages = await storage.getSiteImages("main_desktop");
-  const images = mainDesktopImages.length > 0
-    ? mainDesktopImages
-    : await storage.getSiteImages("hero");
-  const activeImages = images.filter((img) => img.isActive);
+  const [heroImages, mainDesktopImages] = await Promise.all([
+    storage.getSiteImages("hero"),
+    storage.getSiteImages("main_desktop"),
+  ]);
+
+  const imagesById = new Map(
+    [...heroImages, ...mainDesktopImages]
+      .filter((img) => img.isActive)
+      .map((img) => [img.id, img] as const)
+  );
+
+  const activeImages = Array.from(imagesById.values()).sort(
+    (a, b) => a.displayOrder - b.displayOrder || a.id - b.id
+  );
 
   res.json({
     images: activeImages,
