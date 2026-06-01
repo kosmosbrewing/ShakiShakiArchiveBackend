@@ -45,6 +45,8 @@ import { eq, and, gt } from "drizzle-orm";
 
 const router = Router();
 const logger = createLogger("Order");
+const OPTION_UNAVAILABLE_MESSAGE =
+  "선택한 상품 옵션을 확인할 수 없습니다. 장바구니에서 상품을 제외한 뒤 다시 담아주세요.";
 
 // 주문 생성
 router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
@@ -97,36 +99,41 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
       });
     }
 
-    // 옵션 정보 조회 (선택사항)
-    let variant = null;
-    if (variantId) {
-      variant = await storage.getProductVariant(variantId);
-      if (!variant) {
-        return res.status(400).json({ message: ORDER_MESSAGES.VARIANT_NOT_FOUND });
-      }
+    // 옵션 정보 조회
+    if (!variantId) {
+      logger.warn("옵션 정보가 없는 바로 구매 주문 시도", { userId, productId });
+      return res.status(400).json({
+        message: OPTION_UNAVAILABLE_MESSAGE,
+        code: "VARIANT_REQUIRED",
+      });
+    }
 
-      // 🔒 보안: 옵션 활성화 상태 확인
-      if (!variant.isAvailable) {
-        logger.warn("비활성화된 옵션 주문 시도", { userId, productId, variantId, size: variant.size });
-        return res.status(400).json({
-          message: PRODUCT_MESSAGES.VARIANT_NOT_AVAILABLE,
-          code: "VARIANT_NOT_AVAILABLE"
-        });
-      }
+    const variant = await storage.getProductVariant(variantId);
+    if (!variant) {
+      return res.status(400).json({ message: ORDER_MESSAGES.VARIANT_NOT_FOUND });
+    }
 
-      // 🔒 보안: 재고 확인은 storage.createOrder()에서 수행 (Self-Lock Bypass 포함)
-      // 여기서는 간단한 사전 확인만 수행
-      if (variant.stockQuantity < quantity) {
-        logger.warn("재고 부족 (사전 확인)", {
-          userId,
-          productId,
-          variantId,
-          requested: quantity,
-          available: variant.stockQuantity,
-          note: "Self-Lock Bypass로 재시도 가능"
-        });
-        // 재고 부족 경고만 로그에 남기고, 실제 확인은 createOrder에서 수행
-      }
+    // 🔒 보안: 옵션 활성화 상태 확인
+    if (!variant.isAvailable) {
+      logger.warn("비활성화된 옵션 주문 시도", { userId, productId, variantId, size: variant.size });
+      return res.status(400).json({
+        message: PRODUCT_MESSAGES.VARIANT_NOT_AVAILABLE,
+        code: "VARIANT_NOT_AVAILABLE"
+      });
+    }
+
+    // 🔒 보안: 재고 확인은 storage.createOrder()에서 수행 (Self-Lock Bypass 포함)
+    // 여기서는 간단한 사전 확인만 수행
+    if (variant.stockQuantity < quantity) {
+      logger.warn("재고 부족 (사전 확인)", {
+        userId,
+        productId,
+        variantId,
+        requested: quantity,
+        available: variant.stockQuantity,
+        note: "Self-Lock Bypass로 재시도 가능"
+      });
+      // 재고 부족 경고만 로그에 남기고, 실제 확인은 createOrder에서 수행
     }
 
     subtotal = price * quantity;
@@ -190,33 +197,45 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
         });
       }
 
-      // 옵션 재고 확인 (사전 확인, 실제 확인은 storage.createOrder에서 수행)
-      if (item.variant) {
-        if (!item.variant.isAvailable) {
-          logger.warn("장바구니에 비활성화된 옵션 존재", {
-            userId,
-            productId: item.productId,
-            variantId: item.variantId,
-            size: item.variant.size
-          });
-          return res.status(400).json({
-            message: `${item.product.name}의 선택하신 옵션은 현재 판매하지 않습니다.`,
-            code: "CART_VARIANT_NOT_AVAILABLE"
-          });
-        }
+      const variant = item.variant;
+      if (!variant) {
+        logger.warn("장바구니에 옵션 정보가 없는 상품 존재", {
+          userId,
+          productId: item.productId,
+          variantId: item.variantId,
+          productName: item.product.name,
+        });
+        return res.status(400).json({
+          message: OPTION_UNAVAILABLE_MESSAGE,
+          code: "CART_VARIANT_NOT_FOUND",
+        });
+      }
 
-        // 재고 부족 사전 경고 (Self-Lock Bypass로 재시도 가능하므로 에러는 아님)
-        if (item.variant.stockQuantity < item.quantity) {
-          logger.warn("장바구니 상품 재고 부족 (사전 확인)", {
-            userId,
-            productId: item.productId,
-            variantId: item.variantId,
-            requested: item.quantity,
-            available: item.variant.stockQuantity,
-            note: "Self-Lock Bypass로 재시도 가능"
-          });
-          // 실제 재고 확인은 createOrder에서 수행
-        }
+      // 옵션 재고 확인 (사전 확인, 실제 확인은 storage.createOrder에서 수행)
+      if (!variant.isAvailable) {
+        logger.warn("장바구니에 비활성화된 옵션 존재", {
+          userId,
+          productId: item.productId,
+          variantId: item.variantId,
+          size: variant.size
+        });
+        return res.status(400).json({
+          message: `${item.product.name}의 선택하신 옵션은 현재 판매하지 않습니다.`,
+          code: "CART_VARIANT_NOT_AVAILABLE"
+        });
+      }
+
+      // 재고 부족 사전 경고 (Self-Lock Bypass로 재시도 가능하므로 에러는 아님)
+      if (variant.stockQuantity < item.quantity) {
+        logger.warn("장바구니 상품 재고 부족 (사전 확인)", {
+          userId,
+          productId: item.productId,
+          variantId: item.variantId,
+          requested: item.quantity,
+          available: variant.stockQuantity,
+          note: "Self-Lock Bypass로 재시도 가능"
+        });
+        // 실제 재고 확인은 createOrder에서 수행
       }
     }
 

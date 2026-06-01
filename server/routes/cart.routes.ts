@@ -25,6 +25,14 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
     ...req.body,
     userId,
   });
+
+  if (!validatedData.variantId) {
+    return res.status(400).json({
+      message: "상품 옵션을 선택해주세요.",
+      code: "VARIANT_REQUIRED",
+    });
+  }
+
   const cartItem = await storage.addCartItem(validatedData);
   res.json(cartItem);
 }));
