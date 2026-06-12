@@ -177,6 +177,15 @@ export const config = {
   // 프론트엔드 URL (OAuth 콜백 리다이렉트용)
   frontendUrl: process.env.FRONTEND_URL || "http://localhost:5173",
 
+  // GitHub repository_dispatch (상품 변경 시 프론트엔드 프리렌더 재빌드 트리거)
+  // 토큰 미설정 시 비활성화 — 로컬/개발 환경에서는 동작하지 않음
+  github: {
+    dispatchToken: process.env.GITHUB_DISPATCH_TOKEN || "",
+    frontendRepo:
+      process.env.GITHUB_FRONTEND_REPO || "kosmosbrewing/ShakiShakiArchive",
+    isEnabled: !!process.env.GITHUB_DISPATCH_TOKEN,
+  },
+
   // SEO 설정
   seo: {
     // 상품·카테고리 페이지 Title에 suffix로 사용: "{상품명} | {siteName}"

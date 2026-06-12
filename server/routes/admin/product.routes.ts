@@ -8,6 +8,7 @@ import { asyncHandler } from "../../middleware/error.middleware";
 import { cacheStrategies } from "../../middleware";
 import { insertProductSchema } from "@shared/schema";
 import { meilisearchService } from "../../services/meilisearch.service";
+import { scheduleRebuild } from "../../services/searchPing.service";
 import { createLogger } from "../../utils/logger";
 import { PRODUCT_MESSAGES } from "@shared/constants/messages";
 
@@ -89,6 +90,9 @@ router.post("/", isAuthenticated, isAdmin, asyncHandler(async (req, res) => {
     );
   }
 
+  // SEO: 프리렌더/사이트맵 재빌드 예약 (디바운스, 실패해도 응답 무영향)
+  scheduleRebuild("product-created");
+
   // 경고가 있으면 응답에 포함
   res.json({
     ...product,
@@ -123,6 +127,9 @@ router.patch("/:id", isAuthenticated, isAdmin, asyncHandler(async (req, res) => 
     );
   }
 
+  // SEO: 프리렌더/사이트맵 재빌드 예약 (디바운스, 실패해도 응답 무영향)
+  scheduleRebuild("product-updated");
+
   // 경고가 있으면 응답에 포함
   res.json({
     ...product,
@@ -140,6 +147,9 @@ router.delete("/:id", isAuthenticated, isAdmin, asyncHandler(async (req, res) =>
     () => meilisearchService.deleteProduct(productId),
     "삭제"
   );
+
+  // SEO: 프리렌더/사이트맵 재빌드 예약 (디바운스, 실패해도 응답 무영향)
+  scheduleRebuild("product-deleted");
 
   res.json({
     message: PRODUCT_MESSAGES.DELETED,

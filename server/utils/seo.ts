@@ -6,6 +6,7 @@ import type { Product, Category } from "@shared/schema";
 import { optimizeForOg, optimizeForList } from "./cloudinary";
 
 // 사이트 기본 정보 (환경 변수로 설정 가능)
+// 파일 하단에서 export — 피드 생성기(utils/feeds/*)에서도 재사용
 const SITE_CONFIG = {
   name: config.seo.siteName,
   description: config.seo.siteDescription,

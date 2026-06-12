@@ -21,6 +21,7 @@ import productSearchRoutes from "./productSearch.routes";
 import siteImageRoutes from "./siteImage.routes";
 import inquiryRoutes from "./inquiry.routes";
 import seoRoutes from "./seo.routes";
+import feedRoutes from "./feed.routes";
 import constantsRoutes from "./constants.routes";
 // 🔒 Option A: 재고 선점 제거 - stock.routes 비활성화
 // import stockRoutes from "./stock.routes";
@@ -47,6 +48,7 @@ router.use("/search/products", productSearchRoutes); // 상품 검색 (Meilisear
 router.use("/site-images", siteImageRoutes); // Main, Hero, Marquee, Journal 이미지 조회
 router.use("/inquiries", inquiryRoutes); // Q&A 문의하기
 router.use("/seo", seoRoutes); // SEO 메타데이터 (JSON-LD, OpenGraph)
+router.use("/feeds", feedRoutes); // 상품 피드 (구글 머천트, RSS, 네이버 EP)
 router.use("/constants", constantsRoutes); // 프론트엔드 공용 상수
 
 // 인증 필요 라우트
