@@ -2,3 +2,10 @@
 .env.production
 .env.local
 .dev.sh
+# 인증서·대용량 — AI 컨텍스트 제외
+certs/
+*.pem
+*.key
+node_modules/
+dist/
+backup*.sql
