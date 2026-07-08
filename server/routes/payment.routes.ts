@@ -29,6 +29,19 @@ import { notifyPaymentComplete } from "../services/telegram.service";
 const router = Router();
 const logger = createLogger("Payment");
 
+// 토스페이먼츠 미사용(TOSS_SECRET_KEY 미설정) 시 전 라우트 일괄 차단.
+// 라우트별 개별 게이트는 /confirm·/:orderId/cancel 누락을 유발했음 —
+// 이 라우터의 cancel/status else 분기도 토스 전용이라 전체 차단이 안전
+// (카카오페이 취소는 order.routes의 partial-cancel, 조회는 kakaopay.routes 사용)
+router.use((_req, res, next) => {
+  if (!config.toss.isEnabled) {
+    return res
+      .status(503)
+      .json({ message: PAYMENT_MESSAGES.SERVICE_DISABLED });
+  }
+  next();
+});
+
 /**
  * 토스페이먼츠 에러 코드를 사용자 친화적인 메시지로 변환
  * 공식 문서: https://docs.tosspayments.com/reference/error-codes

@@ -55,10 +55,13 @@ router.use("/constants", constantsRoutes); // 프론트엔드 공용 상수
 router.use("/cart", cartRoutes);
 router.use("/orders", orderRoutes);
 router.use("/returns", returnRoutes); // 반품 관련
-router.use("/payments", paymentRoutes);
+// ⚠️ 마운트 순서 중요: 구체 경로(naverpay/kakaopay)를 /payments(토스)보다 먼저 등록.
+// /payments가 먼저면 kakaopay 요청도 paymentRoutes에 진입해
+// 토스 비활성화 게이트(router.use)에 걸려 503이 됨
 router.use("/payments/naverpay", naverpayRoutes); // 네이버페이 결제형
-router.use("/naverpay-order", naverpayOrderRoutes); // 네이버페이 주문형
 router.use("/payments/kakaopay", kakaopayRoutes); // 카카오페이 결제
+router.use("/naverpay-order", naverpayOrderRoutes); // 네이버페이 주문형
+router.use("/payments", paymentRoutes); // 토스페이먼츠 (비활성화 시 라우터 게이트가 503)
 router.use("/wishlist", wishlistRoutes);
 router.use("/user/addresses", addressRoutes);
 // 🔒 Option A: 재고 선점 제거 - stock 엔드포인트 비활성화

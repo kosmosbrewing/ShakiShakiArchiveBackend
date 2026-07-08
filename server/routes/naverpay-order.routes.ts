@@ -62,6 +62,11 @@ function checkNaverPayOrderEnabled(_req: Request, res: Response, next: any) {
   next();
 }
 
+// 미사용(NAVERPAY_CERTI_KEY 미설정) 시 전 라우트 일괄 차단.
+// 라우트별 개별 게이트는 무인증 GET(/product-info, /additional-fee) 누락을
+// 유발해 상품·재고·배송비 정보가 노출되고 있었음
+router.use(checkNaverPayOrderEnabled);
+
 // ============================================================
 // 스키마 정의
 // ============================================================

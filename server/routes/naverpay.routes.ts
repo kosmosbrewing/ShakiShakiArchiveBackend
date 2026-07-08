@@ -91,6 +91,10 @@ function checkNaverPayEnabled(
   next();
 }
 
+// 네이버페이 미사용(NAVERPAY_CLIENT_ID 미설정) 시 전 라우트 일괄 차단
+// — 라우트별 개별 게이트는 /callback 누락을 유발했음
+router.use(checkNaverPayEnabled);
+
 /**
  * 네이버페이 SDK 설정 정보 조회
  * GET /api/payments/naverpay/sdk-config
