@@ -157,8 +157,8 @@ export interface IStorage {
   // Cart operations (UUID 기반)
   getCartItems(userId: string): Promise<(CartItem & { product: Product })[]>;
   addCartItem(item: InsertCartItem): Promise<CartItem>;
-  updateCartItem(id: string, quantity: number): Promise<CartItem | undefined>;
-  deleteCartItem(id: string): Promise<void>;
+  updateCartItem(id: string, userId: string, quantity: number): Promise<CartItem | undefined>;
+  deleteCartItem(id: string, userId: string): Promise<boolean>;
   clearCart(userId: string): Promise<void>;
 
   // Wishlist operations (UUID 기반)
@@ -1094,20 +1094,26 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
+  // userId 필터 필수 — id만으로 갱신/삭제하면 타인의 장바구니 조작(IDOR) 가능
   async updateCartItem(
     id: string, // UUID
+    userId: string,
     quantity: number
   ): Promise<CartItem | undefined> {
     const [updated] = await db
       .update(cartItems)
       .set({ quantity, updatedAt: sql`NOW()` })
-      .where(eq(cartItems.id, id))
+      .where(and(eq(cartItems.id, id), eq(cartItems.userId, userId)))
       .returning();
     return updated;
   }
 
-  async deleteCartItem(id: string): Promise<void> {
-    await db.delete(cartItems).where(eq(cartItems.id, id));
+  async deleteCartItem(id: string, userId: string): Promise<boolean> {
+    const deleted = await db
+      .delete(cartItems)
+      .where(and(eq(cartItems.id, id), eq(cartItems.userId, userId)))
+      .returning({ id: cartItems.id });
+    return deleted.length > 0;
   }
 
   async clearCart(userId: string): Promise<void> {

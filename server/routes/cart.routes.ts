@@ -37,7 +37,7 @@ router.post("/", isAuthenticated, asyncHandler(async (req, res) => {
   res.json(cartItem);
 }));
 
-// 장바구니 수량 변경 (UUID 기반)
+// 장바구니 수량 변경 (UUID 기반, 본인 소유 아이템만)
 router.patch("/:id", isAuthenticated, asyncHandler(async (req, res) => {
   const { quantity } = req.body;
   if (typeof quantity !== "number" || quantity < 1) {
@@ -45,6 +45,7 @@ router.patch("/:id", isAuthenticated, asyncHandler(async (req, res) => {
   }
   const cartItem = await storage.updateCartItem(
     req.params.id, // UUID 문자열
+    req.session.userId!,
     quantity
   );
   if (!cartItem) {
@@ -53,9 +54,15 @@ router.patch("/:id", isAuthenticated, asyncHandler(async (req, res) => {
   res.json(cartItem);
 }));
 
-// 장바구니 아이템 삭제 (UUID 기반)
+// 장바구니 아이템 삭제 (UUID 기반, 본인 소유 아이템만)
 router.delete("/:id", isAuthenticated, asyncHandler(async (req, res) => {
-  await storage.deleteCartItem(req.params.id); // UUID 문자열
+  const deleted = await storage.deleteCartItem(
+    req.params.id, // UUID 문자열
+    req.session.userId!
+  );
+  if (!deleted) {
+    return res.status(404).json({ message: CART_MESSAGES.ITEM_NOT_FOUND });
+  }
   res.json({ message: CART_MESSAGES.ITEM_DELETED });
 }));
 
