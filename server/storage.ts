@@ -215,7 +215,8 @@ export interface IStorage {
       paymentMethod?: string;
       status: string;
       paidAt?: Date;
-    }
+    },
+    options?: { expectedStatuses?: string[] } // 원자적 상태 가드 (동시 중복 콜백 방지)
   ): Promise<Order | undefined>;
 
   getOrderByExternalOrderId(
@@ -1603,10 +1604,18 @@ export class DatabaseStorage implements IStorage {
       paymentMethod?: string;
       status: string;
       paidAt?: Date;
+    },
+    options?: {
+      // 지정 시 현재 상태가 이 목록에 있을 때만 갱신 (원자적 가드).
+      // 상태 체크와 UPDATE가 분리되면 동시 중복 콜백에서 이중 처리(TOCTOU)되므로
+      // WHERE 절에서 한 번에 검증한다. 불일치 시 undefined 반환 → 호출부가
+      // "이미 처리됨"으로 간주해 부작용(알림·장바구니 비우기)을 스킵할 수 있음
+      expectedStatuses?: string[];
     }
   ): Promise<Order | undefined> {
     // 🔒 트랜잭션으로 주문 및 주문 아이템 상태 동시 업데이트
     const client = await pool.connect();
+    const expectedStatuses = options?.expectedStatuses;
 
     try {
       await client.query("BEGIN");
@@ -1621,7 +1630,7 @@ export class DatabaseStorage implements IStorage {
              status = $5,
              paid_at = COALESCE($6, NOW()),
              updated_at = NOW()
-         WHERE id = $7
+         WHERE id = $7${expectedStatuses ? " AND status = ANY($8)" : ""}
          RETURNING *`,
         [
           paymentData.paymentProvider,
@@ -1631,6 +1640,7 @@ export class DatabaseStorage implements IStorage {
           paymentData.status,
           paymentData.paidAt || null,
           orderId,
+          ...(expectedStatuses ? [expectedStatuses] : []),
         ]
       );
 

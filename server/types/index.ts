@@ -30,6 +30,13 @@ declare module "express-session" {
     admin2faAttemptCount?: number;
     admin2faRecoveryAllowed?: boolean; // Telegram 발송 실패 시 임시 복구 코드 허용
     admin2faVerifiedAt?: string; // ISO datetime
+    // 카카오페이 tid 백업 저장소 (orderId → tid 정보).
+    // 인메모리 tidStore는 서버 재시작/다중 인스턴스에서 유실되므로,
+    // PG 세션 스토어에 백업해 배포 중 결제 진행 사용자를 구제한다
+    kakaopayTids?: Record<
+      string,
+      { tid: string; partnerUserId: string; createdAt: number }
+    >;
   }
 }
 

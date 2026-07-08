@@ -51,6 +51,14 @@ interface TidEntry {
 
 const tidStore = new Map<string, TidEntry>();
 
+// tid 정리: 인메모리 + 세션 백업을 함께 삭제 (승인 성공/취소/실패 공통)
+function clearTidEntry(req: { session?: { kakaopayTids?: Record<string, TidEntry> } }, orderId: string): void {
+  tidStore.delete(orderId);
+  if (req.session?.kakaopayTids?.[orderId]) {
+    delete req.session.kakaopayTids[orderId];
+  }
+}
+
 // TTL 만료된 엔트리 자동 정리
 setInterval(() => {
   const now = Date.now();
@@ -223,11 +231,24 @@ router.post(
       });
 
       // 7. tid 저장 (승인 시 필요)
-      tidStore.set(orderId, {
+      const tidEntry = {
         tid: readyResult.tid,
         partnerUserId,
         createdAt: Date.now(),
-      });
+      };
+      tidStore.set(orderId, tidEntry);
+
+      // 7-1. 세션(PG 스토어)에도 백업 — 인메모리는 서버 재시작/다중 인스턴스에서
+      // 유실되어 배포 순간 결제 진행 사용자가 승인 실패하던 문제를 구제.
+      // 콜백에서 쿠키가 유실되는 환경은 기존 Map 경로가 그대로 커버
+      const sessionTids = req.session.kakaopayTids ?? {};
+      for (const [key, entry] of Object.entries(sessionTids)) {
+        if (Date.now() - entry.createdAt > TID_TTL_MS) {
+          delete sessionTids[key]; // 만료 엔트리 정리 (세션 비대 방지)
+        }
+      }
+      sessionTids[orderId] = tidEntry;
+      req.session.kakaopayTids = sessionTids;
 
       // 8. 주문 상태를 paying으로 업데이트 (orders + order_items 동시)
       const payingClient = await pool.connect();
@@ -318,15 +339,30 @@ router.get(
       return res.redirect(failUrl.toString());
     }
 
-    // tid 조회
-    const tidInfo = tidStore.get(orderId);
+    // tid 조회: 인메모리 우선, 없으면 세션 백업(재시작/다중 인스턴스 구제)
+    let tidInfo = tidStore.get(orderId);
+    let tidSource: "memory" | "session" = "memory";
     if (!tidInfo) {
-      logger.error("tid 정보 없음", { orderId });
+      const sessionEntry = req.session?.kakaopayTids?.[orderId];
+      if (sessionEntry && Date.now() - sessionEntry.createdAt <= TID_TTL_MS) {
+        tidInfo = sessionEntry;
+        tidSource = "session";
+      }
+    }
+    if (!tidInfo) {
+      // both-miss: 세션 백업 도입 후에도 발생하면 쿠키 유실+재시작 중첩 케이스 —
+      // 빈도 관측 후 orders 컬럼 방식(완전 해결) 도입 판단 근거로 사용
+      logger.error("tid 정보 없음 (메모리·세션 모두 miss)", {
+        orderId,
+        hasSession: !!req.session,
+        hasSessionTids: !!req.session?.kakaopayTids,
+      });
       const failUrl = new URL("/checkout/fail", config.frontendUrl);
       failUrl.searchParams.set("orderId", orderId);
       failUrl.searchParams.set("message", "결제 정보가 만료되었습니다");
       return res.redirect(failUrl.toString());
     }
+    logger.info("카카오페이 tid 조회 성공", { orderId, source: tidSource });
 
     // 주문 조회
     const order = await storage.getOrder(orderId);
@@ -391,15 +427,38 @@ router.get(
           orderId: order.id,
         });
 
-        // 선점 패턴 사용: 이미 재고가 차감되어 있으므로 상태만 업데이트
-        await storage.updateOrderPayment(order.id, {
-          paymentProvider: "kakaopay",
-          paymentKey: approveResult.tid,
-          externalOrderId: approveResult.partner_order_id,
-          paymentMethod: approveResult.payment_method_type.toLowerCase(),
-          status: "payment_confirmed",
-          // paidAt 생략 시 storage에서 NOW() 사용 (DB 세션 KST)
-        });
+        // 선점 패턴 사용: 이미 재고가 차감되어 있으므로 상태만 업데이트.
+        // expectedStatuses 가드: 진입부 상태 체크와 이 UPDATE 사이에 다른 콜백이
+        // 먼저 확정하면(동시 중복 콜백) 여기서 0건 갱신 → 이중 부작용 방지
+        const confirmedOrder = await storage.updateOrderPayment(
+          order.id,
+          {
+            paymentProvider: "kakaopay",
+            paymentKey: approveResult.tid,
+            externalOrderId: approveResult.partner_order_id,
+            paymentMethod: approveResult.payment_method_type.toLowerCase(),
+            status: "payment_confirmed",
+            // paidAt 생략 시 storage에서 NOW() 사용 (DB 세션 KST)
+          },
+          { expectedStatuses: payableStatuses }
+        );
+
+        if (!confirmedOrder) {
+          // 다른 요청이 먼저 확정함 — 알림·장바구니 비우기 등 부작용 스킵하고
+          // 기존 "이미 결제된 주문" 처리와 동일하게 success로 안내
+          logger.warn("동시 중복 콜백 감지 - 이미 확정된 주문 (카카오페이)", {
+            orderId: order.id,
+          });
+          clearTidEntry(req, orderId);
+          const alreadyPaidUrl = new URL("/checkout/success", config.frontendUrl);
+          alreadyPaidUrl.searchParams.set("result", "success");
+          alreadyPaidUrl.searchParams.set("orderId", orderId);
+          alreadyPaidUrl.searchParams.set("provider", "kakaopay");
+          alreadyPaidUrl.searchParams.set("externalOrderId", order.externalOrderId || "");
+          alreadyPaidUrl.searchParams.set("amount", order.totalAmount);
+          alreadyPaidUrl.searchParams.set("alreadyPaid", "true");
+          return res.redirect(alreadyPaidUrl.toString());
+        }
 
         // 재고 선점 기록 삭제
         try {
@@ -483,8 +542,8 @@ router.get(
         }
       }
 
-      // tid 저장소에서 제거
-      tidStore.delete(orderId);
+      // tid 저장소에서 제거 (인메모리 + 세션 백업)
+      clearTidEntry(req, orderId);
 
       logger.info("카카오페이 결제 승인 완료", {
         orderId,
@@ -561,6 +620,34 @@ router.get(
         errorCode: (error as any)?.code,
       });
 
+      // 동시 중복 콜백 보완: 다른 요청이 먼저 승인한 경우 카카오 approve가
+      // 에러를 반환하는데, 사용자 결제는 실제로 성공한 상태 — 주문 상태를
+      // 재확인해 이미 확정됐으면 실패가 아닌 success로 안내
+      // (확정 UPDATE가 approve 직후라 잠깐 기다렸다 한 번 더 확인)
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const recheck = await storage.getOrder(orderId);
+        if (recheck?.status === "payment_confirmed") {
+          logger.warn("승인 에러였으나 주문은 이미 확정됨 - 중복 콜백으로 판단", {
+            orderId,
+          });
+          clearTidEntry(req, orderId);
+          const alreadyPaidUrl = new URL("/checkout/success", config.frontendUrl);
+          alreadyPaidUrl.searchParams.set("result", "success");
+          alreadyPaidUrl.searchParams.set("orderId", orderId);
+          alreadyPaidUrl.searchParams.set("provider", "kakaopay");
+          alreadyPaidUrl.searchParams.set("externalOrderId", recheck.externalOrderId || "");
+          alreadyPaidUrl.searchParams.set("amount", recheck.totalAmount);
+          alreadyPaidUrl.searchParams.set("alreadyPaid", "true");
+          return res.redirect(alreadyPaidUrl.toString());
+        }
+      } catch (recheckError) {
+        logger.error("승인 에러 후 주문 상태 재확인 실패", {
+          orderId,
+          error: recheckError instanceof Error ? recheckError.message : String(recheckError),
+        });
+      }
+
       let message = "결제 처리 중 오류가 발생했습니다";
 
       if (error instanceof KakaoPayPaymentError) {
@@ -589,9 +676,9 @@ router.get("/cancel-callback", (req, res) => {
 
   logger.info("카카오페이 결제 취소 콜백", { orderId });
 
-  // tid 저장소에서 제거
+  // tid 저장소에서 제거 (인메모리 + 세션 백업)
   if (orderId) {
-    tidStore.delete(orderId);
+    clearTidEntry(req, orderId);
   }
 
   const failUrl = new URL("/checkout/fail", config.frontendUrl);
@@ -612,9 +699,9 @@ router.get("/fail-callback", (req, res) => {
 
   logger.info("카카오페이 결제 실패 콜백", { orderId });
 
-  // tid 저장소에서 제거
+  // tid 저장소에서 제거 (인메모리 + 세션 백업)
   if (orderId) {
-    tidStore.delete(orderId);
+    clearTidEntry(req, orderId);
   }
 
   const failUrl = new URL("/checkout/fail", config.frontendUrl);
