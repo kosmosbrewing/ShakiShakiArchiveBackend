@@ -225,21 +225,9 @@ export async function closePool(): Promise<void> {
   }
 }
 
-// 프로세스 종료 시그널 핸들러
-async function handleShutdown(signal: string): Promise<void> {
-  if (isShuttingDown) {
-    // 이미 종료 중이면 강제 종료
-    logger.info(`${signal} 재수신 - 강제 종료`);
-    process.exit(1);
-  }
-
-  logger.info(`${signal} 수신 - Graceful shutdown 시작`);
-  await closePool();
-  process.exit(0);
-}
-
-process.on("SIGTERM", () => handleShutdown("SIGTERM"));
-process.on("SIGINT", () => handleShutdown("SIGINT"));
+// 프로세스 종료 시그널 핸들러는 server/index.ts에서 등록 —
+// HTTP 서버 drain(신규 수신 중단 + 진행 중 요청 완료) 후 closePool()이 호출돼야
+// 배포 시 진행 중 요청(결제 콜백 포함)이 유실되지 않음
 
 // Drizzle ORM 인스턴스
 export const db = drizzle({ client: pool, schema });

@@ -20,7 +20,8 @@ import { meilisearchService } from "./services/meilisearch.service";
 import { startReservationCleanup } from "./routes/stock.routes";
 import { startOrderCleanup } from "./utils/orderCleanup";
 import { initializeSchedulers } from "./jobs";
-import { testConnection } from "./db";
+import { testConnection, closePool } from "./db";
+import { notifySystemError } from "./services/telegram.service";
 import { createLogger, getCurrentLogLevel } from "./utils/logger";
 
 const logger = createLogger("Server");
@@ -99,6 +100,68 @@ app.use(errorHandler);
 
 // 서버 시작
 const httpServer = createServer(app);
+
+// ------------------------------------------------------------------
+// Graceful Shutdown + 프로세스 레벨 에러 핸들러
+// ------------------------------------------------------------------
+
+// 종료 순서: HTTP 서버 close(신규 수신 중단 + 진행 중 요청 drain) → DB 풀 종료 → exit.
+// 풀을 먼저 끊으면 배포 시 진행 중 요청(결제 콜백 포함)이 유실됨.
+const SHUTDOWN_TIMEOUT_MS = 10_000;
+let isShuttingDown = false;
+
+async function shutdown(reason: string, exitCode = 0): Promise<void> {
+  if (isShuttingDown) {
+    logger.info(`${reason} 재수신 - 강제 종료`);
+    process.exit(1);
+  }
+  isShuttingDown = true;
+  logger.info(`${reason} - Graceful shutdown 시작`);
+
+  // drain이 keep-alive 커넥션 등으로 끝나지 않을 때의 안전장치
+  const forceTimer = setTimeout(() => {
+    logger.error("Graceful shutdown 타임아웃 - 강제 종료");
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS);
+  forceTimer.unref();
+
+  await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+  logger.info("HTTP 서버 종료 완료 (진행 중 요청 drain 완료)");
+  await closePool();
+  process.exit(exitCode);
+}
+
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));
+
+// Express 전역 에러 핸들러는 라우트 밖(스케줄러, fire-and-forget Promise)의
+// 에러를 잡지 못함 — 프로세스 레벨에서 로깅 + 텔레그램 알림으로 관측 확보
+process.on("unhandledRejection", (reason) => {
+  const error = reason instanceof Error ? reason : new Error(String(reason));
+  logger.error("Unhandled Rejection", {
+    error: error.message,
+    stack: error.stack,
+  });
+  void notifySystemError({
+    errorMessage: `[unhandledRejection] ${error.message}`,
+    errorName: error.name,
+    stack: error.stack,
+  }).catch(() => {});
+});
+
+process.on("uncaughtException", (error) => {
+  logger.error("Uncaught Exception - 안전 종료 시도", {
+    error: error.message,
+    stack: error.stack,
+  });
+  void notifySystemError({
+    errorMessage: `[uncaughtException] ${error.message}`,
+    errorName: error.name,
+    stack: error.stack,
+  }).catch(() => {});
+  // 상태가 오염됐을 수 있으므로 drain 후 종료 → 오케스트레이터(ECS 등)가 재기동
+  void shutdown("uncaughtException", 1);
+});
 
 // Docker/App Runner에서는 0.0.0.0으로 바인딩 필요
 const host = config.isProd ? "0.0.0.0" : "localhost";
