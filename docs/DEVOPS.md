@@ -1,428 +1,348 @@
-# DevOps & Operations
+# DevOps and Operations
 
-> CI/CD, Monitoring, Security, FinOps - 운영 자동화 및 관찰성
+> 코드 기준일: 2026-07-10. 저장소의 Dockerfile, GitHub Actions, application startup/shutdown을 설명합니다. 실제 AWS 설정, 최근 배포 결과, 비용·SLA·성능은 Needs Verification입니다.
 
----
+## 1. Pre-deploy Gate
 
-## 📋 목차
+로컬/PR에서 먼저 실행할 정적 gate:
 
-1. [CI/CD Pipeline](#cicd-pipeline)
-2. [Monitoring & Observability](#monitoring--observability)
-3. [Security & Compliance](#security--compliance)
-4. [FinOps (비용 최적화)](#finops-비용-최적화)
-
----
-
-## CI/CD Pipeline
-
-### GitHub Actions Workflow
-
-**파일 위치**: `.github/workflows/deploy-ecr.yml`
-
-```yaml
-name: Deploy to AWS ECS
-
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
-
-jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
-    steps:
-      # 1. Code Checkout
-      - uses: actions/checkout@v3
-
-      # 2. Node.js Setup & Dependency Cache
-      - uses: actions/setup-node@v3
-        with:
-          node-version: "20"
-          cache: "npm"
-
-      # 3. TypeScript Type Check
-      - run: npm ci
-      - run: npm run check
-
-      # 4. Build Production Bundle
-      - run: npm run build
-
-      # 5. Docker Build & Push to ECR
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ap-northeast-2
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
-
-      - name: Build and push Docker image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: shakishaki-backend
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-
-      # 6. ECS Task Definition Update
-      - name: Deploy to ECS
-        run: |
-          aws ecs update-service \
-            --cluster shakishaki-cluster \
-            --service shakishaki-backend-service \
-            --force-new-deployment
+```bash
+npm ci
+npm run verify
 ```
 
----
+`verify`가 실행하는 항목:
 
-### 배포 전략
+1. 필수 문서, Markdown 상대 링크, 코드 env key와 `.env.example` drift 검사
+2. TypeScript `tsc --noEmit`
+3. esbuild production bundle
 
-**Rolling Update (Zero Downtime)**
+현재 자동 테스트와 source-code lint가 없습니다. `verify` 성공은 인증·주문·결제의 runtime correctness를 보장하지 않습니다.
 
-1. 새 Task 시작 → Health Check 통과 대기
-2. ALB Target Group에 새 Task 추가
-3. 기존 Task Draining (30초)
-4. 기존 Task 종료
+### CI gap
 
-**Health Check 설정**
-```typescript
-// server/routes/health.ts
-router.get("/health", async (req, res) => {
-  try {
-    // DB 연결 확인
-    await db.execute(sql`SELECT 1`);
-    res.json({
-      status: "ok",
-      timestamp: new Date(),
-      uptime: process.uptime(),
-    });
-  } catch (error) {
-    res.status(503).json({
-      status: "error",
-      message: "Database connection failed",
-    });
-  }
-});
+두 GitHub Actions workflow는 Docker build를 실행하지만 별도 `npm run check`, `npm run docs:lint`, test 단계를 실행하지 않습니다. Docker builder의 `npm run build`는 esbuild bundle이며 TypeScript type-check가 아닙니다. workflow 개선 전까지 push 전에 로컬 `npm run verify`가 필수입니다.
+
+## 2. Docker Image
+
+`Dockerfile`은 세 stage입니다.
+
+| Stage | Base | Purpose |
+| --- | --- | --- |
+| `deps` | `node:20-alpine` | `npm ci --only=production` |
+| `builder` | `node:20-alpine` | 전체 의존성 + esbuild bundle |
+| `runner` | `node:20-alpine` | production dependencies + `dist` only |
+
+Runner characteristics:
+
+- UID/GID 1001 non-root user `expressjs`
+- `NODE_ENV=production`, `PORT=8080`
+- `NODE_OPTIONS=--dns-result-order=ipv4first`
+- AWS global RDS CA bundle을 image build 중 다운로드
+- `RDS_CA_BUNDLE=/app/certs/rds-ca-bundle.pem`
+- `/api/health`를 30초 간격으로 검사하는 Docker HEALTHCHECK
+- `node dist/index.js` 실행
+
+### Local build smoke test
+
+```bash
+docker build -t shakishaki-archive-backend:local .
+docker run --rm -p 8080:8080 \
+  -e DATABASE_URL='postgresql://...' \
+  -e SESSION_SECRET='...' \
+  -e CORS_ORIGINS='http://localhost:5173' \
+  -e DB_SSL=false \
+  shakishaki-archive-backend:local
+curl -i http://localhost:8080/api/health
 ```
 
-**Rollback 전략**
-- Health Check 실패 시 자동 롤백
-- 수동 롤백: 이전 Task Definition으로 복원
+실제 비밀값을 shell history, CI log, 문서에 남기지 않습니다. 로컬 shell에서는 별도 env file/secret injection을 권장합니다.
 
----
+### Docker Needs Verification
 
-### SDLC Stages
+- 현재 `server/db.ts`는 CA 경로가 없거나 파일을 찾지 못해도 경고 후 `rejectUnauthorized=false`로 연결을 계속하는 fail-open 동작입니다. 운영 image/task에서 `RDS_CA_BUNDLE` 파일 존재와 검증 연결을 확인하기 전 TLS가 안전하다고 간주하지 않습니다.
+- runner에서 CA 설치 후 `apk del wget` 뒤에도 BusyBox `wget`으로 HEALTHCHECK가 정상 실행되는지
+- image build 중 외부 CA URL 장애/변경에 대한 재현성
+- production DB가 global bundle과 `rejectUnauthorized=true`로 연결되는지
+- image architecture가 runtime과 일치하는지 (`linux/amd64` workflow 고정)
 
-```
-1. Development
-   ├─ Feature Branch 생성
-   ├─ 로컬 개발 (npm run dev)
-   └─ TypeScript 타입 체크 (npm run check)
+## 3. Delivery Workflows
 
-2. Code Review
-   ├─ Pull Request 생성
-   ├─ GitHub Actions CI (타입 체크, 빌드)
-   └─ 코드 리뷰 승인
+### A. OIDC ECR + ECS deploy
 
-3. CI (Continuous Integration)
-   ├─ main 브랜치 병합
-   ├─ TypeScript 컴파일
-   ├─ Docker 이미지 빌드
-   └─ ECR Push
+파일: `.github/workflows/deploy-ecr.yml`
 
-4. Staging (Optional)
-   └─ 스테이징 환경 배포 (수동)
+Triggers:
 
-5. Production
-   ├─ ECS Fargate 배포
-   ├─ Rolling Update
-   └─ Health Check
+- `main` branch push
+- `v*` tag push
+- manual `workflow_dispatch`
 
-6. Monitoring
-   ├─ CloudWatch Logs
-   ├─ CloudWatch Metrics
-   └─ Slack 알림
-```
+Push path ignore:
 
----
+- `*.md`
+- `.gitignore`
+- `.claudeignore`
 
-### 개발 생산성 향상
+`*.md`가 `docs/**` 같은 중첩 Markdown까지 제외하는지는 이 저장소에서 검증되지 않았습니다. tag trigger의 path filter 동작도 branch push와 동일하다고 가정하지 않습니다.
 
-| 항목 | 개선 전 | 개선 후 | 효과 |
-|------|---------|---------|------|
-| 수동 빌드 | 매번 로컬 빌드 | GitHub Actions 자동 | 시간 절약 |
-| 수동 배포 | SSH → Docker 명령어 (20분) | GitHub Push → 자동 배포 (5분) | **75%** |
-| 타입 체크 | 수동 실행 | PR 시 자동 체크 | 버그 조기 발견 |
+Main workflow sequence:
 
----
-
-## Monitoring & Observability
-
-### Logging Architecture
-
-**Winston Logger 구성**
-```typescript
-// server/utils/logger.ts
-import winston from "winston";
-
-const logger = winston.createLogger({
-  level: process.env.NODE_ENV === "production" ? "info" : "debug",
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json() // 구조화된 로그
-  ),
-  transports: [
-    new winston.transports.File({
-      filename: "logs/error.log",
-      level: "error",
-    }),
-    new winston.transports.File({
-      filename: "logs/combined.log",
-    }),
-    new winston.transports.Console({
-      format: winston.format.simple(),
-    }),
-  ],
-});
-
-export default logger;
+```text
+checkout
+-> version tag (manual input / git tag / short SHA)
+-> AWS OIDC role
+-> ECR login
+-> linux/amd64 Docker build + push
+-> current ECS task definition download
+-> container image replacement
+-> new task definition registration / ECS service deploy
+-> wait for service stability
 ```
 
----
+Repository: `backend-shakishaki-archive`, region: `ap-northeast-2`.
 
-### 로그 레벨 전략
+Required GitHub secrets (names only):
 
-| Level | 용도 | 예시 |
-|-------|------|------|
-| **ERROR** | 즉시 대응 필요 | PG사 API 에러, DB 연결 실패 |
-| **WARN** | 모니터링 필요 | Rate Limit 근접, 재고 부족 |
-| **INFO** | 정상 동작 기록 | 주문 생성, 결제 승인 |
-| **DEBUG** | 개발 환경만 | 쿼리 로그, 미들웨어 체인 |
+- `AWS_ROLE_ARN`
+- `ECS_CLUSTER_NAME`
+- `ECS_SERVICE_NAME`
+- `ECS_TASK_DEFINITION_NAME`
+- `ECS_CONTAINER_NAME`
 
-**로그 예시**
-```json
-{
-  "level": "info",
-  "message": "Order created",
-  "timestamp": "2026-01-19T14:30:52.123Z",
-  "userId": "uuid-1234",
-  "orderId": "12345",
-  "amount": 50000
-}
+Workflow는 기존 task definition을 가져와 image만 교체합니다. application env/secrets, CPU/memory, log driver, health grace period는 기존 task definition의 외부 상태에 의존합니다.
+
+### B. Access Key ECR push only
+
+파일: `.github/workflows/deploy-ecr-accesskey.yml`
+
+- manual trigger only
+- Access Key/Secret Key로 인증
+- repository: `shakishaki-backend`
+- image push만 수행하고 ECS/App Runner service update는 하지 않음
+- 입력 `environment`는 현재 workflow logic에서 배포 대상/secret scope를 바꾸지 않음
+
+### C. Ignored local ECR script
+
+로컬에 `.gitignore` 대상 `deploy-ecr.sh`가 존재하며 ECR build/push 뒤 App Runner 수동 설정을 안내합니다. Git 추적 배포 하네스가 아니며 account/repository 설정의 현재 유효성을 보장하지 않습니다. 표준 경로로 사용하기 전에 별도 감사가 필요합니다.
+
+### Delivery ambiguity
+
+OIDC workflow와 Access Key workflow의 ECR repository 이름이 다르고, local script는 App Runner를 언급합니다. 최근 Actions 실행과 AWS 리소스를 확인하기 전 어느 경로가 production인지 확정하지 않습니다.
+
+## 4. Push Safety Boundary
+
+`main` push는 잠재적 production ECS 배포입니다. 이번 문서/하네스 갱신처럼 `.env.example`, `package.json`, scripts가 포함된 commit은 Markdown path ignore 여부와 무관하게 workflow를 촉발할 수 있습니다.
+
+Push 전 확인:
+
+1. `git diff --check`와 `npm run verify`
+2. 변경 파일에 실제 secret/개인정보가 없는지
+3. main workflow가 가리키는 cluster/service/task definition
+4. OIDC role과 GitHub secret 설정
+5. 진행 중 결제 callback과 10초 shutdown/drain 영향
+6. DB schema가 새 image가 기대하는 schema와 일치하는지
+7. 롤백할 이전 task definition revision/image digest
+
+이 저장소 작업 자체는 push나 workflow dispatch 권한을 의미하지 않습니다.
+
+## 5. Database Change Delivery
+
+Workflow에는 DB migration 단계가 없습니다. application image 배포와 schema 적용 순서를 운영자가 별도로 관리해야 합니다.
+
+안전 순서:
+
+```text
+schema change
+-> npm run db:generate
+-> generated SQL review
+-> backup/snapshot
+-> staging apply and app verification
+-> production expand migration
+-> compatible app deploy
+-> data backfill/contract migration if needed
+-> SQL verification
 ```
 
----
+현재 `migrations/`가 `.gitignore` 대상이므로 fresh checkout이 migration history를 재현하지 못할 수 있습니다. 이 문제를 해결하기 전 자동 production migration을 추가하면 안 됩니다.
 
-### CloudWatch Metrics
+`npm run db:push`는 production에서 금지합니다. 세부 절차는 [Schema Migration Guide](../SCHEMA_MIGRATION_GUIDE.md)를 따릅니다.
 
-**핵심 지표**
+## 6. Runtime Configuration
 
-#### 1. Application Metrics
-- API Response Time (p50, p95, p99)
-- Error Rate (4xx, 5xx)
-- Request Count (per endpoint)
+Source of truth:
 
-#### 2. Infrastructure Metrics
-- ECS CPU/Memory Utilization
-- RDS CPU/Memory Utilization
-- RDS Connection Count
+- key catalog: `.env.example`
+- validation/defaults: `server/config/index.ts`, `server/db.ts`, `server/utils/logger.ts`
+- secret values: external runtime secret injection; 저장소에 없음
 
-#### 3. Business Metrics
-- 주문 생성률 (시간당)
-- 결제 성공률
-- 재고 부족 발생 빈도
+Startup hard failures:
 
----
+- `DATABASE_URL` 누락
+- `SESSION_SECRET` 누락
+- production에서 `CORS_ORIGINS` 누락/빈 값/`*`
 
-### 알람 설정
+Startup soft failures:
 
-```yaml
-Alarms:
-  # 높은 에러율
-  - MetricName: 5xxError
-    Threshold: 10 (per 5min)
-    Action: SNS → Slack
+- DB test failure: error log 후 process 지속
+- Meilisearch init failure: error log 후 process 지속
+- optional integration keys 없음: 기능별 503/no-op/error
 
-  # DB 연결 고갈
-  - MetricName: RDS_DatabaseConnections
-    Threshold: 18 (out of 20)
-    Action: Auto-scaling trigger
+운영에서는 `ADMIN_2FA_RECOVERY_CODE`도 필수 보안 설정으로 취급합니다. 코드 fallback이 있으므로 단순 startup 성공만으로 안전한 구성이 아닙니다.
 
-  # 높은 CPU 사용률
-  - MetricName: ECS_CPUUtilization
-    Threshold: 80%
-    Action: Auto-scaling trigger
+## 7. Health, Readiness and Shutdown
+
+### Liveness
+
+```http
+GET /api/health
 ```
 
----
+항상 process timestamp와 `status=ok`를 반환하는 liveness입니다. DB, session table, PG, email, search를 확인하지 않습니다.
 
-### 장애 대응 프로세스
+### Readiness gap
 
-**On-Call 대응**
-1. **Slack 알림 수신** (CloudWatch → SNS → Slack)
-2. **CloudWatch Logs 확인** (에러 로그, 쿼리 로그)
-3. **RDS Metrics 확인** (CPU, Connection, Slow Query)
-4. **ECS Task 로그 확인** (컨테이너별 로그)
-5. **원인 파악 및 조치**
-   - 코드 버그 → 핫픽스 배포
-   - 인프라 문제 → Auto-scaling 조정
-   - 외부 서비스 장애 → Circuit Breaker 적용
+별도 readiness endpoint가 없습니다. 배포 안정성 판단에 DB가 필요하면 다음 probe를 분리 설계해야 합니다.
 
-**사전 장애 방지**
-- ✅ Rate Limiting: API 남용 방지
-- ✅ Connection Pool: DB 연결 고갈 방지
-- ✅ Health Check: 비정상 Task 자동 교체
-- ✅ Auto-scaling: 트래픽 급증 대응
+- PostgreSQL `SELECT 1`
+- `sessions` table/index
+- optional provider는 readiness hard dependency로 둘지 결정
 
----
+### Shutdown
 
-### 실제 장애 대응 사례
+- first SIGTERM/SIGINT: HTTP server close/drain → DB pool close → exit
+- timeout: 10 seconds
+- second signal 또는 timeout: forced exit
+- uncaught exception: log/Telegram alert 후 같은 shutdown 경로
+- unhandled rejection: log/alert하되 process는 유지
 
-**사례**: DB Connection 고갈 (20/20)
+ECS stop timeout/load balancer deregistration delay가 application의 10초와 정렬되어 있는지는 Needs Verification입니다.
 
-**원인**
-- N+1 쿼리로 인한 Connection 점유 시간 증가
-- 주문 목록 API: 10건 조회 시 21번 쿼리 → 300ms
+## 8. Logging and Observability
 
-**조치**
-1. CloudWatch RDS Metrics 확인: `DatabaseConnections = 20`
-2. Slow Query Log 분석: N+1 쿼리 발견
-3. JOIN으로 쿼리 최적화: 21회 → 1회
-4. 배포 후 Connection 사용 시간 70% 감소
+### Application logger
 
-**예방**
-- CloudWatch 알람 설정: 18/20 연결 시 알림
-- Connection Pool 증설: 20 → 30
+외부 logging library가 아닌 `server/utils/logger.ts`의 console logger를 사용합니다.
 
----
+- production default: JSON, color/pretty off, WARN 이상
+- development default: pretty/color, INFO 이상
+- override: `LOG_LEVEL`, `LOG_COLOR`, `LOG_PRETTY`
+- errors: stderr, others: stdout
+- request middleware: requestId, method/URL, status, duration, request/response summary
 
-## Security & Compliance
+CloudWatch SDK/transport는 코드에 없습니다. ECS log driver나 runtime stdout 수집 설정이 있어야 중앙 로그에 들어갑니다.
 
-### Zero Trust Architecture
+### Sensitive data boundary
 
-**현재 구현**
+키워드 기반 masker는 객체형 request body와 외부 request header/body 일부에만 적용됩니다. HTTP full URL/query/userEmail/response summary, 외부 문자열/XML request와 provider response는 raw 또는 단순 길이 제한 상태로 남을 수 있습니다. non-2xx 외부 response는 `WARN`이라 production 기본 레벨에도 기록됩니다. auth debug 로그의 cookie/session preview도 별도 Known Issue입니다.
 
-#### 1. Network Level
-- **Security Group**: ALB → ECS (8080만 허용)
-- **Private Subnet**: RDS는 외부 접근 차단
+운영 지침:
 
-#### 2. Application Level
-- **Session Validation**: 모든 요청 검증
-- **Rate Limiting**: IP/userId 기반 제한
-- **Input Validation**: Zod 스키마 검증
+- 해당 코드 제거 전 `LOG_LEVEL=debug` 금지
+- URL/query/response/string payload를 구조화·allowlist 방식으로 sanitize하고 회귀 테스트 추가
+- PG 원문 response와 OAuth token을 alert/chat에 복사하지 않음
+- requestId로 최소 로그만 상관 분석
 
-#### 3. Data Level
-- **bcrypt**: 비밀번호 해싱 (saltRounds: 10)
-- **Secure Cookie**: httpOnly, secure (HTTPS)
+### Alerts
 
----
+Telegram 설정이 있으면 HTTP 5xx, process errors, 일부 business event가 알림을 보낼 수 있습니다. Telegram 실패는 대부분 서비스 요청을 막지 않습니다. CloudWatch alarms, SNS/Slack, Sentry는 이 저장소에서 확인되지 않습니다.
 
-### OWASP Top 10 대응
+## 9. Operational Runbooks
 
-| OWASP | 위협 | 대응 |
-|-------|------|------|
-| A01 | Broken Access Control | isAuthenticated, isAdmin |
-| A02 | Cryptographic Failures | bcrypt, HTTPS |
-| A03 | Injection | Drizzle Parameterized Query, Zod |
-| A04 | Insecure Design | Session-based Auth |
-| A05 | Security Misconfiguration | Helmet, CORS |
-| A06 | Vulnerable Components | Dependabot |
-| A07 | Authentication Failures | bcrypt, Rate Limiting |
-| A08 | Data Integrity Failures | PostgreSQL ACID |
-| A09 | Security Logging | Winston → CloudWatch |
-| A10 | SSRF | HTTP Client Validation |
+### Deployment failed before ECS update
 
----
+1. GitHub Actions에서 실패 step 확인
+2. OIDC role/ECR login/build 실패 구분
+3. source commit에서 `npm run verify` 재현
+4. 실패 image/tag를 production으로 수동 promote하지 않음
 
-### PCI-DSS 관련
+### ECS service did not stabilize
 
-- ✅ **카드 정보 미저장**: PG사에 위임
-- ✅ **HTTPS 통신**: CloudFront SSL
-- ✅ **접근 로그**: CloudWatch Logs
-- ✅ **암호화**: bcrypt 비밀번호 해싱
+1. 새 task stopped reason와 container stdout/stderr 확인
+2. 필수 env와 production CORS 확인(값은 출력 금지)
+3. port 8080/listen address와 health check path 확인
+4. DB TLS/CA와 `sessions` table 확인
+5. 이전 task definition revision으로 되돌릴 준비
+6. migration이 이미 적용됐다면 schema backward compatibility 확인 후 rollback
 
----
+Workflow는 `wait-for-service-stability`를 사용하지만 실패 시 자동으로 이전 revision을 재배포하는 명시 step은 없습니다. ECS deployment circuit breaker 설정도 저장소 밖이라 확인이 필요합니다.
 
-### 향후 개선 계획
+### Health 200, API 5xx
 
-- [ ] **mTLS**: 서비스 간 인증서 기반 통신
-- [ ] **AWS WAF**: SQL Injection, XSS 탐지
-- [ ] **Secrets Manager**: 환경 변수 암호화
-- [ ] **Sentry**: 에러 추적 및 알림
+1. requestId로 error log 검색
+2. startup DB test 결과 확인
+3. DB pool saturation/timeout 확인
+4. session table와 CORS/cookie 확인
+5. optional provider enable state 및 timeout 확인
 
----
+### Session/login failure after deployment
 
-## FinOps (비용 최적화)
+1. frontend origin과 `CORS_ORIGINS` 정확히 일치
+2. credentialed request 확인
+3. HTTPS + secure cookie + SameSite=None
+4. proxy의 `X-Forwarded-Proto` 또는 `X-Original-Proto`
+5. PostgreSQL session row 생성/만료 index
 
-### 비용 구조 분석 (월 기준)
+### Payment incident
 
-**현재 비용**
+1. 신규 배포/수동 PG 재시도를 멈추고 order/provider/payment key를 안전하게 식별
+2. PG dashboard/API 상태와 DB order 상태를 별도로 확인
+3. 중복 callback인지 conditional update 결과 확인
+4. PG 성공/DB 실패이면 고객에게 재결제를 유도하지 않고 수동 reconciliation
+5. requestId/orderId 기반 로그와 Telegram alert 보존
+6. 환불/취소 재실행은 provider idempotency와 refundable ceiling 확인 후 승인
 
-```
-AWS 서비스:
-├─ ECS Fargate: $50 (평균 2 Tasks)
-├─ RDS db.t3.medium: $60 (Multi-AZ)
-├─ ALB: $20
-├─ CloudWatch Logs: $10
-└─ ECR: $5
-───────────────────────
-총: $145/월
+### Scheduler anomaly
 
-External Services:
-├─ Cloudinary: $0 (무료 플랜)
-├─ Resend: $0 (무료 플랜)
-└─ Neon PostgreSQL: $0 (개발 환경)
-```
+1. 실제 running task 수 확인
+2. auto-confirm은 DB lock/skip locked 결과 확인
+3. ghost order/stock cleanup의 중복 재고 복구 여부 확인
+4. KST timezone과 container clock 확인
 
----
+## 10. Security Checklist
 
-### 비용 최적화 전략
+- production CORS allowlist에 정확한 origin만 존재
+- secure cookie를 임의 비활성화하지 않음
+- `ADMIN_2FA_RECOVERY_CODE` 별도 secret 주입
+- auth debug cookie/session logging 제거 전 debug 금지
+- DB SSL CA 검증 활성
+- GitHub OIDC 최소 권한; Access Key workflow 필요성 재평가
+- ECR image scan/retention 설정 확인
+- secrets가 task definition plaintext/output에 노출되지 않는지 확인
+- provider callback URL과 authenticity/idempotency 확인
+- migration backup/rollback 확인
 
-#### 1. RDS Instance 최적화
-- **현재**: db.t3.medium (2 vCPU, 4GB RAM)
-- **개선**: Reserved Instance (1년 예약) → 40% 할인
-- **절감**: $60 → $36/월 (**$24 절감**)
+PCI-DSS, OWASP 완전 준수, Zero Trust를 구현 완료라고 주장하지 않습니다. 카드 정보는 PG에 위임하는 설계지만 실제 규정 범위는 별도 평가가 필요합니다.
 
-#### 2. ECS Auto-scaling 조정
-- **현재**: Min 1, Max 10
-- **개선**: 트래픽 패턴 분석 후 조정
-  - 야간 (00:00-06:00): Min 1
-  - 주간 (06:00-24:00): Min 2
-- **절감**: 평균 Task 수 2.5 → 1.8 (**$10 절감**)
+## 11. Metrics to Establish
 
-#### 3. CloudWatch Logs Retention
-- **현재**: 무제한 보관
-- **개선**: 30일 보관 후 S3로 이동
-- **절감**: $10 → $5/월 (**$5 절감**)
+현재 저장소에는 검증된 수치가 없습니다. 운영 baseline을 만들 때 최소 다음을 수집합니다.
 
-**총 절감 예상**: **$39/월 (27% 절감)**
+- request count/error rate/latency p50·p95·p99 by route
+- payment ready/approve/cancel success and reconciliation count
+- DB pool utilization, connection timeout, slow queries
+- scheduler processed/error/skipped counts
+- ECS desired/running task, deployment rollback count
+- health/readiness failure and uptime
+- log volume/retention and cost
 
----
+측정 전 목표나 현재값을 문서에 사실로 쓰지 않습니다.
 
-### 비용 모니터링
+## 12. Needs Verification
 
-**AWS Cost Explorer**
-- 일별/월별 비용 추이
-- 서비스별 비용 분석
-- 예산 알림 설정 ($200/월)
-
-**Tagging 전략**
-```yaml
-Tags:
-  Environment: production
-  Service: backend
-  CostCenter: engineering
-  Owner: devops-team
-```
-
----
+- production이 실제 사용하는 workflow/ECR repository/compute service
+- OIDC role, ECS cluster/service/task/container secret 이름 연결
+- nested Markdown path-ignore behavior and tag trigger behavior
+- task definition env/secrets/log driver/health grace/stop timeout
+- ECS circuit breaker/rollback policy and autoscaling
+- RDS topology, backup/restore test, schema migration version
+- centralized logs, alerts, retention, on-call ownership
+- built image HEALTHCHECK command
 
 ## Related Documents
 
-- [Architecture](./ARCHITECTURE.md) - 시스템 아키텍처
-- [Technical Challenges](./TECHNICAL-CHALLENGES.md) - 문제 해결 사례
-- [Main README](../README.md) - 프로젝트 개요
+- [README](../README.md)
+- [Architecture](./ARCHITECTURE.md)
+- [Backend Guide](../BACKEND_GUIDE.md)
+- [Schema Migration Guide](../SCHEMA_MIGRATION_GUIDE.md)
+- [MEMORY](../MEMORY.md)

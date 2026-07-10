@@ -1,423 +1,229 @@
-# ShakiShaki Archive Backend 2026-03
+# ShakiShaki Archive Backend
 
-> 빈티지 의류 커머스의 복잡한 재고 관리와 멀티 PG 결제를 안전하게 처리하는 고가용성 API 서버
+ShakiShaki Archive 커머스의 상품, 재고, 주문, 반품, 회원, 관리자, 선택형 결제·외부 연동을 제공하는 Express API 서버입니다.
 
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue.svg)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-20-green.svg)](https://nodejs.org/)
-[![Express.js](https://img.shields.io/badge/Express-4.18-lightgrey.svg)](https://expressjs.com/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue.svg)](https://www.postgresql.org/)
-[![AWS ECS](https://img.shields.io/badge/AWS-ECS-orange.svg)](https://aws.amazon.com/ecs/)
+이 문서는 2026-07-10 현재 `server/`, `shared/`, `package.json`, `Dockerfile`, `.github/workflows/`를 기준으로 작성되었습니다. 실제 운영 인프라와 활성화된 외부 서비스는 저장소만으로 확정하지 않습니다.
 
----
+## Current Stack
 
-## 📌 Key Highlights
+- Node.js 20, TypeScript 5.6, ESM
+- Express 4, Zod/Drizzle Zod
+- PostgreSQL, `pg` connection pool, Drizzle ORM
+- PostgreSQL-backed `express-session`
+- esbuild production bundle, multi-stage Docker image
+- Optional: Naver/Kakao OAuth, Kakao 주소 검색, Toss/KakaoPay/NaverPay, Resend, Telegram, Cloudinary, Meilisearch, GA4
 
-✅ **99.9% Uptime** - AWS ECS Fargate Auto-scaling + Rolling Update
-✅ **Zero Downtime Deployment** - Health Check 기반 무중단 배포
-✅ **70% API 성능 개선** - N+1 쿼리 해결 (300ms → 90ms)
-✅ **100% 주문번호 고유성** - 시분초 + 난수 방식으로 충돌 제거
-✅ **멀티 PG 결제** - 토스페이먼츠, 네이버페이 통합
-✅ **OWASP Top 10 준수** - SQL Injection, XSS, CSRF 방지
-✅ **Production-Ready** - TypeScript 100% 타입 안정성
+## Quick Start
 
----
-
-## 🎯 프로젝트 소개
-
-ShakiShaki Archive Backend는 **빈티지 의류 전문 커머스**를 위한 고가용성 API 서버입니다.
-
-### 비즈니스 과제
-
-- **단일 재고 관리**: 빈티지 의류 특성상 1개 재고 → 동시 주문 시 경합 조건 발생
-- **멀티 PG 결제**: 토스페이먼츠, 네이버페이 통합 → PG사별 API 스펙 차이 처리
-- **재고 선점 복잡도**: 사용자가 "주문 → 결제 중단 → 재주문" 시 Self-Lock 문제
-- **데이터 정합성**: 결제/주문 시스템 특성상 ACID 트랜잭션 보장 필수
-
-### 핵심 가치
-
-- ✅ **Transaction Safety**: PostgreSQL ACID 속성 활용, Rollback 전략
-- ✅ **Self-Lock Bypass**: 사용자가 본인 예약 재고에 막히지 않는 UX
-- ✅ **Security First**: OWASP Top 10 대응, Zod 검증, bcrypt 해싱
-- ✅ **Auto-scaling**: CPU/Memory 기반 자동 확장 (Min 1, Max 10)
-
----
-
-## 🚀 Quick Start
-
-### 1. 패키지 설치
+요구 사항은 Node.js 20, npm, PostgreSQL입니다.
 
 ```bash
-npm install
+npm ci
+cp .env.example .env
 ```
 
-### 2. 환경 변수 설정
+`.env`에서 최소 `DATABASE_URL`, 임의 생성한 `SESSION_SECRET`, 로컬 프론트엔드 origin을 확인합니다. 예시는 로컬 개발값이며 실제 비밀값을 커밋하면 안 됩니다.
 
-`.env` 파일을 생성합니다:
-
-```env
-# 필수
-DATABASE_URL=postgresql://user:password@host:5432/database
-SESSION_SECRET=your-long-random-secret-key
-
-# 서버
-NODE_ENV=development
-PORT=8080
-CORS_ORIGINS=http://localhost:3000,http://localhost:5173
-FRONTEND_URL=http://localhost:3000
-
-# 토스페이먼츠 (선택)
-TOSS_CLIENT_KEY=test_ck_...
-TOSS_SECRET_KEY=test_sk_...
-
-# 네이버 OAuth (선택)
-NAVER_CLIENT_ID=...
-NAVER_CLIENT_SECRET=...
-
-# 카카오 OAuth (선택)
-KAKAO_CLIENT_ID=...
-KAKAO_CLIENT_SECRET=...
-
-# 네이버페이 (선택)
-NAVERPAY_CLIENT_ID=...
-NAVERPAY_CLIENT_SECRET=...
-
-# Cloudinary (선택)
-CLOUDINARY_CLOUD_NAME=...
-CLOUDINARY_API_KEY=...
-CLOUDINARY_API_SECRET=...
-
-# Resend 이메일 (선택)
-RESEND_API_KEY=re_...
-```
-
-### 3. 데이터베이스 마이그레이션
+신규 로컬 DB만 빠르게 맞출 때:
 
 ```bash
-# UNIQUE 제약조건 추가
-psql $DATABASE_URL -f migrations/add-unique-external-order-id.sql
+export DATABASE_URL='postgresql://postgres:postgres@localhost:5432/shakishaki_dev'
+export DB_SSL=false
+npm run db:push
 ```
 
-### 4. 관리자 계정 생성
+`db:push`는 로컬 프로토타이핑 전용입니다. 운영에서는 사용하지 말고 [안전한 스키마 변경 가이드](./SCHEMA_MIGRATION_GUIDE.md)를 따르세요. 현재 `migrations/`가 Git ignore 대상이므로, fresh clone/운영 적용 전에 마이그레이션 추적 정책과 DB drift를 먼저 확인해야 합니다.
+
+`.env`를 자동 로드해 시작하려면:
 
 ```bash
-# 대화형 입력 방식 (권장)
-npm run admin:create
+./startShaki.sh
 ```
 
-### 5. 개발 서버 실행
+종료는 같은 터미널에서 `Ctrl-C`를 누르거나 다른 터미널에서 다음을 실행합니다.
 
 ```bash
-npm run dev
+./stopShaki.sh
 ```
 
-서버가 `http://localhost:8080`에서 실행됩니다.
-
----
-
-### 프로덕션 빌드 & 실행
+PID 파일 위치를 바꿀 때는 `.env`가 아니라 두 shell 명령에 같은 값을 직접 주입합니다.
 
 ```bash
-npm run build
-npm start
+SHAKISHAKI_PID_FILE=/tmp/shakishaki-backend.pid ./startShaki.sh
+SHAKISHAKI_PID_FILE=/tmp/shakishaki-backend.pid ./stopShaki.sh
 ```
 
-### Docker 실행
+두 스크립트는 같은 operation lock과 PID 시작 시각을 검증합니다. 시작/종료가 동시에 진행 중이거나 PID identity가 일치하지 않으면 다른 프로세스를 건드리지 않고 실패합니다.
+
+`npm run dev`와 DB/admin package scripts는 `.env`를 자동 로드한다고 가정하지 않습니다. 이미 환경 변수를 셸/IDE에서 주입한 경우에만 직접 사용하세요.
 
 ```bash
-docker build -t shakishaki-backend .
-docker run -p 8080:8080 --env-file .env shakishaki-backend
+curl -i http://localhost:8080/api/health
 ```
 
----
+정상 응답은 `200`과 `{"status":"ok", ...}`입니다. 이 endpoint는 프로세스 liveness만 확인하며 DB readiness는 검사하지 않습니다.
 
-## 🛍️ 주요 기능
+## Validation
 
-### 상품 관리
-
-- 상품 CRUD (카테고리, 옵션/variants 포함)
-- 이미지 업로드 (Cloudinary CDN)
-- 재고 관리 및 실시간 선점 시스템 (Self-Lock Bypass)
-- 상품 검색 및 필터링
-
-### 결제 시스템
-
-- **토스페이먼츠**: 카드, 가상계좌, 계좌이체
-- **네이버페이**: 결제형 API 연동
-- PG사별 결제 승인/취소/부분취소 분기 처리
-- 주문번호 고유성 보장 (시분초 + 4자리 난수)
-
-### 회원 관리
-
-- 이메일/비밀번호 로그인 (bcrypt 해싱)
-- 소셜 로그인 (네이버, 카카오 OAuth)
-- 배송지 관리, 위시리스트
-- 비밀번호 확인 API (재인증)
-
-### 주문 관리
-
-- 장바구니, 주문 생성/조회/취소
-- 주문 상태 관리 (pending → paid → preparing → shipped → delivered)
-- 택배사 정보 및 운송장 번호 관리
-- 재고 복구 (주문 취소 시)
-
-### 관리자 기능
-
-- 상품/카테고리 관리
-- 주문/결제 관리
-- 사이트 이미지 관리 (Hero, Marquee)
-- 관리자 전용 Rate Limiting (5분/300 요청)
-
-### 보안
-
-- Helmet (보안 헤더)
-- Rate Limiting (전역: 15분/100 요청, 관리자: 5분/300 요청)
-- CORS (허용된 Origin만 접근)
-- bcrypt 비밀번호 해싱
-- 세션 기반 인증 (secure cookie, httpOnly)
-
----
-
-## 🧰 Tech Stack
-
-| 구분          | 기술                         | 선택 이유                       |
-| ------------- | ---------------------------- | ------------------------------- |
-| Runtime       | Node.js 20                   | LTS 안정성                      |
-| Framework     | Express.js                   | 빠른 MVP 출시, 방대한 생태계    |
-| Language      | TypeScript                   | 100% 타입 안정성                |
-| Database      | PostgreSQL                   | ACID 보장, 복잡한 쿼리 지원     |
-| ORM           | Drizzle ORM                  | Type-safe, 가벼운 런타임        |
-| Validation    | Zod                          | 입력 검증 및 타입 추론          |
-| Image Storage | Cloudinary                   | CDN 자동 최적화                 |
-| Email         | Resend                       | Transactional Email             |
-| Auth          | Passport.js, express-session | 서버 제어 가능, CSRF 방지       |
-| Payment       | 토스페이먼츠, 네이버페이     | 수수료 최저, 간편결제 선호도    |
-| Deploy        | AWS ECR + ECS Fargate        | 서버리스 컨테이너, Auto-scaling |
-| Logging       | Winston                      | 구조화된 로그, CloudWatch 연동  |
-
----
-
-## 📚 상세 문서
-
-프로젝트의 상세 기술 문서는 다음과 같이 분리되어 있습니다:
-
-### [📖 Architecture](./docs/ARCHITECTURE.md)
-
-- Infrastructure Overview (CloudFront → ALB → ECS → RDS)
-- Request Flow 상세 설명
-- Tech Stack 선택 근거 (비교 테이블)
-- Performance Metrics (p95, Auto-scaling, RDS Metrics)
-
-### [🔧 Technical Challenges](./docs/TECHNICAL-CHALLENGES.md)
-
-실제 문제 해결 사례 5개:
-
-1. **주문번호 중복 방지** (2026-01-19) - 충돌 100% → 0%
-2. **PG사별 결제 취소** (2026-01-18) - 네이버페이 취소 성공률 0% → 100%
-3. **N+1 쿼리 최적화** (2026-01-17) - API 응답 시간 70% 개선
-4. **Self-Lock Bypass** (2024-12) - 재주문 성공률 43% 향상
-5. **관리자 Rate Limiting** (2026-01-17) - 업무 효율 300% 향상
-
-### [🚀 DevOps](./docs/DEVOPS.md)
-
-- CI/CD Pipeline (GitHub Actions)
-- Monitoring & Observability (Winston, CloudWatch)
-- Security & Compliance (OWASP Top 10, PCI-DSS)
-- FinOps (비용 최적화, $145/월 → $106/월)
-
----
-
-## 📚 API Reference
-
-### 공개 API
-
-| Method | Endpoint              | 설명                    |
-| ------ | --------------------- | ----------------------- |
-| GET    | `/api/health`         | 헬스체크                |
-| POST   | `/api/auth/signup`    | 회원가입                |
-| POST   | `/api/auth/login`     | 로그인                  |
-| POST   | `/api/auth/logout`    | 로그아웃                |
-| GET    | `/api/products`       | 상품 목록 (필터링 지원) |
-| GET    | `/api/products/:slug` | 상품 상세               |
-| GET    | `/api/categories`     | 카테고리 목록           |
-
-### 인증 필요 API
-
-| Method | Endpoint                    | 설명                   |
-| ------ | --------------------------- | ---------------------- |
-| GET    | `/api/auth/user`            | 현재 사용자 정보       |
-| POST   | `/api/auth/verify-password` | 비밀번호 확인 (재인증) |
-| GET    | `/api/cart`                 | 장바구니 조회          |
-| POST   | `/api/cart`                 | 장바구니 추가          |
-| DELETE | `/api/cart/:id`             | 장바구니 삭제          |
-| POST   | `/api/orders`               | 주문 생성              |
-| GET    | `/api/orders`               | 주문 내역              |
-| GET    | `/api/orders/:id`           | 주문 상세              |
-| POST   | `/api/orders/:id/cancel`    | 주문 취소              |
-| POST   | `/api/payments/confirm`     | 토스페이먼츠 결제 승인 |
-| GET    | `/api/wishlist`             | 위시리스트             |
-
-### 관리자 API
-
-**인증**: `isAuthenticated` + `isAdmin` 미들웨어
-
-| 카테고리          | API                                           |
-| ----------------- | --------------------------------------------- |
-| **상품 관리**     | 상품 CRUD, 옵션/variants, 이미지 업로드       |
-| **주문 관리**     | 전체 주문 조회, 상태 변경, 택배사/운송장 정보 |
-| **카테고리 관리** | 카테고리 CRUD                                 |
-| **사이트 관리**   | Hero/Marquee 이미지                           |
-
-자세한 API 스펙은 프로젝트 루트의 `CLAUDE.md` 파일을 참고하세요.
-
----
-
-## 📖 Scripts
-
-| 명령어                 | 설명                       |
-| ---------------------- | -------------------------- |
-| `npm run dev`          | 개발 서버 실행 (tsx watch) |
-| `npm run build`        | 프로덕션 빌드 (esbuild)    |
-| `npm start`            | 프로덕션 실행              |
-| `npm run check`        | TypeScript 타입 체크       |
-| `npm run admin:create` | 관리자 계정 생성 (대화형)  |
-
----
-
-## 📂 Project Structure
-
-```
-ShakiShakiArchiveBackend/
-├── server/
-│   ├── index.ts              # Express 앱 진입점
-│   ├── db.ts                 # 데이터베이스 연결
-│   ├── storage.ts            # 데이터 액세스 레이어
-│   ├── config/               # 설정 (CORS, Session, Security)
-│   ├── middleware/           # 미들웨어 (Auth, Error, Logger)
-│   ├── routes/               # API 라우트
-│   │   ├── auth.routes.ts
-│   │   ├── product.routes.ts
-│   │   ├── order.routes.ts
-│   │   ├── payment.routes.ts
-│   │   └── admin/            # 관리자 API
-│   ├── services/             # 외부 서비스 연동
-│   │   ├── toss.service.ts
-│   │   ├── naverpay.service.ts
-│   │   └── email.service.ts
-│   ├── utils/                # 유틸리티
-│   └── scripts/              # 운영 스크립트
-├── shared/
-│   ├── schema.ts             # Drizzle 스키마 + Zod
-│   └── constants/            # 공유 상수
-├── docs/                     # 기술 문서
-│   ├── ARCHITECTURE.md
-│   ├── TECHNICAL-CHALLENGES.md
-│   └── DEVOPS.md
-├── migrations/               # DB 마이그레이션
-├── .github/workflows/        # CI/CD
-└── Dockerfile                # 멀티스테이지 빌드
+```bash
+npm run docs:lint  # 추적 문서/링크, server·shared env catalog, package 실행 대상
+npm run check      # TypeScript noEmit
+npm run build      # dist/index.js esbuild bundle
+npm run verify     # 위 세 검증을 순서대로 실행
 ```
 
----
+현재 자동 테스트와 source-code lint 스크립트는 없습니다. 인증·결제·주문 변경은 정적 검증만으로 완료로 간주하면 안 됩니다.
 
-## 📝 에러 메시지 중앙 관리
+## Runtime Model
 
-모든 API 응답 메시지는 `shared/constants/messages.ts`에서 중앙 관리됩니다.
+요청 처리 순서는 대략 다음과 같습니다.
 
-### 파일 구조
-
+```text
+Helmet → global rate limit → proxy header normalization
+→ JSON/urlencoded parser (1 MiB) → CORS → PostgreSQL session
+→ user population → compression → request logger
+→ /api routes → central error handler
 ```
-shared/constants/
-├── messages.ts      # 메시지 상수 정의
-├── index.ts         # export 관리
+
+- 운영 `CORS_ORIGINS`는 필수이고 `*`는 거부됩니다.
+- 운영 cross-origin cookie는 `secure=true`, `sameSite=none`; 로컬은 `secure=false`, `sameSite=lax`입니다.
+- 관리자 API는 일반 세션 인증, DB의 `isAdmin`, 관리자 2차 인증 완료 상태를 모두 요구합니다.
+- 운영 로그는 자체 콘솔 JSON 로거를 사용하며 기본 레벨은 `WARN`입니다. Winston/File transport는 사용하지 않습니다.
+- SIGTERM/SIGINT 시 HTTP drain 후 DB pool을 닫고, 10초 제한을 둡니다.
+
+상세 구조는 [Architecture](./docs/ARCHITECTURE.md), 운영 동작은 [DevOps](./docs/DEVOPS.md)를 참고하세요.
+
+## API Surface
+
+모든 경로는 `/api` 아래에 있습니다.
+
+| 영역 | Prefix | 기본 접근 |
+| --- | --- | --- |
+| 상태 | `/health` | public |
+| 인증/회원 | `/auth`, `/oauth` | 혼합; OAuth는 Naver/Kakao |
+| 카탈로그 | `/products`, `/categories`, `/variants` | public |
+| 검색/SEO/feed | `/search`, `/search/products`, `/seo`, `/feeds`, `/constants` | 대체로 public |
+| 사이트 이미지/문의 | `/site-images`, `/inquiries` | 혼합 |
+| 사용자 데이터 | `/cart`, `/orders`, `/returns`, `/wishlist`, `/user/addresses` | session |
+| 결제형 | `/payments`, `/payments/kakaopay`, `/payments/naverpay` | 기능별 환경 변수 + 혼합 callback/session |
+| 네이버페이 주문형 | `/naverpay-order` | `NAVERPAY_CERTI_KEY`가 있을 때만 router 활성 |
+| 관리자 | `/admin` | session + admin + admin 2FA |
+
+실제 endpoint와 권한은 [Backend Guide](./BACKEND_GUIDE.md)와 각 `server/routes/*.routes.ts`가 기준입니다. 비활성 결제 router는 일반적으로 `503`을 반환합니다.
+
+## Core Domains
+
+- 상품, 카테고리, variant, 실측, 이미지, 검색, SEO/feed
+- 세션 기반 회원가입/로그인, 이메일 인증, 비밀번호 변경/재설정, Naver/Kakao OAuth
+- 장바구니, 위시리스트, 배송지, 주문, 아이템 단위 배송/구매확정, 부분 취소와 반품
+- 관리자 상품·주문·결제·회원·문의·사이트 이미지·통계·이메일 미리보기
+- 환경 변수로 선택 활성화되는 Toss, KakaoPay, NaverPay 결제형과 NaverPay 주문형
+- Resend 이메일, Telegram 알림, Cloudinary 업로드, Meilisearch, GA4, 프론트엔드 repository dispatch
+
+결제 제공자의 코드 존재는 운영 활성화를 뜻하지 않습니다. 활성 PG와 callback 등록 상태는 배포 환경에서 별도 확인해야 합니다.
+
+## Background Work
+
+서버 시작 후 다음 작업이 프로세스 내부에서 실행됩니다.
+
+- 아이템 자동 구매확정: 매일 `03:00 Asia/Seoul`, 배송완료 7일 후
+- 유령 주문 정리: 1분마다, `pending_payment`/`paying` 5분 초과 주문의 재고 복구와 삭제
+- legacy 재고 선점 정리: 1분마다, TTL 3분
+- KakaoPay `tid` 메모리 정리: 5분마다, TTL 15분
+
+여러 인스턴스에서는 각 프로세스가 스케줄러를 등록합니다. DB lock을 사용하는 자동 구매확정 외 작업의 다중 실행 영향은 실제 task 수와 함께 검증해야 합니다.
+
+## Database and Migrations
+
+스키마 정의는 `shared/schema.ts`, Drizzle 설정은 `drizzle.config.ts`입니다.
+
+```bash
+npm run db:generate
+npm run db:migrate
+```
+
+중요 사항:
+
+- 세션 store는 `sessions` 테이블을 자동 생성하지 않습니다.
+- 앱 DB SSL 기본값은 production=true/development=false이지만 Drizzle CLI는 `DB_SSL=false`가 아니면 SSL을 사용합니다.
+- 앱은 SSL이 켜져도 CA 파일을 찾지 못하면 현재 경고 후 `rejectUnauthorized=false`로 계속 연결합니다. 운영에서는 CA 경로/파일을 배포 전 검증해야 하며 이 fallback을 안전한 상태로 간주하면 안 됩니다.
+- 운영 변경 전 백업과 생성 SQL 검토가 필수입니다.
+- 로컬 `migrations/`와 운영 DB의 실제 적용 버전은 현재 Needs Verification입니다.
+
+## Environment
+
+전체 키, 기본값, 활성화 조건은 [.env.example](./.env.example)을 참고하세요.
+
+- 필수: `DATABASE_URL`, `SESSION_SECRET`
+- 운영 필수: `CORS_ORIGINS`
+- 운영 보안 필수: `ADMIN_2FA_RECOVERY_CODE`를 별도 secret으로 명시 주입
+- 결제/외부 서비스: 관련 키가 없으면 비활성 또는 no-op
+
+실제 `.env`/`.env.production` 값은 문서나 이슈에 복사하지 마세요.
+
+## Docker and Delivery
+
+```bash
+docker build -t shakishaki-archive-backend .
+docker run --rm -p 8080:8080 \
+  -e DATABASE_URL='postgresql://...' \
+  -e SESSION_SECRET='...' \
+  -e CORS_ORIGINS='https://frontend.example' \
+  shakishaki-archive-backend
+```
+
+Docker image는 non-root user, Node 20 Alpine, RDS CA bundle, `/api/health` healthcheck를 사용합니다.
+
+저장소에는 다음 delivery 경로가 함께 존재합니다.
+
+- `.github/workflows/deploy-ecr.yml`: OIDC로 ECR push 후 ECS task definition 배포
+- `.github/workflows/deploy-ecr-accesskey.yml`: 수동 Access Key 방식 ECR push만 수행
+- ignored local `deploy-ecr.sh`: ECR push 후 App Runner 사용법을 출력
+
+repository 이름과 동작이 서로 다르므로 실제 운영 경로를 확인하기 전 하나를 표준이라고 가정하지 않습니다. 자세한 내용은 [DevOps](./docs/DEVOPS.md)를 보세요.
+
+## Project Layout
+
+```text
 server/
-├── constants.ts     # 백엔드 re-export
+  config/       env, CORS, session, security
+  middleware/   auth, error, cache, ETag, logging, proxy headers
+  routes/       public/session/payment/admin routers
+  services/     external providers
+  jobs/         in-process schedulers
+  utils/        HTTP client, logging, SEO/feed, cleanup
+  index.ts      app composition and shutdown
+shared/
+  schema.ts     Drizzle tables and Zod schemas
+  constants/    domain and operational constants
+docs/           architecture, operations, integrations, history
+scripts/        documentation check and fail-closed unsupported legacy shared sync
 ```
 
-### 메시지 카테고리
+## Documentation Map
 
-| 카테고리              | 용도                      |
-| --------------------- | ------------------------- |
-| `AUTH_MESSAGES`       | 인증/로그인/OAuth         |
-| `ORDER_MESSAGES`      | 주문                      |
-| `PAYMENT_MESSAGES`    | 결제 (토스/네이버페이)    |
-| `PRODUCT_MESSAGES`    | 상품/옵션                 |
-| `CART_MESSAGES`       | 장바구니                  |
-| `INQUIRY_MESSAGES`    | 문의                      |
-| `IMAGE_MESSAGES`      | 이미지 업로드             |
-| `VALIDATION_MESSAGES` | 입력값 검증               |
-| `SEARCH_MESSAGES`     | 검색 (카카오/Meilisearch) |
-| `SUCCESS_MESSAGES`    | 성공 응답                 |
-| `COMMON_MESSAGES`     | 공통 에러                 |
+- [Backend Guide](./BACKEND_GUIDE.md): API 영역, 인증, 데이터 모델, 개발 패턴
+- [Architecture](./docs/ARCHITECTURE.md): 코드 기준 컴포넌트·요청 흐름·정합성 경계
+- [DevOps](./docs/DEVOPS.md): 빌드, Docker, workflow, 관측, runbook
+- [NaverPay Guide](./docs/NAVERPAY_GUIDE.md): 이 저장소의 결제형/주문형 구현
+- [Technical Challenges](./docs/TECHNICAL-CHALLENGES.md): 현재 설계 선택과 남은 위험
+- [Schema Migration Guide](./SCHEMA_MIGRATION_GUIDE.md): 안전한 DB 변경 절차
+- [MEMORY](./MEMORY.md): 현재 상태, 운영 파라미터, Known Issues, Next Tasks
+- [AGENTS](./AGENTS.md), [Codex](./Codex.md): 작업 하네스와 완료 기준
+- `docs/RELEASE_2026-07-08.md`, `docs/QUALITY_IMPROVEMENTS_2026-07-08.md`: 역사 스냅샷
 
-### 사용 방법
+## Known Gaps
 
-**1. 메시지 추가** (`shared/constants/messages.ts`)
+- 자동 테스트와 source-code lint가 없습니다.
+- migrations가 Git ignore 대상입니다.
+- health endpoint가 DB readiness를 포함하지 않습니다.
+- 관리자 2차 인증 복구 코드는 운영에서 환경 변수로 반드시 덮어써야 하는 코드 fallback이 있습니다.
+- 인증 debug 로그에 cookie/session preview가 있어 운영에서 debug 레벨을 켜기 전에 제거해야 합니다.
+- HTTP URL/query/response와 외부 문자열 payload는 마스킹되지 않을 수 있으며 provider non-2xx는 운영 WARN에 남습니다.
+- 일반 direct order와 NaverPay 주문형 register에 variant-product/활성 상태 검증 공백이 있습니다.
+- NaverPay 주문형 guest register는 가능하지만 결제 완료 후 내부 주문·재고·발주확인이 이어지지 않습니다.
+- 결제 취소의 PG 성공 뒤 DB 실패에 대한 durable compensation/retry가 없습니다.
+- rate limit과 사용자 캐시는 프로세스 메모리 기반입니다.
+- 실제 배포 토폴로지, 활성 PG, 운영 마이그레이션 상태는 Needs Verification입니다.
 
-```typescript
-export const ORDER_MESSAGES = {
-  NOT_FOUND: "주문을 찾을 수 없습니다",
-  NEW_MESSAGE: "새로운 메시지", // 추가
-} as const;
-```
-
-**2. 라우트에서 사용**
-
-```typescript
-import { ORDER_MESSAGES } from "@shared/constants/messages";
-// 또는
-import { ORDER_MESSAGES } from "../constants";
-
-res.status(404).json({ message: ORDER_MESSAGES.NOT_FOUND });
-```
-
-### 네이밍 규칙
-
-```typescript
-// 에러: 명사형 또는 상태
-NOT_FOUND: "찾을 수 없습니다";
-FORBIDDEN: "권한이 없습니다";
-
-// 성공: 과거형
-DELETED: "삭제되었습니다";
-PASSWORD_CHANGED: "비밀번호가 변경되었습니다";
-
-// 동적 메시지: 함수 사용
-CANNOT_CANCEL: (status: string) =>
-  `현재 상태(${status})에서는 취소할 수 없습니다`;
-```
-
-### PG사 에러 메시지
-
-토스페이먼츠, 네이버페이의 **공식 에러 코드 매핑**은 별도 관리합니다:
-
-- `server/routes/payment.routes.ts` → `tossErrorMessages`
-- `server/routes/naverpay.routes.ts` → `naverPayErrorMessages`
-
-이는 PG사 API 에러 코드를 사용자 친화적 메시지로 변환하는 용도로, 중앙 메시지와 목적이 다릅니다.
-
-```typescript
-// PG 에러: 코드 기반 조회
-const userMessage = tossErrorMessages[error.code] || error.message;
-```
-
-### 주의사항
-
-- ❌ 하드코딩 금지: `message: "에러입니다"`
-- ✅ 상수 사용: `message: ORDER_MESSAGES.NOT_FOUND`
-- 새 카테고리 추가 시 `shared/constants/index.ts`에 export 추가 필요
-
----
-
-## 🛠️ Troubleshooting
-
-자세한 문제 해결 사례는 [Technical Challenges](./docs/TECHNICAL-CHALLENGES.md) 문서를 참고하세요.
-
----
-
-## 📧 Contact
-
-이슈는 GitHub Issues에 등록해주세요.
-
----
-
-**Built with for ShakiShaki Archive**
+우선순위와 probe는 [MEMORY.md](./MEMORY.md)에 유지합니다.

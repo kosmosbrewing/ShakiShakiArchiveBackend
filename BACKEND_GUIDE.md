@@ -1,1388 +1,263 @@
-# ShakiShaki Archive 백엔드 가이드
+# ShakiShaki Archive Backend Guide
 
-## 목차
+> 코드 기준일: 2026-07-10. endpoint의 최종 진실 소스는 `server/routes/`, 스키마는 `shared/schema.ts`, 운영 상수는 `shared/constants/`입니다.
 
-1. [프로젝트 구조](#프로젝트-구조)
-2. [기술 스택](#기술-스택)
-3. [인증 시스템](#인증-시스템)
-4. [데이터베이스 스키마](#데이터베이스-스키마)
-5. [API 엔드포인트](#api-엔드포인트)
-6. [결제 시스템](#결제-시스템)
-7. [이미지 업로드](#이미지-업로드)
-8. [Storage 인터페이스](#storage-인터페이스)
-9. [새로운 기능 추가하기](#새로운-기능-추가하기)
-10. [환경 변수](#환경-변수)
-11. [문제 해결](#문제-해결)
-
----
-
-## 프로젝트 구조
-
-```
-server/
-├── index.ts                    # 서버 진입점, Express 앱 초기화
-├── db.ts                       # Drizzle ORM + pg Pool 설정
-├── storage.ts                  # IStorage 인터페이스 및 DatabaseStorage 구현
-├── config/
-│   ├── index.ts                # 환경 변수 중앙 관리
-│   ├── cors.ts                 # CORS 설정
-│   ├── session.ts              # 세션 설정
-│   └── cloudinary.ts           # Cloudinary 이미지 업로드 설정
-├── middleware/
-│   ├── index.ts                # 미들웨어 통합 export
-│   ├── auth.middleware.ts      # 인증 미들웨어 (isAuthenticated, isAdmin, populateUser)
-│   ├── error.middleware.ts     # 전역 에러 처리
-│   └── logger.middleware.ts    # 요청 로깅
-├── routes/
-│   ├── index.ts                # 라우트 통합 등록
-│   ├── auth.routes.ts          # 인증 API (/api/auth/*)
-│   ├── oauth.routes.ts         # 소셜 로그인 API (/api/oauth/*)
-│   ├── product.routes.ts       # 상품 API (/api/products/*)
-│   ├── category.routes.ts      # 카테고리 API (/api/categories/*)
-│   ├── cart.routes.ts          # 장바구니 API (/api/cart/*)
-│   ├── order.routes.ts         # 주문 API (/api/orders/*)
-│   ├── payment.routes.ts       # 결제 API (/api/payments/*)
-│   ├── wishlist.routes.ts      # 위시리스트 API (/api/wishlist/*)
-│   ├── address.routes.ts       # 배송지 API (/api/user/addresses/*)
-│   ├── variant.routes.ts       # 상품 옵션 API (/api/variants/*)
-│   ├── search.routes.ts        # 주소/키워드 검색 API (/api/search/*)
-│   ├── naverpay.routes.ts      # 네이버페이 결제 API (/api/payments/naverpay/*)
-│   ├── siteImage.routes.ts     # 사이트 이미지 공개 API (/api/site-images/*)
-│   └── admin/
-│       ├── index.ts            # 관리자 라우트 통합
-│       ├── product.routes.ts   # 관리자 상품 관리
-│       ├── category.routes.ts  # 관리자 카테고리 관리
-│       ├── order.routes.ts     # 관리자 주문 관리
-│       ├── variant.routes.ts   # 관리자 상품 옵션 관리
-│       ├── payment.routes.ts   # 관리자 결제 관리
-│       ├── image.routes.ts     # 관리자 이미지 업로드
-│       └── siteImage.routes.ts # 관리자 사이트 이미지 관리 (Hero, Marquee)
-├── services/
-│   ├── toss.service.ts         # 토스페이먼츠 API 클라이언트
-│   ├── naverpay.service.ts     # 네이버페이 결제 API 클라이언트
-│   ├── naver.service.ts        # 네이버 OAuth 서비스
-│   └── email.service.ts        # 이메일 발송 서비스 (Resend)
-├── types/
-│   └── index.ts                # 커스텀 타입 정의
-├── utils/
-│   └── password.ts             # 비밀번호 해싱 유틸리티
-└── scripts/
-    ├── seed.ts                 # 데이터베이스 시드 스크립트
-    ├── seed-data.ts            # 시드 데이터 정의
-    └── create-admin.ts         # 관리자 계정 생성 스크립트
-
-shared/
-└── schema.ts                   # Drizzle 스키마 + Zod 검증 + TypeScript 타입
-```
-
----
-
-## 기술 스택
-
-| 분류          | 기술                                            |
-| ------------- | ----------------------------------------------- |
-| 런타임        | Node.js + TypeScript                            |
-| 웹 프레임워크 | Express.js                                      |
-| 데이터베이스  | PostgreSQL (Neon Serverless)                    |
-| ORM           | Drizzle ORM                                     |
-| 인증          | 세션 기반 (express-session + connect-pg-simple) |
-| 소셜 로그인   | 네이버 OAuth (openid-client)                    |
-| 비밀번호 해싱 | bcryptjs                                        |
-| 검증          | Zod + drizzle-zod                               |
-| 결제          | 토스페이먼츠, 네이버페이                        |
-| 이미지 업로드 | Cloudinary + multer                             |
-| 이메일 발송   | Resend                                          |
-| 주소 검색     | 카카오 로컬 API                                 |
-| 빌드 도구     | esbuild + tsx                                   |
-
----
-
-## 인증 시스템
-
-### 개요
-
-이메일/비밀번호 기반 세션 인증 및 소셜 로그인(네이버)을 지원합니다.
-
-### 인증 방식
-
-#### 1. 이메일/비밀번호 회원가입 (POST /api/auth/signup)
-
-```typescript
-// 요청
-{
-  "email": "user@example.com",
-  "password": "securepassword123",
-  "userName": "홍길동",
-  "phone": "010-1234-5678",        // 선택
-  "zipCode": "12345",              // 선택
-  "address": "서울시 강남구",       // 선택
-  "detailAddress": "101동 1001호", // 선택
-  "emailOptIn": true               // 선택
-}
-
-// 응답
-{
-  "id": "uuid-string",
-  "email": "user@example.com",
-  "userName": "홍길동",
-  "isAdmin": false,
-  "createdAt": "2025-12-15T..."
-}
-```
-
-#### 2. 로그인 (POST /api/auth/login)
-
-```typescript
-// 요청
-{
-  "email": "user@example.com",
-  "password": "securepassword123"
-}
-```
-
-#### 3. 네이버 소셜 로그인
-
-```
-1. GET /api/oauth/naver/login     # 네이버 로그인 페이지로 리다이렉트
-2. GET /api/oauth/naver/callback  # 네이버에서 콜백 (자동 처리)
-3. 프론트엔드로 리다이렉트         # 로그인 완료
-```
-
-### 미들웨어
-
-```typescript
-// isAuthenticated - 로그인 확인
-app.get("/api/cart", isAuthenticated, async (req, res) => {
-  const userId = req.session.userId!;
-  // ...
-});
-
-// isAdmin - 관리자 권한 확인 (isAuthenticated 이후 사용)
-app.post("/api/admin/products", isAuthenticated, isAdmin, async (req, res) => {
-  // ...
-});
-
-// populateUser - 세션에서 사용자 정보를 req.user에 주입
-// (모든 요청에 자동 적용됨)
-```
-
-#### Express 타입 확장
-
-```typescript
-// server/types/index.ts
-declare global {
-  namespace Express {
-    interface Request {
-      user?: {
-        id: string; // UUID
-        email: string;
-        isAdmin: boolean;
-      };
-    }
-  }
-}
-
-declare module "express-session" {
-  interface SessionData {
-    userId: string; // UUID
-    oauthState?: string; // OAuth CSRF 방지용
-  }
-}
-```
-
----
-
-## 데이터베이스 스키마
-
-### ERD (주요 테이블)
-
-> **Note**: UUID를 사용하는 테이블은 `id (PK, UUID)`로 표시됩니다.
-
-```
-users (사용자)
-├── id (PK, UUID) - 자동 생성
-├── email (unique, required)
-├── passwordHash (nullable - 소셜 로그인 사용자는 비밀번호 없음)
-├── userName (required)
-├── phone, zipCode, address, detailAddress
-├── emailOptIn (default: false)
-├── profileImageUrl
-├── isAdmin (default: false)
-├── naverId (unique) - 네이버 소셜 로그인 ID
-├── socialProvider - 'naver', 'kakao' 등
-├── createdAt, updatedAt
-
-categories (카테고리)
-├── id (PK, integer) - 직접 입력 가능
-├── name, slug (unique)
-├── description, imageUrl
-└── createdAt
-
-products (상품)
-├── id (PK, UUID) - 자동 생성
-├── name, slug (unique)
-├── description
-├── price, originalPrice
-├── categoryId (FK → categories.id)
-├── imageUrl, images[], detailImages[]
-├── stockQuantity, isAvailable
-└── createdAt, updatedAt
-
-productVariants (상품 옵션)
-├── id (PK, serial)
-├── productId (FK → products.id, UUID, cascade)
-├── size, color, sku (unique)
-├── price, stockQuantity, isAvailable
-└── createdAt, updatedAt
-
-productSizeMeasurements (사이즈별 실측)
-├── id (PK, serial)
-├── productVariantId (FK → productVariants.id, cascade)
-├── totalLength, shoulderWidth, chestSection
-├── sleeveLength, waistSection, hipSection, thighSection
-├── displayOrder
-└── createdAt
-
-orders (주문)
-├── id (PK, UUID) - 자동 생성
-├── userId (FK → users.id, UUID)
-├── totalAmount, status
-├── shippingName, shippingPhone
-├── shippingPostalCode, shippingAddress
-├── shippingDetailAddress - 상세 주소
-├── shippingRequestNote - 배송 요청사항
-├── trackingNumber
-├── paymentProvider - 'toss', 'naverpay', 'kakaopay' 등
-├── paymentKey - PG사 결제 고유 키
-├── externalOrderId - PG사 주문 ID
-├── paymentMethod - 'card', 'transfer' 등
-├── paidAt, canceledAt, cancelReason, refundedAmount
-└── createdAt, updatedAt
-
-orderItems (주문 상품)
-├── id (PK, serial)
-├── orderId (FK → orders.id, UUID, cascade)
-├── productId (FK → products.id, UUID)
-├── productName, productPrice, options, quantity
-├── status, trackingNumber - 개별 상품 상태 관리
-└── createdAt
-
-deliveryAddresses (배송지 관리)
-├── id (PK, UUID) - 자동 생성
-├── userId (FK → users.id, UUID, cascade)
-├── recipient, phone, zipCode
-├── address, detailAddress
-├── requestNote - 배송 요청사항
-├── isDefault
-└── createdAt
-
-wishlistItems (위시리스트)
-├── id (PK, UUID) - 자동 생성
-├── userId (FK → users.id, UUID, cascade)
-├── productId (FK → products.id, UUID, cascade)
-└── createdAt
-
-cartItems (장바구니)
-├── id (PK, UUID) - 자동 생성
-├── userId (FK → users.id, UUID, cascade)
-├── productId (FK → products.id, UUID, cascade)
-├── variantId (FK → productVariants.id, serial, nullable)
-├── quantity
-└── createdAt, updatedAt
-
-sessions (세션 저장소)
-├── sid (PK, varchar)
-├── sess (jsonb)
-└── expire
-
-emailVerifications (이메일 인증코드)
-├── id (PK, serial)
-├── email (required)
-├── code (6자리 인증코드)
-├── type ('signup', 'password_reset')
-├── verified (default: false)
-├── expiresAt (만료 시간)
-└── createdAt
-
-siteImages (사이트 이미지 - Hero, Marquee)
-├── id (PK, serial)
-├── type ('hero', 'marquee')
-├── imageUrl (required)
-├── linkUrl (선택, 클릭 시 이동할 URL)
-├── displayOrder (표시 순서, default: 0)
-├── isActive (활성화 여부, default: true)
-└── createdAt, updatedAt
-```
-
-**사이트 이미지 제한:**
-
-| 타입      | 최대 개수 |
-| --------- | --------- |
-| `hero`    | 3개       |
-| `marquee` | 6개       |
-
-### 주문 상태 (OrderStatus)
-
-```typescript
-type OrderStatus =
-  | "pending_payment" // 결제 대기
-  | "payment_confirmed" // 결제 완료
-  | "preparing" // 상품 준비 중
-  | "shipped" // 배송 중
-  | "delivered" // 배송 완료
-  | "cancelled"; // 취소됨
-```
-
----
-
-## API 엔드포인트
-
-### 인증 API
-
-| 메서드 | 경로                           | 인증 | 설명                        |
-| ------ | ------------------------------ | ---- | --------------------------- |
-| POST   | `/api/auth/signup`             | 없음 | 회원가입 (이메일 인증 필수) |
-| POST   | `/api/auth/login`              | 없음 | 로그인                      |
-| POST   | `/api/auth/logout`             | 없음 | 로그아웃                    |
-| GET    | `/api/auth/user`               | 필요 | 현재 사용자 정보            |
-| PUT    | `/api/auth/user`               | 필요 | 사용자 정보 수정            |
-| PUT    | `/api/auth/password`           | 필요 | 비밀번호 변경               |
-| POST   | `/api/auth/send-verification`  | 없음 | 이메일 인증코드 발송        |
-| POST   | `/api/auth/verify-email`       | 없음 | 이메일 인증코드 확인        |
-| GET    | `/api/auth/check-verification` | 없음 | 이메일 인증 상태 확인       |
-
-#### 이메일 인증 흐름
-
-```
-1. POST /api/auth/send-verification (인증코드 발송)
-   └─ 6자리 인증코드 이메일 발송 (10분 유효)
-
-2. POST /api/auth/verify-email (인증코드 확인)
-   └─ 인증코드 검증 및 인증 완료 처리
-
-3. POST /api/auth/signup (회원가입)
-   └─ 이메일 인증 완료 후에만 회원가입 가능
-```
-
-#### 이메일 인증코드 발송 요청
-
-```typescript
-POST /api/auth/send-verification
-{
-  "email": "user@example.com",
-  "type": "signup"  // 'signup' | 'password_reset'
-}
-
-// 응답
-{
-  "message": "인증코드가 발송되었습니다"
-}
-```
-
-#### 이메일 인증코드 확인 요청
-
-```typescript
-POST /api/auth/verify-email
-{
-  "email": "user@example.com",
-  "code": "123456",
-  "type": "signup"
-}
-
-// 응답
-{
-  "message": "이메일이 인증되었습니다",
-  "verified": true
-}
-```
-
-### OAuth API (소셜 로그인)
-
-| 메서드 | 경로                        | 설명               |
-| ------ | --------------------------- | ------------------ |
-| GET    | `/api/oauth/naver/login`    | 네이버 로그인 시작 |
-| GET    | `/api/oauth/naver/callback` | 네이버 로그인 콜백 |
-
-### 공개 API
-
-| 메서드 | 경로                         | 설명                            |
-| ------ | ---------------------------- | ------------------------------- |
-| GET    | `/api/products`              | 상품 목록 (검색, 카테고리 필터) |
-| GET    | `/api/products/:id`          | 상품 상세                       |
-| GET    | `/api/products/:id/variants` | 상품 옵션 목록                  |
-| GET    | `/api/categories`            | 카테고리 목록                   |
-| GET    | `/api/variants`              | 상품 옵션 전체 목록             |
-| GET    | `/api/search/address`        | 카카오 주소 검색                |
-| GET    | `/api/search/keyword`        | 카카오 키워드(장소) 검색        |
-| GET    | `/api/site-images`           | 활성화된 사이트 이미지 조회     |
-| GET    | `/api/site-images/hero`      | Hero 이미지만 조회              |
-| GET    | `/api/site-images/marquee`   | Marquee 이미지만 조회           |
-
-#### 주소 검색 API
-
-```typescript
-// GET /api/search/address
-// Query Parameters:
-{
-  "query": "강남역",      // 필수: 검색 키워드
-  "page": 1,             // 선택: 페이지 번호 (1-45, 기본값: 1)
-  "size": 10             // 선택: 페이지당 결과 수 (1-30, 기본값: 10)
-}
-
-// 응답
-{
-  "results": [
-    {
-      "addressName": "서울 강남구 역삼동",
-      "roadAddress": "서울 강남구 테헤란로 123 (역삼빌딩)",
-      "jibunAddress": "서울 강남구 역삼동 123-45",
-      "zonecode": "06134",
-      "buildingName": "역삼빌딩",
-      "x": "127.028166",
-      "y": "37.500678"
-    }
-  ],
-  "totalCount": 100,
-  "isEnd": false
-}
-```
-
-```typescript
-// GET /api/search/keyword
-// Query Parameters:
-{
-  "query": "스타벅스 강남",  // 필수: 검색 키워드
-  "page": 1,                // 선택: 페이지 번호 (1-45, 기본값: 1)
-  "size": 10                // 선택: 페이지당 결과 수 (1-15, 기본값: 10)
-}
-
-// 응답
-{
-  "results": [
-    {
-      "placeName": "스타벅스 강남역점",
-      "addressName": "서울 강남구 역삼동 123-45",
-      "roadAddressName": "서울 강남구 테헤란로 123",
-      "phone": "02-123-4567",
-      "categoryName": "음식점 > 카페",
-      "x": "127.028166",
-      "y": "37.500678"
-    }
-  ],
-  "totalCount": 50,
-  "isEnd": false
-}
-```
-
-### 보호된 API (인증 필요)
-
-#### 장바구니
-
-| 메서드 | 경로            | 설명                 |
-| ------ | --------------- | -------------------- |
-| GET    | `/api/cart`     | 장바구니 조회        |
-| POST   | `/api/cart`     | 장바구니에 상품 추가 |
-| PATCH  | `/api/cart/:id` | 장바구니 수량 변경   |
-| DELETE | `/api/cart/:id` | 장바구니 아이템 삭제 |
-
-#### 주문
-
-| 메서드 | 경로                     | 설명         |
-| ------ | ------------------------ | ------------ |
-| POST   | `/api/orders`            | 주문 생성    |
-| GET    | `/api/orders`            | 내 주문 목록 |
-| GET    | `/api/orders/:id`        | 주문 상세    |
-| POST   | `/api/orders/:id/cancel` | 주문 취소    |
-
-#### 주문 생성 요청 예시
-
-```typescript
-POST /api/orders
-{
-  "shippingName": "홍길동",
-  "shippingPhone": "010-1234-5678",
-  "shippingPostalCode": "12345",
-  "shippingAddress": "서울시 강남구 테헤란로 123",
-  "shippingDetailAddress": "101동 1001호",
-  "shippingRequestNote": "부재 시 경비실에 맡겨주세요"
-}
-
-// 응답
-{
-  "orderId": "uuid-string",
-  "externalOrderId": "SHAKI_M1234_ABC123",  // PG사 주문번호
-  "orderName": "상품명 외 2건",
-  "amount": 50000
-}
-```
-
-#### 주문 취소 요청 예시
-
-```typescript
-POST /api/orders/:id/cancel
-{
-  "cancelReason": "고객 변심",  // 선택, 기본값: "고객 요청에 의한 취소"
-  "cancelAmount": 50000         // 선택, 부분 취소 시 사용
-}
-
-// 응답 (결제 완료 주문 취소 시)
-{
-  "message": "주문이 취소되었습니다",
-  "order": { ... },
-  "refund": {
-    "cancelAmount": 50000,
-    "refundableAmount": 0,
-    "canceledAt": "2025-12-16T..."
-  }
-}
-
-// 응답 (결제 대기 주문 취소 시)
-{
-  "message": "주문이 취소되었습니다",
-  "order": { ... }
-}
-```
-
-**주문 취소 가능 상태:**
-
-| 주문 상태           | 취소 가능 | 처리 방식                   |
-| ------------------- | --------- | --------------------------- |
-| `pending_payment`   | O         | 단순 상태 변경              |
-| `payment_confirmed` | O         | PG사 결제 취소 후 상태 변경 |
-| `preparing`         | O         | PG사 결제 취소 후 상태 변경 |
-| `shipped`           | X         | 취소 불가 (400 에러)        |
-| `delivered`         | X         | 취소 불가 (400 에러)        |
-| `cancelled`         | X         | 이미 취소됨 (400 에러)      |
-
-#### 결제 (토스페이먼츠)
-
-| 메서드 | 경로                            | 설명                       |
-| ------ | ------------------------------- | -------------------------- |
-| GET    | `/api/payments/client-key`      | 토스페이먼츠 클라이언트 키 |
-| POST   | `/api/payments/confirm`         | 결제 승인                  |
-| POST   | `/api/payments/:orderId/cancel` | 결제 취소                  |
-| GET    | `/api/payments/:orderId/status` | 결제 상태 조회             |
-
-#### 결제 (네이버페이)
-
-| 메서드 | 경로                                     | 설명                             |
-| ------ | ---------------------------------------- | -------------------------------- |
-| GET    | `/api/payments/naverpay/client-info`     | 네이버페이 클라이언트 정보       |
-| POST   | `/api/payments/naverpay/reserve`         | 결제 예약 (결제 페이지 URL 반환) |
-| GET    | `/api/payments/naverpay/callback`        | 결제 완료 콜백 (리다이렉트)      |
-| GET    | `/api/payments/naverpay/:orderId/status` | 결제 상태 조회                   |
-| POST   | `/api/payments/naverpay/:orderId/cancel` | 결제 취소                        |
-
-#### 위시리스트
-
-| 메서드 | 경로                       | 설명                |
-| ------ | -------------------------- | ------------------- |
-| GET    | `/api/wishlist`            | 위시리스트 조회     |
-| POST   | `/api/wishlist`            | 위시리스트에 추가   |
-| DELETE | `/api/wishlist/:productId` | 위시리스트에서 제거 |
-
-#### 배송지 관리
-
-| 메서드 | 경로                      | 설명        |
-| ------ | ------------------------- | ----------- |
-| GET    | `/api/user/addresses`     | 배송지 목록 |
-| POST   | `/api/user/addresses`     | 배송지 추가 |
-| PUT    | `/api/user/addresses/:id` | 배송지 수정 |
-| DELETE | `/api/user/addresses/:id` | 배송지 삭제 |
-
-### 관리자 API (인증 + 관리자 권한 필요)
-
-#### 상품/카테고리 관리
-
-| 메서드 | 경로                        | 설명          |
-| ------ | --------------------------- | ------------- |
-| GET    | `/api/admin/products`       | 상품 목록     |
-| POST   | `/api/admin/products`       | 상품 생성     |
-| PATCH  | `/api/admin/products/:id`   | 상품 수정     |
-| DELETE | `/api/admin/products/:id`   | 상품 삭제     |
-| POST   | `/api/admin/categories`     | 카테고리 생성 |
-| PATCH  | `/api/admin/categories/:id` | 카테고리 수정 |
-| DELETE | `/api/admin/categories/:id` | 카테고리 삭제 |
-
-#### 주문/결제 관리
-
-| 메서드 | 경로                                  | 설명                  |
-| ------ | ------------------------------------- | --------------------- |
-| GET    | `/api/admin/orders`                   | 전체 주문 목록        |
-| PATCH  | `/api/admin/orders/:id`               | 주문 상태/운송장 수정 |
-| PATCH  | `/api/admin/order-items/:id`          | 개별 상품 상태 수정   |
-| GET    | `/api/admin/payments/:orderId`        | 결제 상세 조회        |
-| POST   | `/api/admin/payments/:orderId/cancel` | 강제 결제 취소        |
-
-#### 이미지 업로드
-
-| 메서드 | 경로                                | 설명                                |
-| ------ | ----------------------------------- | ----------------------------------- |
-| POST   | `/api/admin/images/product`         | 단일 상품 이미지 업로드             |
-| POST   | `/api/admin/images/products`        | 여러 상품 이미지 업로드 (최대 10개) |
-| POST   | `/api/admin/images/product-details` | 상품 상세 이미지 업로드 (최대 10개) |
-| DELETE | `/api/admin/images`                 | 단일 이미지 삭제                    |
-| DELETE | `/api/admin/images/bulk`            | 여러 이미지 삭제                    |
-
-#### 사이트 이미지 관리 (Hero, Marquee)
-
-| 메서드 | 경로                             | 설명                  |
-| ------ | -------------------------------- | --------------------- |
-| GET    | `/api/admin/site-images`         | 전체 이미지 목록 조회 |
-| GET    | `/api/admin/site-images/:id`     | 이미지 상세 조회      |
-| POST   | `/api/admin/site-images`         | 이미지 추가           |
-| PUT    | `/api/admin/site-images/:id`     | 이미지 수정           |
-| DELETE | `/api/admin/site-images/:id`     | 이미지 삭제           |
-| PATCH  | `/api/admin/site-images/reorder` | 이미지 순서 변경      |
-
-**제한 사항:**
-
-- Hero 이미지: 최대 3개
-- Marquee 이미지: 최대 6개
-
-**이미지 추가 요청 예시:**
-
-```typescript
-POST /api/admin/site-images
-{
-  "type": "hero",                              // 'hero' | 'marquee'
-  "imageUrl": "https://example.com/image.jpg", // 필수
-  "linkUrl": "https://example.com/product/1",  // 선택
-  "displayOrder": 0,                           // 선택 (기본값: 현재 개수)
-  "isActive": true                             // 선택 (기본값: true)
-}
-
-// 응답
-{
-  "message": "이미지가 추가되었습니다.",
-  "image": {
-    "id": 1,
-    "type": "hero",
-    "imageUrl": "https://example.com/image.jpg",
-    "linkUrl": "https://example.com/product/1",
-    "displayOrder": 0,
-    "isActive": true,
-    "createdAt": "2025-12-21T...",
-    "updatedAt": "2025-12-21T..."
-  }
-}
-```
-
-**이미지 순서 변경 요청 예시:**
-
-```typescript
-PATCH /api/admin/site-images/reorder
-{
-  "type": "hero",
-  "imageIds": [3, 1, 2]  // 원하는 순서대로 ID 배열
-}
-
-// 응답
-{
-  "message": "이미지 순서가 변경되었습니다.",
-  "images": [ ... ]
-}
-```
-
----
-
-## 결제 시스템
-
-### 아키텍처 (PG사 통합 구조)
-
-현재 토스페이먼츠와 네이버페이를 지원하며, 다른 PG사 확장이 용이한 구조입니다.
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      orders 테이블                          │
-├─────────────────────────────────────────────────────────────┤
-│ paymentProvider: 'toss' | 'naverpay' | 'kakaopay' | ...    │
-│ paymentKey: PG사 결제 고유 키                               │
-│ externalOrderId: PG사 주문 ID                               │
-│ paymentMethod: 'card' | 'transfer' | 'naverpay' | ...      │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 결제 흐름 (토스페이먼츠)
-
-```
-1. 주문 생성 (POST /api/orders)
-   └─ externalOrderId 생성 (SHAKI_XXXXX_XXXXX)
-
-2. 클라이언트: 토스페이먼츠 결제창 호출
-   └─ orderId = externalOrderId 사용
-
-3. 결제 승인 (POST /api/payments/confirm)
-   └─ paymentProvider: 'toss' 설정
-   └─ paymentKey, externalOrderId 저장
-
-4. 주문 상태 업데이트 → payment_confirmed
-```
-
-### 결제 승인 요청
-
-```typescript
-POST /api/payments/confirm
-{
-  "paymentKey": "toss_payment_key_xxx",
-  "orderId": "SHAKI_M1234_ABC123",
-  "amount": 50000
-}
-```
-
-### 결제 취소/환불
-
-```typescript
-POST /api/payments/:orderId/cancel
-{
-  "cancelReason": "고객 변심",
-  "cancelAmount": 50000  // 부분 취소 시
-}
-```
-
-### 네이버페이 결제 흐름
-
-```
-1. 결제 예약 (POST /api/payments/naverpay/reserve)
-   └─ orderId로 주문 조회 후 네이버페이 결제 예약
-   └─ paymentUrl 반환
-
-2. 클라이언트: paymentUrl로 리다이렉트
-   └─ 사용자가 네이버페이 결제 페이지에서 결제
-
-3. 결제 완료 콜백 (GET /api/payments/naverpay/callback)
-   └─ 네이버페이에서 returnUrl로 리다이렉트
-   └─ paymentId로 결제 승인 API 호출
-   └─ 주문 상태 업데이트 → payment_confirmed
-
-4. 프론트엔드 결제 완료 페이지로 리다이렉트
-```
-
-### 네이버페이 결제 예약 요청
-
-```typescript
-POST /api/payments/naverpay/reserve
-{
-  "orderId": "uuid-of-order"
-}
-
-// 응답
-{
-  "message": "결제 예약이 완료되었습니다",
-  "reserveId": "naverpay_reserve_id",
-  "paymentUrl": "https://pay.naver.com/..."
-}
-```
-
----
-
-## 이미지 업로드
-
-### 개요
-
-Cloudinary를 사용한 이미지 업로드 시스템입니다. 관리자만 이미지 업로드가 가능합니다.
-
-### 설정 파일 구조
-
-```typescript
-// server/config/cloudinary.ts
-- Cloudinary 설정 및 초기화
-- multer 메모리 스토리지 설정
-- 파일 타입 검증 (JPEG, PNG, GIF, WebP만 허용)
-- 최대 파일 크기: 10MB
-- 최대 동시 업로드: 10개
-```
-
-### API 사용법
-
-#### 단일 이미지 업로드
+## 1. Local Development
 
 ```bash
-curl -X POST http://localhost:8080/api/admin/images/product \
-  -H "Cookie: connect.sid=..." \
-  -F "image=@/path/to/image.jpg"
-```
-
-```typescript
-// 응답
-{
-  "message": "이미지 업로드 성공",
-  "image": {
-    "url": "https://res.cloudinary.com/xxx/image/upload/v123/shakishaki/products/abc123.jpg",
-    "publicId": "shakishaki/products/abc123",
-    "width": 800,
-    "height": 600
-  }
-}
-```
-
-#### 여러 이미지 업로드
-
-```bash
-curl -X POST http://localhost:8080/api/admin/images/products \
-  -H "Cookie: connect.sid=..." \
-  -F "images=@/path/to/image1.jpg" \
-  -F "images=@/path/to/image2.jpg"
-```
-
-```typescript
-// 응답
-{
-  "message": "2개 이미지 업로드 성공",
-  "images": [
-    {
-      "url": "https://res.cloudinary.com/xxx/...",
-      "publicId": "shakishaki/products/abc123",
-      "width": 800,
-      "height": 600
-    },
-    {
-      "url": "https://res.cloudinary.com/xxx/...",
-      "publicId": "shakishaki/products/def456",
-      "width": 1200,
-      "height": 900
-    }
-  ]
-}
-```
-
-#### 이미지 삭제
-
-```typescript
-// 단일 삭제
-DELETE /api/admin/images
-{
-  "publicId": "shakishaki/products/abc123"
-}
-
-// 여러 개 삭제
-DELETE /api/admin/images/bulk
-{
-  "publicIds": ["shakishaki/products/abc123", "shakishaki/products/def456"]
-}
-```
-
-### Cloudinary 폴더 구조
-
-```
-shakishaki/
-├── products/           # 상품 메인 이미지
-│   └── details/        # 상품 상세 이미지
-└── categories/         # 카테고리 이미지 (향후)
-```
-
-### 이미지 최적화
-
-Cloudinary에서 자동으로 다음 최적화가 적용됩니다:
-
-- `quality: auto:good` - 자동 품질 최적화
-- `fetch_format: auto` - 브라우저에 맞는 포맷 자동 변환 (WebP 등)
-
----
-
-## Storage 인터페이스
-
-### 개요
-
-`IStorage` 인터페이스는 모든 데이터베이스 작업을 추상화합니다.
-
-### 주요 메서드
-
-> **Note**: UUID를 사용하는 테이블의 id 파라미터는 `string` 타입입니다.
-
-```typescript
-interface IStorage {
-  // 사용자 (UUID 기반)
-  getUser(id: string): Promise<User | undefined>;
-  getUserByEmail(email: string): Promise<User | undefined>;
-  getUserByNaverId(naverId: string): Promise<User | undefined>;
-  createUser(user: Omit<UpsertUser, "id">): Promise<User>;
-  updateUser(id: string, data: Partial<UpsertUser>): Promise<User | undefined>;
-
-  // 상품 (UUID 기반)
-  getProducts(filters?: { search?: string; categoryId?: number }): Promise<Product[]>;
-  getProduct(id: string): Promise<Product | undefined>;
-  createProduct(product: InsertProduct): Promise<Product>;
-  updateProduct(id: string, data: Partial<InsertProduct>): Promise<Product | undefined>;
-  deleteProduct(id: string): Promise<void>;
-
-  // 상품 옵션 (productId는 UUID, variant id는 serial)
-  getProductVariants(productId: string): Promise<ProductVariant[]>;
-  getProductVariant(id: number): Promise<ProductVariant | undefined>;
-  createProductVariant(variant: InsertProductVariant): Promise<ProductVariant>;
-
-  // 주문 (UUID 기반)
-  createOrder(order: InsertOrder, items: OrderItemCreateData[]): Promise<string>; // UUID 반환
-  getOrder(orderId: string): Promise<(Order & { orderItems: ... }) | undefined>;
-  getOrderByExternalOrderId(externalOrderId: string): Promise<Order | undefined>;
-  getOrders(userId: string): Promise<Order[]>;
-  updateOrderStatus(orderId: string, status: string, trackingNumber?: string): Promise<Order | undefined>;
-  updateOrderPayment(orderId: string, paymentData): Promise<Order | undefined>;
-  cancelOrderPayment(orderId: string, cancelData): Promise<Order | undefined>;
-
-  // 장바구니 (UUID 기반)
-  getCartItems(userId: string): Promise<(CartItem & { product: Product })[]>;
-  addCartItem(item: InsertCartItem): Promise<CartItem>;
-  updateCartItem(id: string, quantity: number): Promise<CartItem | undefined>;
-  deleteCartItem(id: string): Promise<void>;
-  clearCart(userId: string): Promise<void>;
-
-  // 위시리스트 (UUID 기반)
-  getWishlistItems(userId: string): Promise<(WishlistItem & { product: Product })[]>;
-  addWishlistItem(userId: string, productId: string): Promise<WishlistItem>;
-  deleteWishlistItem(userId: string, productId: string): Promise<void>;
-
-  // 배송지 (UUID 기반)
-  getDeliveryAddresses(userId: string): Promise<DeliveryAddress[]>;
-  createDeliveryAddress(address: InsertDeliveryAddress): Promise<DeliveryAddress>;
-  updateDeliveryAddress(id: string, userId: string, address: Partial<InsertDeliveryAddress>): Promise<DeliveryAddress | undefined>;
-  deleteDeliveryAddress(id: string, userId: string): Promise<void>;
-
-  // 이메일 인증
-  createEmailVerification(verification: InsertEmailVerification): Promise<EmailVerification>;
-  getValidVerification(email: string, code: string, type: string): Promise<EmailVerification | undefined>;
-  markVerificationAsUsed(id: number): Promise<void>;
-  isEmailVerified(email: string, type: string): Promise<boolean>;
-
-  // 사이트 이미지 (Hero, Marquee)
-  getSiteImages(type?: SiteImageType): Promise<SiteImage[]>;
-  getSiteImage(id: number): Promise<SiteImage | undefined>;
-  createSiteImage(image: InsertSiteImage): Promise<SiteImage>;
-  updateSiteImage(id: number, image: Partial<InsertSiteImage>): Promise<SiteImage | undefined>;
-  deleteSiteImage(id: number): Promise<void>;
-  countSiteImagesByType(type: SiteImageType): Promise<number>;
-}
-```
-
----
-
-## 새로운 기능 추가하기
-
-### 1. 새로운 테이블 추가
-
-```bash
-# Step 1: shared/schema.ts에 테이블 정의
-# Step 2: 데이터베이스 푸시
+npm ci
+cp .env.example .env
+# 로컬 DB 생성 후, local-only schema bootstrap
+export DATABASE_URL='postgresql://postgres:postgres@localhost:5432/shakishaki_dev'
+export DB_SSL=false
 npm run db:push
-
-# Step 3: server/storage.ts에 IStorage 인터페이스 메서드 추가
-# Step 4: server/routes/에 API 라우트 파일 생성
-# Step 5: server/routes/index.ts에 라우트 등록
+./startShaki.sh
 ```
 
-### 2. 새로운 PG사 추가 (예: 카카오페이)
+필수 환경 변수는 `DATABASE_URL`, `SESSION_SECRET`입니다. 앱은 `.env`를 자체 로드하지 않으므로 `./startShaki.sh`가 Node `--env-file=.env`로 로드합니다. DB/admin package scripts도 환경 변수를 셸에 주입한 뒤 사용합니다. IDE/셸이 주입한다면 `npm run dev`를 사용할 수 있습니다.
 
-```typescript
-// Step 1: server/services/kakaopay.service.ts 생성
-export async function confirmKakaoPayment(...) { ... }
-export async function cancelKakaoPayment(...) { ... }
-
-// Step 2: server/routes/payment.routes.ts에서 paymentProvider로 분기 처리
-
-// Step 3: server/config/index.ts에 환경 변수 추가
-kakaopay: {
-  clientId: process.env.KAKAOPAY_CLIENT_ID,
-  secretKey: process.env.KAKAOPAY_SECRET_KEY,
-}
-```
-
-### 3. 새로운 소셜 로그인 추가 (예: 카카오)
-
-```typescript
-// Step 1: server/services/kakao.service.ts 생성
-// Step 2: server/routes/oauth.routes.ts에 카카오 라우트 추가
-// Step 3: shared/schema.ts의 users 테이블에 kakaoId 필드 추가
-// Step 4: server/config/index.ts에 카카오 OAuth 설정 추가
-```
-
----
-
-## 환경 변수
-
-### 🔴 필수 (Required)
-
-| 변수명           | 설명                   | 예시                                                    |
-| ---------------- | ---------------------- | ------------------------------------------------------- |
-| `DATABASE_URL`   | PostgreSQL 연결 문자열 | `postgresql://user:pass@host:5432/db?sslmode=require`   |
-| `SESSION_SECRET` | 세션 암호화 키         | 32자 이상 랜덤 문자열                                   |
-
-### 🟡 서버 설정 (Server Configuration)
-
-| 변수명          | 설명                                | 기본값                   |
-| --------------- | ----------------------------------- | ------------------------ |
-| `NODE_ENV`      | 실행 환경                           | `development`            |
-| `PORT`          | 서버 포트                           | `8080`                   |
-| `SECURE_COOKIE` | HTTPS 쿠키 설정                     | `true` (프로덕션)        |
-| `CORS_ORIGINS`  | 허용된 CORS origin (쉼표 구분, 경로/끝 `/` 제외) | 개발: `*`, 운영: 필수    |
-| `FRONTEND_URL`  | 프론트엔드 URL (OAuth 리다이렉트용) | `http://localhost:8080`  |
-| `LOG_LEVEL`     | 로그 레벨 (`debug`, `info`, `warn`, `error`) | `info` (프로덕션), `debug` (개발) |
-
-### 🟡 데이터베이스 설정 (Database Configuration)
-
-| 변수명                  | 설명                                           | 기본값               |
-| ----------------------- | ---------------------------------------------- | -------------------- |
-| `DB_SSL`                | SSL 연결 활성화 (`true`/`false`)               | `true` (프로덕션)    |
-| `DB_SSL_CA`             | SSL CA 인증서 경로 (AWS RDS 연결 시)           | -                    |
-| `DB_POOL_MAX`           | 커넥션 풀 최대 연결 수                         | `20` (프로덕션), `10` (개발) |
-| `DB_POOL_MIN`           | 커넥션 풀 최소 연결 수                         | `2`                  |
-| `DB_IDLE_TIMEOUT`       | 유휴 연결 타임아웃 (ms)                        | `30000`              |
-| `DB_CONNECTION_TIMEOUT` | 연결 타임아웃 (ms)                             | `10000`              |
-
-### 🟡 Rate Limiting
-
-| 변수명                       | 설명                          | 기본값    |
-| ---------------------------- | ----------------------------- | --------- |
-| `RATE_LIMIT_WINDOW_MS`       | 일반 요청 윈도우 (ms)         | `900000` (15분)  |
-| `RATE_LIMIT_MAX_REQUESTS`    | 일반 요청 최대 횟수           | `100`     |
-| `RATE_LIMIT_AUTH_WINDOW_MS`  | 인증 요청 윈도우 (ms)         | `900000` (15분)  |
-| `RATE_LIMIT_AUTH_MAX_REQUESTS` | 인증 요청 최대 횟수         | `10`      |
-| `RATE_LIMIT_API_WINDOW_MS`   | API 요청 윈도우 (ms)          | `60000` (1분)    |
-| `RATE_LIMIT_API_MAX_REQUESTS`| API 요청 최대 횟수            | `60`      |
-| `RATE_LIMIT_ENABLE_IN_DEV`   | 개발 환경에서 Rate Limit 활성화 | `false` |
-
-### 🟢 토스페이먼츠 (Toss Payments)
-
-| 변수명            | 설명                       |
-| ----------------- | -------------------------- |
-| `TOSS_CLIENT_KEY` | 토스페이먼츠 클라이언트 키 |
-| `TOSS_SECRET_KEY` | 토스페이먼츠 시크릿 키     |
-
-### 🟢 네이버페이 (Naver Pay)
-
-| 변수명                   | 설명                                         |
-| ------------------------ | -------------------------------------------- |
-| `NAVERPAY_CLIENT_ID`     | 네이버페이 Client ID                         |
-| `NAVERPAY_CLIENT_SECRET` | 네이버페이 Client Secret                     |
-| `NAVERPAY_CHAIN_ID`      | 네이버페이 Chain ID                          |
-| `NAVERPAY_MERCHANT_ID`   | 네이버페이 가맹점 ID                         |
-| `NAVERPAY_MODE`          | 환경 모드 (`dev` 또는 `prod`, 기본값: `dev`) |
-| `NAVERPAY_RETURN_URL`    | 결제 완료 후 리다이렉트 URL                  |
-
-### 🟢 네이버 OAuth (Naver Login)
-
-| 변수명                | 설명                           |
-| --------------------- | ------------------------------ |
-| `NAVER_CLIENT_ID`     | 네이버 개발자 앱 Client ID     |
-| `NAVER_CLIENT_SECRET` | 네이버 개발자 앱 Client Secret |
-| `NAVER_CALLBACK_URL`  | 네이버 OAuth 콜백 URL          |
-
-### 🟢 카카오 API (Kakao - 주소 검색)
-
-| 변수명               | 설명                      |
-| -------------------- | ------------------------- |
-| `KAKAO_REST_API_KEY` | 카카오 개발자 REST API 키 |
-
-### 🟢 Resend (이메일 발송)
-
-| 변수명            | 설명                                               | 필수 여부 |
-| ----------------- | -------------------------------------------------- | --------- |
-| `RESEND_API_KEY`  | Resend API 키                                      | 선택 |
-| `EMAIL_FROM`      | 발신자 이메일 주소 (기본값: `noreply@example.com`) | 선택 |
-| `EMAIL_FROM_NAME` | 발신자 이름 (기본값: `SITE_NAME` 사용) | 선택 (거의 불필요) |
-
-**참고**: `EMAIL_FROM_NAME`은 `SITE_NAME`을 기본값으로 사용하므로 대부분의 경우 설정 불필요.
-
-### 🟢 Cloudinary (이미지 업로드)
-
-| 변수명                  | 설명                  |
-| ----------------------- | --------------------- |
-| `CLOUDINARY_CLOUD_NAME` | Cloudinary Cloud Name |
-| `CLOUDINARY_API_KEY`    | Cloudinary API Key    |
-| `CLOUDINARY_API_SECRET` | Cloudinary API Secret |
-
-### 🟢 Meilisearch (검색 엔진 - 선택)
-
-| 변수명                       | 설명                       | 기본값                |
-| ---------------------------- | -------------------------- | --------------------- |
-| `MEILISEARCH_HOST`           | Meilisearch 서버 주소      | `http://localhost:7700` |
-| `MEILISEARCH_API_KEY`        | Meilisearch API 키         | -                     |
-| `MEILISEARCH_PRODUCTS_INDEX` | 상품 검색 인덱스 이름      | `products`            |
-
-### 🟢 SEO 설정 (선택)
-
-| 변수명             | 설명                       | 기본값                      | 사용 위치 |
-| ------------------ | -------------------------- | --------------------------- | --------- |
-| `SITE_NAME`        | 사이트 이름                | `ShakiShaki`                | `config.seo.siteName` |
-| `SITE_DESCRIPTION` | 사이트 설명                | `ShakiShaki Archive - 프리미엄 빈티지 의류 쇼핑몰` | `config.seo.siteDescription` |
-| `SITE_LOGO`        | 사이트 로고 URL (1200x630 권장) | `{FRONTEND_URL}/logo.png`   | `config.seo.siteLogo` |
-
-**참고**: SEO 환경변수는 `server/config/index.ts`의 `config.seo` 객체로 그룹화되어 관리됩니다.
-
----
-
-### AWS App Runner 환경 변수 설정 예시
+정적 완료 기준:
 
 ```bash
-# 필수
-DATABASE_URL=postgresql://user:password@your-rds-endpoint:5432/dbname?sslmode=require
-SESSION_SECRET=your-super-secret-session-key-minimum-32-chars
-
-# 서버 설정
-NODE_ENV=production
-PORT=8080
-CORS_ORIGINS=https://your-frontend-domain.com
-FRONTEND_URL=https://your-frontend-domain.com
-
-# 데이터베이스 설정 (AWS RDS)
-DB_SSL=true
-
-# 결제 (필요시)
-TOSS_CLIENT_KEY=your-toss-client-key
-TOSS_SECRET_KEY=your-toss-secret-key
-
-# 이미지 업로드 (필요시)
-CLOUDINARY_CLOUD_NAME=your-cloud-name
-CLOUDINARY_API_KEY=your-api-key
-CLOUDINARY_API_SECRET=your-api-secret
-
-# 카카오 주소 검색 (필요시)
-KAKAO_REST_API_KEY=your-kakao-rest-api-key
-
-# 이메일 발송 (필요시)
-RESEND_API_KEY=your-resend-api-key
-EMAIL_FROM=noreply@your-domain.com
+npm run verify
 ```
 
----
+`verify`는 문서 링크/환경 변수 카탈로그, TypeScript, production bundle을 확인합니다. 자동 테스트와 source-code lint는 아직 없습니다.
 
-## 문제 해결
+## 2. Application Composition
 
-### 1. 데이터베이스 연결 실패
+`server/index.ts`가 다음 순서로 앱을 구성합니다.
 
-```bash
-# DATABASE_URL 확인
-echo $DATABASE_URL
+1. Helmet과 전역 rate limit
+2. API Gateway/VPC Link proxy header 정규화
+3. JSON/urlencoded parser, 각각 1 MiB
+4. CORS
+5. PostgreSQL session store
+6. 사용자 정보 주입, compression, request logger
+7. `/api` router
+8. 중앙 error handler
 
-# PostgreSQL 연결 테스트
-psql $DATABASE_URL -c "SELECT 1"
-```
+서버 시작 callback에서 DB 연결을 검사하지만 실패해도 프로세스는 계속 실행합니다. 이후 Meilisearch 초기화, 재고 선점 정리, 유령 주문 정리, 자동 구매확정 scheduler를 시작합니다.
 
-### 2. 세션 유지 안됨
+## 3. Authentication and Authorization
 
-- `SESSION_SECRET` 환경 변수 확인
-- `sessions` 테이블 존재 확인
-- CORS `credentials: true` 설정 확인
-- 프론트엔드에서 `credentials: 'include'` 옵션 사용 확인
+### Session
 
-### 3. 네이버 로그인 실패
+- Cookie: httpOnly
+- Production + secure cookie: `secure=true`, `sameSite=none`
+- Development 또는 `SECURE_COOKIE=false`: `secure=false`, `sameSite=lax`
+- TTL: 7일
+- Store: PostgreSQL `sessions`; `createTableIfMissing=false`
+- CORS credential: `Access-Control-Allow-Credentials: true`
 
-- `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET` 환경 변수 확인
-- 네이버 개발자 센터에서 콜백 URL 등록 확인
-- `NAVER_CALLBACK_URL`이 등록된 URL과 일치하는지 확인
+### Email/password flow
 
-### 4. 토스페이먼츠 결제 실패
+1. `POST /api/auth/send-verification` (`type=signup`)
+2. `POST /api/auth/verify-email`
+3. `POST /api/auth/signup`; 검증 완료 기록이 없으면 거부
+4. `POST /api/auth/login`; 성공 시 session ID 재생성
 
-- 토스페이먼츠 시크릿 키 확인
-- 결제 금액 일치 여부 확인 (서버 vs 클라이언트)
-- `externalOrderId` 형식 확인 (6-64자)
+비밀번호는 bcrypt로 저장되며 `shared/schema.ts`의 Zod schema가 최소 8자와 문자 종류 조합을 검증합니다. 비밀번호 재설정도 이메일 인증 기록을 요구합니다.
 
-### 5. 네이버페이 결제 실패
+### Social login
 
-- `NAVERPAY_CLIENT_ID`, `NAVERPAY_CLIENT_SECRET` 환경 변수 확인
-- `NAVERPAY_CHAIN_ID`, `NAVERPAY_MERCHANT_ID` 환경 변수 확인
-- `NAVERPAY_RETURN_URL`이 네이버페이 개발자센터에 등록된 URL과 일치하는지 확인
-- 개발 환경에서는 `NAVERPAY_MODE=dev` 설정 확인
+- Naver: `GET /api/oauth/naver`, `/naver/login`, callback `/naver/callback`
+- Kakao: `GET /api/oauth/kakao`, `/kakao/login`, callback `/kakao/callback`
 
-### 6. 주소 검색 실패
+Google OAuth backend route는 없습니다.
 
-- `KAKAO_REST_API_KEY` 환경 변수 확인
-- 카카오 개발자 콘솔에서 API 활성화 확인
-- 요청 쿼리 파라미터 형식 확인 (`query` 필수)
+### Admin 2FA
 
-### 7. 이미지 업로드 실패
+관리자 비밀번호 로그인은 `202`와 challenge를 반환하고, `POST /api/auth/admin-2fa/verify` 성공 후에만 `admin2faVerifiedAt`이 설정됩니다. `isAdmin`은 다음을 모두 확인합니다.
 
-- `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` 환경 변수 확인
-- 파일 형식 확인 (JPEG, PNG, GIF, WebP만 허용)
-- 파일 크기 확인 (최대 10MB)
-- 관리자 권한 확인
+1. `session.userId`
+2. DB user의 `isAdmin`
+3. `session.admin2faVerifiedAt`
 
-### 8. 관리자 권한 부여
+운영에서 Telegram 전달이 실패할 때만 허용되는 복구 경로가 있습니다. `ADMIN_2FA_RECOVERY_CODE`를 별도 secret으로 반드시 주입해야 하며 코드 fallback을 운영값으로 사용하면 안 됩니다.
 
-```sql
-UPDATE users SET is_admin = true WHERE email = 'admin@example.com';
-```
+### Logging warning
 
-또는 스크립트 사용:
+현재 `isAuthenticated` debug 로그는 cookie 앞부분과 session ID 일부를 기록합니다. 제거 전에는 운영 `LOG_LEVEL=debug`를 사용하지 말고, 새 인증 로그는 cookie/session 원문이나 preview를 기록하지 않습니다.
 
-```bash
-npx tsx server/scripts/create-admin.ts
-```
+## 4. API Map
 
-### 9. 스키마 변경 후 적용
+모든 endpoint는 `/api` prefix를 사용합니다. 아래는 router 단위 지도이며, 세부 입력 schema는 각 route 파일의 Zod 정의가 기준입니다.
 
-```bash
-# 타입 체크
-npm run check
+### Public and mixed routes
 
-# DB 반영
-npm run db:push
-```
+| Prefix | Main operations | Access |
+| --- | --- | --- |
+| `/health` | process liveness | public |
+| `/auth` | signup/login/logout, user, password, email verification, admin 2FA | mixed |
+| `/oauth` | Naver/Kakao start and callback | public callback flow |
+| `/products` | list/detail, variant list, view count | public |
+| `/categories`, `/variants` | category/variant lookup | public |
+| `/search/address`, `/search/keyword` | Kakao search proxy | public, key required |
+| `/search/products` | Meilisearch/fallback search; stats/reindex also live here | public search, admin stats/reindex |
+| `/site-images` | main/hero/marquee/journal images | public |
+| `/inquiries` | public list/detail, user create/my/delete, admin reply/status | mixed |
+| `/seo`, `/feeds`, `/constants` | SEO metadata, feeds, shared constants | public |
 
----
+주의: `/api/inquiries` public/admin list는 현재 pagination 없이 `storage.getInquiries`를 호출합니다.
 
-## 스크립트 명령어
+### Session routes
 
-```bash
-# 개발 서버 실행
-npm run dev
+| Prefix | Main operations |
+| --- | --- |
+| `/cart` | list/add/update/delete with owner filtering |
+| `/orders` | create/list/detail, paying transition, cleanup, partial/full cancel, delete, item confirm |
+| `/returns` | request, tracking, list/detail; admin receive/inspect/refund paths |
+| `/wishlist` | list/add/delete |
+| `/user/addresses` | list/create/update/delete |
 
-# 프로덕션 빌드
-npm run build
+주문 생성 시 server-side 상품/variant/가격/재고를 다시 조회하고 DB transaction에서 재고를 차감합니다. `stock.routes.ts`의 public reservation router는 현재 마운트하지 않지만 legacy cleanup은 시작됩니다.
 
-# 프로덕션 서버 실행
-npm start
+### Payment routes
 
-# TypeScript 타입 체크
-npm run check
+| Prefix | Enable condition | Main operations |
+| --- | --- | --- |
+| `/payments` | `TOSS_SECRET_KEY` | client key, confirm, cancel, status |
+| `/payments/kakaopay` | `KAKAOPAY_SECRET_KEY` | client info, ready/callback, status, cancel |
+| `/payments/naverpay` | `NAVERPAY_CLIENT_ID` | SDK/client info, callback, status, cancel |
+| `/naverpay-order` | `NAVERPAY_CERTI_KEY` | SDK config, register, product XML, area fee XML, notification, wishlist |
 
-# 데이터베이스 스키마 푸시
-npm run db:push
-```
+Toss/NaverPay routers는 enable key가 없으면 router-level `503` gate를 사용합니다. KakaoPay callback은 결제창 redirect를 위해 세션 비의존 조회 경로를 포함합니다. 코드 존재만으로 운영 활성화를 판단하지 않습니다.
 
----
+NaverPay 주문형 register는 guest 요청도 받지만 결제 완료 handler가 `guest`/비UUID user를 user FK 때문에 처리하지 않습니다. 내부 주문·재고·발주확인까지 이어지는 guest end-to-end 경로는 현재 미지원입니다.
 
-## 변경 이력
+### Admin routes
 
-### 2025-12-21 (최신)
+`/api/admin`은 별도 5분/300회 limiter를 사용합니다. 각 handler는 원칙적으로 `isAuthenticated` + `isAdmin`을 붙입니다.
 
-**사이트 이미지 관리 기능 추가 (Hero, Marquee)**
+| Prefix | Scope |
+| --- | --- |
+| `/admin/products`, `/admin/categories` | catalog CRUD |
+| `/admin/orders`, `/admin/order-items` | order/item status, manual refund |
+| `/admin/payments` | payment lookup/cancel |
+| `/admin/variants`, `/admin/measurements` | variant/measurement CRUD |
+| `/admin/images`, `/admin/site-images` | Cloudinary/site image management |
+| `/admin/users` | paginated users, detail, role change |
+| `/admin/inquiries` | inquiry list/detail |
+| `/admin/analytics/overview` | GA4 visitors + product views |
+| `/admin/email-preview` | email template preview |
 
-- `shared/schema.ts`에 `siteImages` 테이블 스키마 추가
-- `server/storage.ts`에 사이트 이미지 관련 메서드 추가
-- `server/routes/siteImage.routes.ts` 추가 - 공개 이미지 조회 API
-- `server/routes/admin/siteImage.routes.ts` 추가 - 관리자 이미지 관리 API
+관리자 role 변경은 코드에 지정된 super-admin email만 허용합니다. 운영 계정 정책은 별도 확인이 필요합니다.
 
-**기능:**
+## 5. Data Model
 
-- Hero 이미지 관리 (최대 3개)
-- Marquee 이미지 관리 (최대 6개)
-- 이미지 순서 변경 (reorder)
-- 활성화/비활성화 토글
-- 클릭 시 이동할 링크 URL 설정
+`shared/schema.ts`가 정의하는 테이블은 다음과 같습니다.
 
-**공개 API:**
+| Domain | Tables |
+| --- | --- |
+| Auth | `users`, `sessions`, `email_verifications` |
+| Catalog | `categories`, `products`, `product_variants`, `product_size_measurements` |
+| Shopping | `cart_items`, `wishlist_items`, `delivery_addresses` |
+| Order | `orders`, `order_items`, `returns`, `stock_reservations` |
+| Content | `site_images`, `inquiries`, `inquiry_replies` |
 
-- `GET /api/site-images` - 활성화된 전체 이미지 조회
-- `GET /api/site-images/hero` - Hero 이미지만 조회
-- `GET /api/site-images/marquee` - Marquee 이미지만 조회
+별도 payments table은 없습니다. provider, payment key, method, paid/cancel/refund 정보는 `orders`에 저장됩니다.
 
-**관리자 API:**
+### Status source
 
-- `GET /api/admin/site-images` - 전체 이미지 목록 (관리용)
-- `POST /api/admin/site-images` - 이미지 추가
-- `PUT /api/admin/site-images/:id` - 이미지 수정
-- `DELETE /api/admin/site-images/:id` - 이미지 삭제
-- `PATCH /api/admin/site-images/reorder` - 이미지 순서 변경
+운영 코드의 전체 주문/아이템/반품 상태 집합은 `shared/constants/order.ts`에 있습니다. DB 컬럼은 varchar입니다. `shared/schema.ts` 안의 legacy `orderStatusEnum` 배열은 일부 신규 상태를 포함하지 않아 타입/문서 근거로 사용하면 안 되며 통합이 필요합니다.
 
-### 2025-12-20
+### Storage layer
 
-**Cloudinary 이미지 업로드 기능 추가**
+- Route는 가능하면 `storage` 메서드를 통해 DB를 다룹니다.
+- 결제·재고·주문 상태 전이는 `pool` transaction과 conditional update/row lock을 사용합니다.
+- 새 메서드를 추가할 때 ID만 받지 말고 user-owned resource에는 `userId` 조건을 포함합니다.
+- PG 성공 뒤 DB update가 실패할 수 있는 순서를 설계할 때 durable retry/운영 재처리 경로를 함께 둡니다.
 
-- `server/config/cloudinary.ts` 추가 - Cloudinary 설정 및 업로드 유틸리티
-- `server/routes/admin/image.routes.ts` 추가 - 이미지 업로드 API
-- 단일/다중 이미지 업로드 지원 (최대 10개)
-- 이미지 삭제 API (단일/다중)
-- 자동 이미지 최적화 (품질, 포맷)
+## 6. Validation and Errors
 
-**환경 변수 추가**
+- 도메인 입력: `shared/schema.ts`의 Zod 또는 route-local Zod
+- UUID/query helper: `server/utils/validation.ts`
+- async rejection: `asyncHandler` → `errorHandler`
+- 예상치 못한 production error response: 일반 메시지 + `requestId`
+- route handler가 직접 반환하는 domain error 형식은 아직 완전히 통일되지 않았습니다.
 
-- `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`
+요청 logger는 객체형 request body에만 키 이름 기반 마스킹을 적용합니다. full URL/query/userEmail과 response summary는 별도 sanitize 없이 기록될 수 있으므로 모든 PII가 보호된다고 가정하면 안 됩니다.
 
-**패키지 추가**
+## 7. Cache and Rate Limits
 
-- `cloudinary` - Cloudinary SDK
-- `multer` - 파일 업로드 미들웨어
+- Global: 15분/1000; health와 admin 제외; development 기본 비활성
+- Auth: 15분/15; development 기본 비활성
+- Email: 5분/3; development에도 적용
+- Payment: 1분/10; 항상 적용
+- Admin: 5분/300; 항상 적용
+- ETag와 Cache-Control 전략은 상품/카테고리/site image/공용 상수 등 GET에 적용
+- user cache와 rate-limit store는 프로세스 메모리 기반
 
-### 2025-12-19
+다중 인스턴스에서 제한 횟수와 cache invalidation은 task별로 분리됩니다.
 
-**네이버페이 결제 연동**
+## 8. Background Jobs
 
-- `server/services/naverpay.service.ts` 추가
-- `server/routes/naverpay.routes.ts` 추가
-- 결제 예약, 승인, 취소, 조회 API 구현
-- 개발/운영 환경 분리 (`NAVERPAY_MODE`)
+| Job | Schedule | Behavior |
+| --- | --- | --- |
+| Auto confirm | daily 03:00 KST | delivered item 7일 경과 후 `purchase_confirmed`; `FOR UPDATE SKIP LOCKED` |
+| Ghost orders | every 1 minute | pending/paying 5분 초과: 재고 복구 + 주문 삭제 transaction |
+| Stock reservations | every 1 minute | legacy reservation TTL 3분 정리 |
+| KakaoPay tid | every 5 minutes | memory entry TTL 15분 정리 |
 
-**환경 변수 추가**
+Scheduler가 프로세스 내부에 있으므로 task 수, clock, 배포 중 중복 실행을 운영 환경에서 확인합니다.
 
-- `NAVERPAY_CLIENT_ID`, `NAVERPAY_CLIENT_SECRET`
-- `NAVERPAY_CHAIN_ID`, `NAVERPAY_MERCHANT_ID`
-- `NAVERPAY_MODE`, `NAVERPAY_RETURN_URL`
+## 9. External Integrations
 
-### 2025-12-18
+`server/utils/http-client.ts`는 기본 30초 timeout을 제공하고 header와 객체형 request body만 키 기반으로 마스킹합니다. 문자열/XML request와 provider response summary는 길이 제한만 적용된 원문일 수 있고, non-2xx는 production 기본 `WARN`에도 남습니다. Toss/NaverPay 서비스가 주로 이를 사용합니다. OAuth, 검색, GA4, Telegram, GitHub dispatch 등 일부 코드는 직접 `fetch`를 사용하므로 timeout과 sanitize 범위를 변경 시 재검토해야 합니다.
 
-**UUID Primary Key 도입**
+| Integration | Config source | Failure behavior |
+| --- | --- | --- |
+| Resend | `RESEND_API_KEY` | 일부 인증/메일 흐름은 실패 응답, 일부 알림은 fire-and-forget |
+| Telegram | bot/chat IDs | no-op 또는 에러 로그; admin 2FA는 운영 fallback 정책 영향 |
+| Cloudinary | 3개 credential 모두 | admin upload 기능 비활성/실패 |
+| Meilisearch | `MEILISEARCH_HOST` | 초기화 실패 후 서버 계속; search fallback 확인 필요 |
+| GA4 | property/service account | analytics service가 configuration 상태 응답 |
+| GitHub dispatch | token/repo | token 없으면 no-op |
 
-- 주요 테이블 PK를 serial에서 UUID로 변경
-  - `users`, `products`, `cartItems`, `orders`, `deliveryAddresses`, `wishlistItems`
-- UUID 자동 생성 (defaultRandom)
-- 타입 정의 변경: `id: number` → `id: string`
-- Express Request, SessionData 타입 업데이트
+## 10. Adding or Changing a Feature
 
-**카카오 주소 검색 API 추가**
+1. `shared/schema.ts`/`shared/constants`의 기존 타입과 상태를 확인합니다.
+2. route 입력을 Zod로 검증합니다.
+3. user-owned resource에는 소유권 조건을 포함한 storage 메서드를 작성합니다.
+4. 비동기 handler를 `asyncHandler`로 감쌉니다.
+5. cache가 있는 read model이면 mutation 후 invalidation을 추가합니다.
+6. 외부 호출은 timeout, 민감정보 마스킹, 멱등성/재시도 정책을 명시합니다.
+7. DB 변경이면 생성 migration, SQL 검토, 백업, 적용/검증/rollback을 준비합니다.
+8. `npm run verify`와 위험 경로의 수동/integration test를 실행합니다.
+9. README/관련 guide/MEMORY의 상태와 Known Issues를 갱신합니다.
 
-- `server/routes/search.routes.ts` 추가
-- `/api/search/address` - 주소 검색 API
-- `/api/search/keyword` - 키워드(장소) 검색 API
-- 카카오 로컬 API 연동
+## 11. Troubleshooting
 
-**환경 변수 추가**
+### 앱 시작 즉시 필수 env 오류
 
-- `KAKAO_REST_API_KEY` - 카카오 REST API 키
+`DATABASE_URL`, `SESSION_SECRET`을 확인합니다. `npm run dev`가 `.env`를 읽는다고 가정하지 말고 `./startShaki.sh`를 사용하세요.
 
-### 2025-12-17
+### 세션이 유지되지 않음
 
-**이메일 인증 기능 추가**
+- `sessions` table 존재
+- frontend request의 credentials 포함
+- `CORS_ORIGINS`가 path 없는 정확한 origin인지
+- 운영 HTTPS에서 secure cookie와 `X-Forwarded-Proto`/`X-Original-Proto`
+- API Gateway가 Cookie header를 보존하는지
 
-- 회원가입 시 이메일 인증코드 발송 필수
-- Resend 이메일 서비스 연동
-- `server/services/email.service.ts` 추가
-- `emailVerifications` 테이블 추가
-- 인증 API 추가: `send-verification`, `verify-email`, `check-verification`
+### 결제 route가 503
 
-**환경 변수 추가**
+해당 router의 enable key가 없는 정상 비활성 상태일 수 있습니다. 비밀값은 출력하지 말고 env 존재 여부와 서버 시작의 enable 상태 로그만 확인합니다.
 
-- `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_FROM_NAME`
+### DB 연결은 되지만 migration 실패
 
-### 2025-12-16
+앱의 개발 DB SSL 기본값과 Drizzle CLI 기본값이 다릅니다. 로컬 평문 PostgreSQL은 `DB_SSL=false`를 명시하세요. 운영은 CA와 인증 설정을 먼저 확인합니다. 현재 앱은 CA 파일이 없으면 경고 후 identity 검증 없는 TLS로 계속 연결하므로, 이 로그가 보이면 정상 기동으로 취급하지 않습니다.
 
-**소셜 로그인 지원**
+### 배포 후 health는 200인데 API가 실패
 
-- 네이버 OAuth 로그인 추가
-- `server/services/naver.service.ts` 추가
-- `server/routes/oauth.routes.ts` 추가
-- users 테이블에 `naverId`, `socialProvider` 필드 추가
-- `passwordHash` nullable로 변경 (소셜 로그인 사용자 지원)
+`/api/health`는 DB readiness를 검사하지 않습니다. DB 연결 시작 로그, `SELECT 1`, 세션 table, CORS를 별도로 확인합니다.
 
-**환경 변수 추가**
+## Related Documents
 
-- `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`, `NAVER_CALLBACK_URL`
-- `FRONTEND_URL`, `CORS_ORIGINS`
-
-### 2025-12-15
-
-**orders 테이블 스키마 변경**
-
-- `shippingDetailAddress` 추가 (상세 주소)
-- `shippingRequestNote` 추가 (배송 요청사항)
-- 결제 필드 일반화 (PG사 통합 대응)
-  - `tossPaymentKey` → `paymentKey`
-  - `tossOrderId` → `externalOrderId`
-  - `paymentProvider` 추가
-
----
-
-## 추가 리소스
-
-- [Express.js 문서](https://expressjs.com/)
-- [Drizzle ORM 문서](https://orm.drizzle.team/)
-- [Zod 문서](https://zod.dev/)
-- [토스페이먼츠 API 문서](https://docs.tosspayments.com/)
-- [네이버페이 개발자센터](https://developer.pay.naver.com/)
-- [네이버 로그인 API 문서](https://developers.naver.com/docs/login/api/)
-- [카카오 로컬 API 문서](https://developers.kakao.com/docs/latest/ko/local/dev-guide)
-- [Cloudinary 문서](https://cloudinary.com/documentation)
-- [Neon PostgreSQL 문서](https://neon.tech/docs/)
-
----
-
-MIT License
+- [README](./README.md)
+- [Architecture](./docs/ARCHITECTURE.md)
+- [DevOps](./docs/DEVOPS.md)
+- [Schema Migration Guide](./SCHEMA_MIGRATION_GUIDE.md)
+- [NaverPay Guide](./docs/NAVERPAY_GUIDE.md)
+- [MEMORY](./MEMORY.md)

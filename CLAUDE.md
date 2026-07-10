@@ -1,103 +1,58 @@
 # CLAUDE.md
 
-## Project Overview
+ShakiShaki Archive Backend 작업자는 먼저 다음을 읽습니다.
 
-ShakiShaki Archive Backend - 한국어 전자상거래 플랫폼의 API 전용 백엔드 서버. Express.js + TypeScript + Drizzle ORM + PostgreSQL 기반.
+1. `AGENTS.md` — 저장소 작업 규칙과 안전 경계
+2. `Codex.md` — stack profile과 완료 기준
+3. `MEMORY.md` — 현재 상태, Known Issues, Needs Verification
+4. `README.md` — 실행과 문서 지도
 
 ## Commands
 
 ```bash
-# 개발 서버 실행
-npm run dev
-
-# 프로덕션 빌드
-npm run build
-
-# 프로덕션 서버 실행
-npm start
-
-# TypeScript 타입 체크
+npm ci
+cp .env.example .env
+./startShaki.sh       # .env 자동 로드
+./stopShaki.sh
+npm run docs:lint
 npm run check
-
-# 데이터베이스 스키마 푸시
-npm run db:push
+npm run build
+npm run verify
 ```
+
+`npm run dev`는 `.env`를 자동 로드하지 않습니다. 자동 테스트와 source-code lint script는 현재 없습니다.
+
+DB 변경:
+
+```bash
+npm run db:generate
+npm run db:migrate
+```
+
+운영에서 `npm run db:push`를 사용하지 않습니다. `migrations/`는 현재 Git ignore 대상이므로 DB 변경 전 추적 정책과 운영 schema drift를 먼저 해결합니다.
 
 ## Architecture
 
-### Directory Structure
+- Node.js 20 + TypeScript ESM + Express 4
+- PostgreSQL + Drizzle ORM
+- PostgreSQL-backed session cookie authentication
+- routes: `server/routes/`
+- external integrations: `server/services/`
+- data access/transactions: `server/storage.ts`
+- schema and shared policy: `shared/`
+- app composition/startup/shutdown: `server/index.ts`
 
-```
-server/           # Express 백엔드
-├── index.ts      # 서버 진입점 (Express 앱 초기화, CORS, 로깅)
-├── routes.ts     # 모든 API 라우트 정의
-├── auth.ts       # 인증 미들웨어 (isAuthenticated, isAdmin, populateUser)
-├── storage.ts    # IStorage 인터페이스 및 DatabaseStorage 구현
-├── db.ts         # Drizzle ORM + pg Pool 설정
-└── scripts/      # seed-data, create-admin 등 유틸리티 스크립트
+모든 endpoint는 `/api` 아래입니다. OAuth backend는 Naver/Kakao만 구현되어 있습니다. 결제 provider는 관련 env key가 있어야 활성화되며, 코드 존재는 운영 사용을 뜻하지 않습니다.
 
-shared/
-└── schema.ts     # Drizzle 스키마 + Zod 검증 스키마 + TypeScript 타입
-```
+## High-risk Boundaries
 
-### Key Patterns
+- 실제 `.env`/`.env.production` 또는 secret 값을 읽어 문서·로그에 복사하지 않습니다.
+- 인증 로그에 cookie/session/token preview를 추가하지 않습니다. 현재 auth debug preview는 Known Issue입니다.
+- 결제 승인/취소는 중복 callback, PG 성공/DB 실패, idempotency와 reconciliation을 검토합니다.
+- migration은 backup, SQL review, staging, verification, rollback/forward-fix를 포함합니다.
+- `main` push는 ECS production 배포를 촉발할 수 있습니다. 설정·script 변경도 push 전에 workflow target을 확인합니다.
+- AWS 배포, PG 호출, email/Telegram 발송, legacy `scripts/sync-shared.sh`는 명시 승인 없이 실행하지 않습니다.
 
-**Storage Pattern**: 모든 DB 작업은 `IStorage` 인터페이스를 통해 추상화됨. `storage.ts`의 `DatabaseStorage` 클래스가 실제 구현.
+## Documentation Rule
 
-**Authentication**: 세션 기반 인증 (express-session + connect-pg-simple). 세션은 PostgreSQL `sessions` 테이블에 저장.
-
-**Validation**: Zod 스키마로 요청 데이터 검증. `drizzle-zod`의 `createInsertSchema`로 DB 스키마에서 자동 생성.
-
-### Database Schema (주요 테이블)
-
-- `users` - 사용자 (email, passwordHash, userName, 주소 정보, isAdmin)
-- `products` - 상품 (name, price, categoryId, images, detailImages)
-- `productVariants` - 상품 옵션/사이즈 (size, color, sku, stockQuantity)
-- `productSizeMeasurements` - 사이즈별 실측 정보
-- `categories` - 카테고리
-- `cartItems` - 장바구니 (userId, productId, variantId)
-- `orders` - 주문
-- `orderItems` - 주문 상품 (개별 상품별 status, trackingNumber)
-- `deliveryAddresses` - 배송지 관리
-- `wishlistItems` - 위시리스트
-
-### API Route Categories
-
-- `/api/auth/*` - 인증 (signup, login, logout, user, password)
-- `/api/products`, `/api/categories` - 공개 API
-- `/api/cart`, `/api/orders`, `/api/wishlist`, `/api/user/addresses` - 인증 필요
-- `/api/admin/*` - 관리자 전용 (상품/주문/카테고리 관리)
-
-## Environment Variables
-
-필수:
-
-- `DATABASE_URL` - PostgreSQL 연결 문자열
-- `SESSION_SECRET` - 세션 암호화 키
-
-선택:
-
-- `NODE_ENV` - development/production
-- `PORT` - 서버 포트 (기본값: 5000)
-- `SECURE_COOKIE` - 프로덕션에서 secure 쿠키 비활성화 시 "false"
-
-## TypeScript Path Aliases
-
-```typescript
-"@/*"       -> "./client/src/*"
-"@shared/*" -> "./shared/*"
-```
-
-## Adding New Features
-
-1. `shared/schema.ts`에 테이블 스키마 + Zod 스키마 + 타입 정의
-2. `npm run db:push`로 DB 반영
-3. `server/storage.ts`에 IStorage 인터페이스 메서드 추가 + DatabaseStorage 구현
-4. `server/routes.ts`에 API 엔드포인트 추가
-
-## Project Guidelines
-
-- 보안·안정성·코딩 컨벤션 원칙: 전역 규칙(`~/.claude/rules/security.md`, `reliability.md`)을 따른다. 이 파일에 재기술하지 않는다.
-- 이 프로젝트의 예외: 인증은 **express-session + connect-pg-simple 세션 기반** — JWT 아님. 세션은 PostgreSQL `sessions` 테이블에 저장.
-- `.claudeignore`에 명시된 경로(.env, certs/ 등)는 읽기·분석·전송 대상에서 제외한다.
-- main push = 프로덕션 배포(deploy-ecr.yml). 문서·설정만 변경한 커밋은 메시지에 `[skip ci]`를 붙인다.
+현재 설명은 코드/config를 근거로 하고 확인할 수 없는 infra, active provider, SLA, performance, cost는 `Needs Verification`로 기록합니다. 날짜가 붙은 release/quality 문서는 역사 snapshot입니다.

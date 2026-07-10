@@ -1,5 +1,7 @@
 node_modules
 dist
+.shakishaki.pid
+.shakishaki.pid.start.lock/
 .DS_Store
 server/public
 vite.config.ts.*
@@ -13,8 +15,10 @@ dev.sh
 certs/
 *.pem
 backup*.sql
+/backup*.dump
 migrate*.sql
 migrate*.ts
 *MIGRAT*.md
+!/SCHEMA_MIGRATION_GUIDE.md
 migrations/*
 카카오페이*

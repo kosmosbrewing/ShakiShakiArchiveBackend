@@ -51,8 +51,10 @@ async function runMigration() {
     throw error;
   } finally {
     await pool.end();
-    process.exit(0);
   }
 }
 
-runMigration();
+runMigration().catch((error) => {
+  console.error("❌ 마이그레이션 runner 종료:", error);
+  process.exitCode = 1;
+});

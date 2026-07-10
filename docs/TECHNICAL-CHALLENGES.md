@@ -1,539 +1,256 @@
-# Technical Challenges
+# Technical Challenges and Trade-offs
 
-> ShakiShaki Archive Backend 개발 과정에서 해결한 실제 기술 문제와 의사결정 과정
+> 코드 기준일: 2026-07-10. 측정되지 않은 성능 개선율이나 운영 수치를 제거하고, 현재 코드가 실제로 선택한 경계와 남은 위험을 기록합니다.
 
----
+## 1. Order Creation and Stock
 
-## 📋 목차
+### Problem
 
-1. [주문번호 중복 생성 방지](#1-주문번호-중복-생성-방지)
-2. [PG사별 결제 취소 분기 처리](#2-pg사별-결제-취소-분기-처리)
-3. [N+1 쿼리 최적화](#3-n1-쿼리-최적화)
-4. [재고 선점 Self-Lock Bypass](#4-재고-선점-self-lock-bypass)
-5. [관리자 Rate Limiting 분리](#5-관리자-rate-limiting-분리)
+client가 전달한 가격·재고를 신뢰하면 가격 변조, 품절 초과 판매, 동시에 같은 vintage item을 구매하는 race가 발생합니다.
 
----
+### Current design and gap
 
-## 1. 주문번호 중복 생성 방지
+- route에서 product/variant를 DB로 다시 조회하고 direct purchase의 product/variant 활성 상태를 확인
+- direct purchase route는 `variant.productId === product.id`를 확인하지 않음
+- `storage.createOrder` transaction은 전달받은 variant ID 대신 `productId + options의 size`로 variant를 다시 찾고 stock을 잠금·차감하지만 `isAvailable`을 필터하지 않음
+- order를 `isStockReserved=true`, `pending_payment`로 생성
+- 5분 동안 결제가 진행되지 않으면 cleanup이 재고 복구와 주문 삭제를 한 transaction으로 수행
 
-**📅 해결일**: 2026-01-19
-**🏷️ 태그**: Database, Transaction, Uniqueness
+### Trade-off
 
-### Background
+결제 전에 stock을 차감하므로 장시간 결제창이나 callback 지연이 5분 cleanup과 경합할 수 있습니다. TTL은 빠른 재고 회수와 결제 UX 사이의 정책값입니다. 현재 variant 소속 검증 누락과 size 기반 재조회 때문에 다른 상품 variant에서 가져온 size로 대상 상품의 다른/비활성 variant가 선택될 수 있어, 수정 전에는 주문 정합성 gap으로 취급합니다.
 
-- 사용자가 같은 날 "주문 → 취소 → 재주문" 시 동일한 주문번호 생성
-- 밀리초 기반 timestamp + 6자리 random → 같은 ms에 충돌 가능
-- PG사 API 호출 시 `duplicate key` 에러 → 결제 실패
+### Required verification
 
-### Problem Analysis
+- 동일 variant에 대한 concurrent order test
+- 다른 product의 variant ID, 같은 size의 비활성 variant를 사용한 거부 test
+- callback 직전/직후 cleanup race
+- payment provider별 결제 유효 시간과 5분 TTL 정렬
+- cleanup 다중 task 실행에서 stock 중복 복구 방지
 
-**기존 코드**
-```typescript
-// shared/constants/order.ts
-export function generateExternalOrderId(): string {
-  const timestamp = Date.now().toString(36); // 밀리초
-  const random = Math.random().toString(36).substring(2, 8); // 6자리
-  return `${dateStr}_SHAKI_${timestamp}_${random}`;
-}
-// 충돌 확률: 같은 ms에 여러 요청 시 36^6 = 2,176,782,336 중 충돌 가능
+## 2. Multi-provider Routing
+
+### Problem
+
+`/payments` 아래 Toss router를 먼저 mount하면 더 구체적인 `/payments/kakaopay`, `/payments/naverpay` 요청이 Toss의 router-level disabled gate에 걸릴 수 있습니다.
+
+### Current design
+
+`server/routes/index.ts`는 구체 provider를 먼저 mount합니다.
+
+```text
+/payments/naverpay
+/payments/kakaopay
+/naverpay-order
+/payments (Toss)
 ```
 
-**충돌 시나리오**
-1. 사용자 A: 14:30:52.123 주문 → `20260119_SHAKI_k8q9f_A3F9B2`
-2. 사용자 A: 14:30:52.123 (같은 ms) 재주문 → `20260119_SHAKI_k8q9f_A3F9B2` (동일)
-3. DB INSERT 실패: `ERROR: duplicate key value violates unique constraint`
-
-### Solution Design
-
-**개선 전략**
-1. **시분초 기반 변경**: `Date.now()` → `HHmmss` (초 단위)
-2. **난수 길이 최적화**: 6자리 → 4자리 (36^4 = 1,679,616)
-3. **DB UNIQUE 제약조건**: 혹시 모를 충돌 차단
-4. **Drizzle 스키마 반영**: `.unique()` 추가로 `db:push` 시 유지
-
-### Implementation
-
-**개선 코드**
-```typescript
-// shared/constants/order.ts
-export function generateExternalOrderId(): string {
-  const now = new Date();
-  const dateStr = // YYYYMMDD
-    now.getFullYear() +
-    String(now.getMonth() + 1).padStart(2, "0") +
-    String(now.getDate()).padStart(2, "0");
-
-  const timeStr = // HHMMSS
-    String(now.getHours()).padStart(2, "0") +
-    String(now.getMinutes()).padStart(2, "0") +
-    String(now.getSeconds()).padStart(2, "0");
-
-  const random = Math.random().toString(36).substring(2, 6); // 4자리
-  return `${dateStr}_SHAKI_${timeStr}_${random}`;
-}
-
-// 예: 20260119_SHAKI_143052_A3F9
-```
-
-**DB 스키마 반영**
-```typescript
-// shared/schema.ts
-export const orders = pgTable("orders", {
-  // ...
-  externalOrderId: text("external_order_id").notNull().unique(),
-});
-```
-
-**마이그레이션**
-```sql
--- migrations/add-unique-external-order-id.sql
-ALTER TABLE orders
-ADD CONSTRAINT UQ_orders_external_order_id UNIQUE (external_order_id);
-```
-
-### Impact
-
-| 지표 | 개선 전 | 개선 후 | 개선율 |
-|------|---------|---------|--------|
-| 중복 주문번호 발생률 | 5% | 0% | **100%** |
-| PG사 결제 실패율 | 5% | 0% | **100%** |
-| CS 문의 (주문번호 관련) | 10건/주 | 0건 | **100%** |
-
-**충돌 확률 계산**
-- 같은 초에 100건 주문 시: `1 - (1 - 1/1,679,616)^100 ≈ 0.006%`
-- 실제 트래픽: 초당 최대 10건 → 충돌 확률 무시 가능
-
-### Decision Making
-
-**대안 검토**
-
-1. **DB 시퀀스 방식**
-   - 장점: 100% 고유성 보장
-   - 단점: DB 의존성, 매일 리셋 로직 복잡, 시각 정보 부족
-
-2. **UUID v4**
-   - 장점: 완벽한 고유성
-   - 단점: 길이 길어서 사용자 경험 저하, PG사 API 제약
-
-3. **시분초 방식 (선택)**
-   - 장점: 간결, 시각 정보 포함, 충돌 확률 충분히 낮음
-   - 단점: 이론적으로 충돌 가능 (실무에서는 무시 가능)
-
-**최종 선택**: 시분초 + 4자리 난수 방식
-**이유**: 단순성 + 실용성 + 사용자 경험
-
----
-
-## 2. PG사별 결제 취소 분기 처리
-
-**📅 해결일**: 2026-01-18
-**🏷️ 태그**: Payment Gateway, Integration, Branching Logic
-
-### Background
-
-- 토스페이먼츠, 네이버페이 두 PG사 연동
-- 주문 취소 시 모든 주문이 토스 API로 호출 → 네이버페이 주문은 404 에러
-
-### Problem Analysis
-
-**기존 코드**
-```typescript
-// server/routes/order.routes.ts:616
-// TODO: 네이버페이 등 다른 PG사 추가 시 order.paymentProvider로 분기
-let payment;
-try {
-  payment = await cancelPayment(order.paymentKey, cancelReason);
-  // ❌ 항상 토스페이먼츠 API만 호출
-} catch (error) {
-  logger.error("Payment cancellation failed", { error });
-  throw new Error("결제 취소에 실패했습니다.");
-}
-```
-
-**Root Cause**
-- `orders.paymentProvider` 필드는 존재 (DB 스키마)
-- 결제 승인 시 저장은 되지만, 취소 시 확인 로직 누락
-
-**에러 로그**
-```
-[ERROR] Toss Payments API Error: 404 Not Found
-{
-  "code": "NOT_FOUND_PAYMENT",
-  "message": "존재하지 않는 결제 건입니다.",
-  "paymentKey": "naverpay_1234567890"
-}
-```
-
-### Solution Design
-
-**개선 전략**
-1. **PG사 분기 로직**: `order.paymentProvider` 확인 후 API 선택
-2. **응답 정규화**: 네이버페이 응답 → 토스 호환 형식 변환
-3. **에러 핸들링**: PG사별 Error Class 분리
-4. **부분 취소 제한**: 네이버페이는 전체 환불만 지원
-
-### Implementation
-
-**개선 코드**
-```typescript
-// server/routes/order.routes.ts:616
-const provider = order.paymentProvider || "toss"; // 기본값: 토스
-
-if (provider === "naverpay") {
-  // 네이버페이 취소
-  const naverPayResponse = await cancelNaverPayPayment({
-    paymentId: order.paymentKey,
-    cancelAmount: totalAmount,
-    cancelReason,
-    cancelRequester: "2", // 가맹점 관리자
-  });
-  payment = normalizeNaverPayCancelResponse(naverPayResponse);
-} else {
-  // 토스페이먼츠 취소
-  payment = await cancelTossPayment(order.paymentKey, cancelReason);
-}
-
-logger.info("Payment cancelled successfully", {
-  orderId: order.id,
-  provider,
-  paymentKey: order.paymentKey,
-  amount: totalAmount,
-});
-```
-
-**응답 정규화 함수**
-```typescript
-// server/services/naverpay.service.ts
-function normalizeNaverPayCancelResponse(response: NaverPayCancelResponse) {
-  return {
-    paymentKey: response.paymentId,
-    orderId: response.primaryPayMeans?.paymentId,
-    status: "CANCELED",
-    totalAmount: response.totalPayAmount,
-    method: "네이버페이",
-    cancelAmount: response.totalPayAmount,
-    cancelReason: response.detail?.cancelReason,
-    canceledAt: response.detail?.admissionYmdt,
-  };
-}
-```
-
-### Impact
-
-| 지표 | 개선 전 | 개선 후 | 개선율 |
-|------|---------|---------|--------|
-| 네이버페이 취소 성공률 | 0% | 100% | **100%** |
-| 토스 개발자센터 404 에러 | 20건/일 | 0건 | **100%** |
-| CS 응대 시간 | 평균 15분 | 0분 | **100%** |
-
-### Decision Making
-
-**대안 검토**
-
-1. **PG SDK 직접 사용**
-   - 장점: 타입 안정성
-   - 단점: 버전 관리 복잡, 네이버페이는 SDK 없음
-
-2. **HTTP Client 사용 (선택)**
-   - 장점: 유연성, 모든 PG사 통일 가능
-   - 단점: 타입 직접 정의 필요
-
-**최종 선택**: Axios HTTP Client
-**이유**: 확장성 (KakaoPay, PayPal 등 추가 용이)
-
----
-
-## 3. N+1 쿼리 최적화
-
-**📅 해결일**: 2026-01-17
-**🏷️ 태그**: Database, Performance, Query Optimization
-
-### Background
-
-- 주문 목록 API: 10건 조회 시 11번 쿼리 발생
-- `storage.getOrders()`: orders 1회 + orderItems 10회
-
-### Problem Analysis
-
-**기존 쿼리 (N+1)**
-```sql
-SELECT * FROM orders WHERE user_id = ?;  -- 1회
-
--- 각 주문마다 반복 (10회)
-SELECT * FROM order_items WHERE order_id = ?;  -- 10회
-SELECT * FROM products WHERE id = ?;  -- 10회
-
--- 총 21번 쿼리
-```
-
-**Performance Impact**
-- API 응답 시간: 300ms (주문 10건 기준)
-- DB CPU 사용률: 평균 40%
-- 동시 접속 100명 시 DB 병목
-
-### Solution Design
-
-**개선 전략**
-1. **LEFT JOIN**: orders + orderItems + products 단일 쿼리
-2. **Map 기반 Grouping**: 쿼리 결과를 Order 구조로 변환
-3. **타입 안정성**: 반환 타입 명시
-
-### Implementation
-
-**개선 코드**
-```typescript
-// server/storage.ts
-async getOrders(userId: string) {
-  const result = await db
-    .select()
-    .from(orders)
-    .leftJoin(orderItems, eq(orders.id, orderItems.orderId))
-    .leftJoin(products, eq(orderItems.productId, products.id))
-    .leftJoin(productVariants, eq(orderItems.variantId, productVariants.id))
-    .where(eq(orders.userId, userId))
-    .orderBy(desc(orders.createdAt));
-
-  // Map으로 grouping (O(n) 시간 복잡도)
-  const orderMap = new Map<number, Order & { orderItems: OrderItem[] }>();
-
-  result.forEach((row) => {
-    if (!orderMap.has(row.orders.id)) {
-      orderMap.set(row.orders.id, {
-        ...row.orders,
-        orderItems: [],
-      });
-    }
-
-    if (row.order_items) {
-      orderMap.get(row.orders.id)!.orderItems.push({
-        ...row.order_items,
-        product: row.products,
-        variant: row.product_variants,
-      });
-    }
-  });
-
-  return Array.from(orderMap.values());
-}
-```
-
-### Impact
-
-| 지표 | 개선 전 | 개선 후 | 개선율 |
-|------|---------|---------|--------|
-| 쿼리 횟수 (주문 10건) | 21회 | 1회 | **95%** |
-| API 응답 시간 (p95) | 300ms | 90ms | **70%** |
-| DB CPU 사용률 | 40% | 15% | **62%** |
-| RDS Connection 사용 | 12/20 | 5/20 | **58%** |
-
-**CloudWatch Metrics**
-- RDS `DatabaseConnections`: 평균 12 → 5
-- RDS `ReadIOPS`: 평균 80 → 30
-
----
-
-## 4. 재고 선점 Self-Lock Bypass
-
-**📅 해결일**: 2024-12
-**🏷️ 태그**: Business Logic, UX, Concurrency
-
-### Background
-
-- 빈티지 의류 특성: 단일 재고 (1개)
-- 사용자가 "주문 → 결제 중단 → 재주문" 시 본인이 선점한 재고에 막힘
-
-### Problem Analysis
-
-**시나리오**
-```
-초기 재고: 5개
-
-사용자 A:
-1. 주문 생성 (pending_payment) → 2개 선점 → 재고 3개
-2. 결제 페이지 이동 → 결제 중단 (10분 타임아웃)
-3. 재주문 시도 (2개)
-
-❌ 재고 부족: 3 < 2 + 2 (기존 예약 2개 + 신규 예약 2개)
-```
-
-**Business Impact**
-- 사용자 경험 저하: "재고 있는데 왜 주문 안되나요?"
-- CS 문의 급증: 하루 평균 20건
-- 매출 손실: 재주문 실패율 30%
-
-### Solution Design
-
-**개선 전략**
-1. **본인 주문 재고 복구**: pending/paying 주문 재고 계산 시 제외
-2. **Size 정규화**: `trim().toLowerCase()`로 키 일치 보장
-3. **트랜잭션 안정성**: SELECT FOR UPDATE로 동시성 제어
-
-### Implementation
-
-```typescript
-// server/routes/stock.routes.ts
-async function checkStockAvailability(userId: string, items: OrderItem[]) {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-
-    // 1. 본인 예약 재고 조회 (최근 10분 이내)
-    const userOrdersResult = await client.query(
-      `SELECT oi.product_id, oi.quantity, oi.options
-       FROM orders o
-       JOIN order_items oi ON oi.order_id = o.id
-       WHERE o.user_id = $1
-         AND o.status IN ('pending_payment', 'paying')
-         AND o.created_at > NOW() - INTERVAL '10 minutes'`,
-      [userId]
-    );
-
-    // 2. Map으로 본인 예약 재고 집계
-    const userReservedStock = new Map<string, number>();
-    userOrdersResult.rows.forEach((item) => {
-      const size = normalizeSize(extractSize(item.options));
-      const key = `${item.product_id}-${size}`;
-      userReservedStock.set(key, (userReservedStock.get(key) || 0) + item.quantity);
-    });
-
-    // 3. 재고 확인 (본인 예약분 복구)
-    for (const item of items) {
-      const variantKey = `${item.productId}-${item.size}`;
-      const availableStock = await getAvailableStock(variantKey);
-      const userReserved = userReservedStock.get(variantKey) || 0;
-      const effectiveStock = availableStock + userReserved; // ✅ 복구
-
-      if (effectiveStock < item.quantity) {
-        throw new Error(`재고 부족: ${item.productName} (${item.size})`);
-      }
-    }
-
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-```
-
-### Impact
-
-| 지표 | 개선 전 | 개선 후 | 개선율 |
-|------|---------|---------|--------|
-| 재주문 성공률 | 70% | 100% | **43%** |
-| CS 문의 (재고 관련) | 20건/일 | 2건/일 | **90%** |
-| 매출 증가 | - | 재주문 실패 손실 제거 | - |
-
-### Trade-offs
-
-**복잡도 증가 vs 사용자 경험**
-- 추가 쿼리 1회, Map 연산 추가
-- 하지만 사용자 경험 개선 효과가 훨씬 큼
-
-**최종 선택**: 사용자 경험 우선
-
----
-
-## 5. 관리자 Rate Limiting 분리
-
-**📅 해결일**: 2026-01-17
-**🏷️ 태그**: Security, Performance, Admin
-
-### Background
-
-- 전역 Rate Limit: 15분/100 요청 (IP 기반)
-- 관리자가 주문 대량 처리 시 API 차단 → 업무 중단
-
-### Problem Analysis
-
-**기존 코드**
-```typescript
-// server/config/security.ts
-export const globalRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15분
-  max: 100, // 모든 경로에 동일 적용
-  keyGenerator: (req) => req.ip,
-});
-
-// ❌ 관리자도 동일한 제한 적용
-app.use(globalRateLimiter);
-```
-
-**Business Impact**
-- 관리자 업무 효율 저하: 주문 100건 처리 시 15분 대기
-- 긴급 상황 대응 불가: 재고 조정, 주문 취소 등
-
-### Solution Design
-
-**개선 전략**
-1. **관리자 전용 Rate Limiter**: 5분/300 요청 (userId 기반)
-2. **전역 제한 제외**: `/api/admin/*` 경로는 globalRateLimiter skip
-3. **보안 강화**: Path matching 취약점 수정
-
-### Implementation
-
-```typescript
-// server/config/security.ts
-export const globalRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  skip: (req) => {
-    // ✅ 정확한 경로 매칭
-    if (req.path === "/api/admin" || req.path.startsWith("/api/admin/")) {
-      return true;
-    }
-    return false;
-  },
-  keyGenerator: (req) => req.ip,
-});
-
-export const adminRateLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000, // 5분
-  max: 300,
-  keyGenerator: (req) => {
-    const userId = req.session?.userId;
-    return userId ? `admin_user_${userId}` : `admin_ip_${req.ip}`;
-  },
-  message: "관리자 요청 제한 초과 (5분/300 요청)",
-});
-```
-
-```typescript
-// server/routes/admin/index.ts
-const router = Router();
-
-router.use(adminRateLimiter); // 관리자 라우터에만 적용
-router.use(isAuthenticated);
-router.use(isAdmin);
-```
-
-### Impact
-
-| 지표 | 개선 전 | 개선 후 | 개선율 |
-|------|---------|---------|--------|
-| 관리자 업무 효율 | 100건/15분 | 300건/5분 | **300%** |
-| 긴급 대응 가능 | ❌ | ✅ | - |
-| Rate Limit 차단 | 20건/주 | 0건 | **100%** |
-
-### Security Validation
-
-**Path Matching 테스트**
-```typescript
-const testCases = [
-  { path: "/api/admin", expected: true },
-  { path: "/api/admin/", expected: true },
-  { path: "/api/admin/orders", expected: true },
-  { path: "/api/administrator", expected: false }, // ❌ 전역 제한 적용
-  { path: "/api/admin-test", expected: false }, // ❌ 전역 제한 적용
-];
-```
-
----
+Toss/NaverPay는 enable key가 없을 때 전체 router를 `503`으로 차단하여 미사용 code path의 공격 표면을 줄입니다.
+
+### Trade-off
+
+provider 코드가 한 application에 모두 남아 있어 config 오류로 의도치 않게 활성화될 수 있습니다. enable 조건도 provider에 필요한 모든 key가 아니라 대표 key 하나만 확인합니다.
+
+### Required verification
+
+- 각 enable key 조합에서 route matrix 200/401/503 test
+- 구체 prefix가 Toss gate를 우회하는지 smoke test
+- 실제 운영에서 미사용 provider key 제거
+
+## 3. Payment Idempotency and Cross-system Consistency
+
+### Problem
+
+PG 승인/취소는 외부 side effect이고 DB transaction과 원자적으로 묶을 수 없습니다. callback 중복, network timeout, PG 성공 뒤 DB 실패가 서로 다른 상태를 만들 수 있습니다.
+
+### Current design
+
+- 주문 상태 precheck/conditional update/row lock 패턴을 경로별로 사용
+- provider apply/cancel에 idempotency key를 지원하는 client가 있음
+- provider amount와 DB amount 비교
+- 이미 결제된 callback은 success redirect로 처리하는 경로
+- stock 부족 시 provider cancel 시도
+- 실패 로그와 일부 Telegram alert
+
+### Remaining gap
+
+- provider별 상태 guard가 완전히 같은 수준인지 자동 test가 없음
+- PG 성공/DB 실패를 durable하게 재시도하는 outbox/saga 없음
+- partial cancel/return refund reconciliation을 수동으로 해야 할 수 있음
+- notification/callback authenticity는 provider별 재검증 필요
+
+### Recommendation
+
+돈이 움직이는 요청마다 stable operation ID, provider response snapshot(민감정보 제외), intended state, reconciliation status를 durable하게 저장하고 관리자 멱등 재처리 경로를 두는 것이 우선입니다.
+
+## 4. KakaoPay `tid` Across Redirects
+
+### Problem
+
+ready와 callback 사이에 provider `tid`가 필요하지만 web process memory만 사용하면 restart/scale-out에서 유실됩니다. 반대로 browser session만 의존하면 callback cookie 유실에 취약합니다.
+
+### Current design
+
+- process-local Map primary
+- PostgreSQL-backed session backup
+- callback에서 memory/session source를 구분해 log
+- 15분 TTL, 5분 cleanup interval
+
+### Trade-off
+
+Map과 session은 모두 조건부입니다. callback이 다른 task로 가고 browser cookie도 없으면 lookup 실패할 수 있습니다. durable order-level storage보다 schema change가 없다는 장점만 있습니다.
+
+### Trigger for redesign
+
+`both-miss` 관측, task scale-out, rolling deploy 중 사용자 결제 실패가 확인되면 order/payment attempt table 또는 shared TTL store로 이동합니다.
+
+## 5. Admin 2FA Availability vs Security
+
+### Problem
+
+Telegram 전달 장애 시 관리자가 완전히 잠기지 않도록 복구 경로가 필요하지만, 고정 fallback은 credential 위험입니다.
+
+### Current design
+
+- password 성공 후 session에 challenge ID, code hash, expiry, attempts 저장
+- production code를 response에 노출하지 않음
+- Telegram 실패 시 허용 조건에서만 recovery path
+- `isAdmin`이 `admin2faVerifiedAt`을 요구
+- high-risk admin action용 challenge 발급 route 존재
+
+### Remaining gap
+
+config에 recovery code fallback이 있으므로 운영 env 누락이 startup failure가 아닙니다. 운영에서 `ADMIN_2FA_RECOVERY_CODE`를 별도 secret으로 주입하고 rotation/audit 절차가 필요합니다.
+
+## 6. Session Cookies Behind Proxies
+
+### Problem
+
+cross-origin frontend, HTTPS termination, API Gateway/VPC Link가 함께 있으면 Express가 request를 insecure로 판단해 secure cookie를 누락할 수 있습니다.
+
+### Current design
+
+- `trust proxy=1`
+- `X-Original-Proto`를 `X-Forwarded-Proto`로 정규화
+- optional `X-Original-Host`, `X-Original-Cookie` 처리
+- production cookie `SameSite=None; Secure`
+- exact-origin production CORS allowlist와 credentials
+
+### Risk
+
+proxy가 public client의 `X-Original-*`를 제거/덮어쓰는지 저장소에서 확인할 수 없습니다. 신뢰 경계 밖 사용자가 이 header를 조작할 수 있으면 secure 판단/host/cookie에 영향을 줄 수 있습니다.
+
+### Verification
+
+실제 ingress에서 spoofed header test, credentialed preflight/login/logout, callback 후 session 유지 test가 필요합니다.
+
+## 7. In-process Schedulers and Horizontal Scaling
+
+### Problem
+
+web task마다 cron/interval이 시작되므로 scale-out 시 작업 수가 task 수만큼 늘어납니다.
+
+### Current design
+
+- auto-confirm: `FOR UPDATE SKIP LOCKED`로 DB coordination
+- ghost order cleanup: 조건 조회 후 order별 atomic restore/delete
+- stock reservation cleanup: legacy cleanup
+- KakaoPay tid cleanup: local Map
+
+### Trade-off
+
+별도 worker infrastructure 없이 단순하지만 task 수와 배포 lifecycle에 결합됩니다. 모든 job이 distributed idempotency를 같은 수준으로 보장하지 않습니다.
+
+### Verification
+
+실제 desired task count를 먼저 확인하고, 2개 process에서 동시에 job을 실행하는 integration test를 추가합니다.
+
+## 8. Query and Cache Scalability
+
+### Current design
+
+- products/users/orders 일부는 pagination
+- ETag와 Cache-Control 전략
+- user lookup 5분 memory cache
+- Meilisearch optional, 초기화 실패 시 server 지속
+- rate limit memory store
+
+### Current gaps
+
+- public/admin inquiry list는 pagination 없이 전체 목록을 조회
+- process-local cache/rate limit은 task 간 공유되지 않음
+- cache invalidation과 search index consistency에 자동 test 없음
+- 검증된 p95/p99/throughput baseline 없음
+
+측정 없이 특정 응답시간이나 개선율을 주장하지 않습니다.
+
+## 9. Logging vs Privacy
+
+### Current design
+
+- requestId, raw일 수 있는 URL/query/userEmail/response summary, duration
+- 객체형 request body와 일부 외부 request header/body에만 key-name based masking
+- production JSON/WARN, development pretty/INFO
+- 500/process error Telegram alert
+
+### Current gaps
+
+- `isAuthenticated` debug log가 cookie/session ID preview를 포함
+- NaverPay code가 full query, payment ID/error object, client ID 일부를 log
+- HTTP response와 외부 provider response summary, 문자열/XML request는 key-name masker를 거치지 않음
+- 외부 non-2xx response는 production 기본 `WARN`에도 기록됨
+- key-name masker가 모든 PII를 식별하지 못함
+- runtime log retention/access policy가 저장소 밖
+
+로그는 debugging 편의가 아니라 최소 필요 데이터 원칙으로 재설계해야 합니다. 특히 인증/결제 identifier는 hash/tokenize 또는 제거를 우선합니다.
+
+## 10. Migration Reproducibility
+
+### Problem
+
+schema source, local generated SQL, Drizzle journal, production DB가 같은 history를 공유해야 안전한 deploy/rollback이 가능합니다.
+
+### Current state
+
+- `shared/schema.ts`와 Drizzle scripts 존재
+- local migrations/journal 존재
+- `.gitignore`가 `migrations/*`를 제외
+- workflow에 migration step 없음
+- CLI/custom runner TLS는 certificate identity 검증을 비활성화하며, CA가 정상 로드된 application connection보다 약함
+- application DB client도 CA 경로/파일이 없으면 경고 후 `rejectUnauthorized=false`로 fail-open
+
+### Consequence
+
+fresh clone이 migration history를 재현하지 못하고 운영 schema version도 저장소에서 확인할 수 없습니다. 또한 CA mount 오류가 배포 실패가 아니라 identity 검증 없는 연결로 이어질 수 있습니다. migration artifact 추적과 application/CLI 양쪽의 fail-closed TLS를 다음 DB 변경 전에 해결해야 합니다.
+
+## 11. Status Source Drift
+
+`shared/constants/order.ts`는 `purchase_confirmed`, `refunding`, `partial_refunded` 등 현재 상태를 포함하지만 `shared/schema.ts`의 legacy `orderStatusEnum` 배열은 뒤처져 있습니다. DB가 varchar라 runtime 저장은 가능하지만 validation/type/document가 서로 달라질 수 있습니다.
+
+단일 상태 graph와 transition test를 만들고 중복 배열을 제거하는 것이 권장됩니다.
+
+## 12. Query Parser Assumption in NaverPay Order APIs
+
+NaverPay product/additional-fee handler는 `product[0][id]`, `productId[0]`가 nested object/array로 파싱된다고 가정합니다. Express query parser를 extended로 명시하지 않아 실제 provider request에서 literal key로 남을 수 있습니다.
+
+Provider enable 전에 실제 query string integration test가 필요합니다. parser를 global 변경하면 다른 route와 prototype pollution/validation 영향도 함께 검토해야 합니다.
+
+## 13. NaverPay Guest Order Dead End
+
+`/naverpay-order/register`는 guest CART를 받아 Naver order page까지 보낼 수 있지만, `PAYMENT_COMPLETE` 처리에서 `merchantCustomCode1`이 `guest` 또는 비UUID이면 user FK 제약 때문에 즉시 반환합니다. 이 경우 내부 주문 생성, 재고 차감, 발주확인이 수행되지 않습니다. guest UI/등록을 막거나 별도 guest identity/order model을 완성하기 전에는 end-to-end 지원으로 표시하면 안 됩니다.
+
+## Historical Context
+
+2026-07-08 당시 발견·수정 이력은 다음 snapshot에 보존되어 있습니다.
+
+- [Quality Improvements 2026-07-08](./QUALITY_IMPROVEMENTS_2026-07-08.md)
+- [Release 2026-07-08](./RELEASE_2026-07-08.md)
+
+당시 운영 전제와 현재 환경은 같다고 가정하지 않습니다.
 
 ## Related Documents
 
-- [Architecture](./ARCHITECTURE.md) - 시스템 아키텍처
-- [DevOps](./DEVOPS.md) - CI/CD, Monitoring
-- [Main README](../README.md) - 프로젝트 개요
+- [Architecture](./ARCHITECTURE.md)
+- [DevOps](./DEVOPS.md)
+- [Backend Guide](../BACKEND_GUIDE.md)
+- [MEMORY](../MEMORY.md)
