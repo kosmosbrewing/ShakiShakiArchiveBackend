@@ -37,6 +37,27 @@ function parseStackTrace(stack?: string): string[] {
     .slice(0, 10); // 최대 10줄
 }
 
+// 로그에 남기면 안 되는 쿼리 파라미터 (정확 일치, 소문자 기준).
+// SENSITIVE_KEYS의 부분일치를 쓰면 zipCode/errorCode 등이 오탐 마스킹되므로 정확 일치로 한정.
+const REDACTED_QUERY_KEYS = new Set([
+  "code", // OAuth authorization code
+  "state", // OAuth CSRF state
+  "pg_token", // 카카오페이 승인 토큰
+  "access_token",
+  "refresh_token",
+  "token",
+]);
+
+function redactQuery(
+  query: Record<string, unknown>
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(query)) {
+    out[key] = REDACTED_QUERY_KEYS.has(key.toLowerCase()) ? "[REDACTED]" : value;
+  }
+  return out;
+}
+
 /**
  * 에러 컨텍스트 정보 수집
  */
@@ -58,7 +79,10 @@ function collectErrorContext(
       requestId: req.requestId,
       method: req.method,
       path: req.path,
-      query: Object.keys(req.query).length > 0 ? req.query : undefined,
+      query:
+        Object.keys(req.query).length > 0
+          ? redactQuery(req.query as Record<string, unknown>)
+          : undefined,
       ip: req.ip || req.socket.remoteAddress,
       userAgent: req.get("user-agent"),
     },

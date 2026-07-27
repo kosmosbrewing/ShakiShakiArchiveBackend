@@ -323,6 +323,7 @@ export interface IStorage {
   deleteExpiredVerifications(): Promise<void>;
   isEmailVerified(email: string, type: string): Promise<boolean>;
   clearEmailVerification(email: string, type: string): Promise<void>;
+  deleteUserSessions(userId: string, exceptSid?: string): Promise<number>;
 
   // Site Image operations (Main, Hero, Marquee, Journal)
   getSiteImages(type?: SiteImageType): Promise<SiteImage[]>;
@@ -2869,6 +2870,21 @@ export class DatabaseStorage implements IStorage {
           eq(emailVerifications.verified, true)
         )
       );
+  }
+
+  // 보안: 비밀번호 변경/재설정 시 해당 사용자의 다른 활성 세션을 무효화.
+  // connect-pg-simple 세션 테이블(sessions.sess JSON)에 userId가 top-level로 저장됨.
+  // exceptSid 지정 시 현재 세션은 유지(변경 주체가 로그아웃되지 않도록).
+  // 세션 테이블은 저사용이라 sess->>'userId' 순차 스캔 비용 무시 가능.
+  async deleteUserSessions(userId: string, exceptSid?: string): Promise<number> {
+    const params: unknown[] = [userId];
+    let query = `DELETE FROM sessions WHERE sess->>'userId' = $1`;
+    if (exceptSid) {
+      query += ` AND sid <> $2`;
+      params.push(exceptSid);
+    }
+    const result = await pool.query(query, params);
+    return result.rowCount ?? 0;
   }
 
   // ------------------------------------------------------------------

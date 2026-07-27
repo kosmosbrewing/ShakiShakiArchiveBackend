@@ -12,6 +12,7 @@ import {
   invalidateUserCache,
 } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/error.middleware";
+import { regenerateSession, saveSession } from "../utils/session";
 import { authRateLimiter, emailSendRateLimiter } from "../config/security";
 import {
   signupSchema,
@@ -47,24 +48,6 @@ const admin2FAVerifySchema = z.object({
   challengeId: z.string().uuid(),
   code: z.string().regex(/^(?:\d{4}|\d{6})$/),
 });
-
-function regenerateSession(req: Request): Promise<void> {
-  return new Promise((resolve, reject) => {
-    req.session.regenerate((err) => {
-      if (err) reject(err);
-      else resolve();
-    });
-  });
-}
-
-function saveSession(req: Request): Promise<void> {
-  return new Promise((resolve, reject) => {
-    req.session.save((err) => {
-      if (err) reject(err);
-      else resolve();
-    });
-  });
-}
 
 function generateAdmin2FACode(): string {
   return String(randomInt(0, 10000)).padStart(4, "0");
@@ -580,6 +563,19 @@ router.put("/password", authRateLimiter, isAuthenticated, asyncHandler(async (re
   const newPasswordHash = await hashPassword(newPassword);
   await storage.updateUser(userId, { passwordHash: newPasswordHash });
 
+  // 보안: 비밀번호 변경 시 다른 기기/세션 무효화 (현재 세션은 유지).
+  // 실패해도 비밀번호는 이미 변경됐으므로 로깅 후 계속 진행.
+  try {
+    const revoked = await storage.deleteUserSessions(userId, req.sessionID);
+    if (revoked > 0) {
+      logger.info(`Other sessions revoked after password change - userId=${userId}, count=${revoked}`);
+    }
+  } catch (err) {
+    logger.error(`Failed to revoke other sessions after password change - userId=${userId}`, {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
   // 보안 로깅: 비밀번호 변경 성공
   logger.info(`Password changed successfully - userId=${userId}, email=${maskEmail(user.email)}`);
 
@@ -622,6 +618,19 @@ router.post("/reset-password", authRateLimiter, asyncHandler(async (req, res) =>
   // 새 비밀번호 해시화 및 업데이트
   const newPasswordHash = await hashPassword(newPassword);
   await storage.updateUser(user.id, { passwordHash: newPasswordHash });
+
+  // 보안: 재설정은 비로그인 흐름이므로 해당 사용자의 모든 세션을 무효화
+  // (계정 탈취자의 기존 세션 제거). 실패해도 재설정은 완료됐으므로 계속 진행.
+  try {
+    const revoked = await storage.deleteUserSessions(user.id);
+    if (revoked > 0) {
+      logger.info(`All sessions revoked after password reset - userId=${user.id}, count=${revoked}`);
+    }
+  } catch (err) {
+    logger.error(`Failed to revoke sessions after password reset - userId=${user.id}`, {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 
   // 보안: 인증 상태 초기화 (재사용 방지)
   await storage.clearEmailVerification(email, "password_reset");

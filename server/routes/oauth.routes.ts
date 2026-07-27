@@ -6,6 +6,7 @@ import { timingSafeEqual } from "crypto";
 import { config } from "../config";
 import { storage } from "../storage";
 import { asyncHandler } from "../middleware/error.middleware";
+import { establishUserSession } from "../utils/session";
 import {
   generateStateToken,
   getAuthorizationUrl,
@@ -185,7 +186,8 @@ router.get("/naver/callback", asyncHandler(async (req, res) => {
       }
 
       // 기존 네이버 연동 사용자 → 바로 로그인
-      req.session.userId = user.id;
+      // 세션 고정 방어: 로그인 성공 시 세션 재발급
+      await establishUserSession(req, user.id);
       const callbackUrl = new URL(`${frontendUrl}/oauth/callback`);
       callbackUrl.searchParams.set("success", "true");
       callbackUrl.searchParams.set("returnUrl", returnUrl);
@@ -208,7 +210,8 @@ router.get("/naver/callback", asyncHandler(async (req, res) => {
           profileImageUrl: profile.profile_image || user.profileImageUrl,
         });
 
-        req.session.userId = user.id;
+        // 세션 고정 방어: 로그인 성공 시 세션 재발급
+        await establishUserSession(req, user.id);
         const callbackUrl = new URL(`${frontendUrl}/oauth/callback`);
         callbackUrl.searchParams.set("success", "true");
         callbackUrl.searchParams.set("returnUrl", returnUrl);
@@ -227,7 +230,8 @@ router.get("/naver/callback", asyncHandler(async (req, res) => {
       phone: profile.mobile,
     });
 
-    req.session.userId = newUser.id;
+    // 세션 고정 방어: 로그인 성공 시 세션 재발급
+    await establishUserSession(req, newUser.id);
     const callbackUrl = new URL(`${frontendUrl}/oauth/callback`);
     callbackUrl.searchParams.set("success", "true");
     callbackUrl.searchParams.set("returnUrl", returnUrl);
@@ -348,7 +352,8 @@ router.get("/kakao/callback", asyncHandler(async (req, res) => {
       }
 
       // 기존 카카오 연동 사용자 → 바로 로그인
-      req.session.userId = user.id;
+      // 세션 고정 방어: 로그인 성공 시 세션 재발급
+      await establishUserSession(req, user.id);
       const callbackUrl = new URL(`${frontendUrl}/oauth/callback`);
       callbackUrl.searchParams.set("success", "true");
       callbackUrl.searchParams.set("returnUrl", returnUrl);
@@ -371,7 +376,8 @@ router.get("/kakao/callback", asyncHandler(async (req, res) => {
           profileImageUrl: kakaoProfile?.profile_image_url || user.profileImageUrl,
         });
 
-        req.session.userId = user.id;
+        // 세션 고정 방어: 로그인 성공 시 세션 재발급
+        await establishUserSession(req, user.id);
         const callbackUrl = new URL(`${frontendUrl}/oauth/callback`);
         callbackUrl.searchParams.set("success", "true");
         callbackUrl.searchParams.set("returnUrl", returnUrl);
@@ -399,7 +405,8 @@ router.get("/kakao/callback", asyncHandler(async (req, res) => {
       phone: phone,
     });
 
-    req.session.userId = newUser.id;
+    // 세션 고정 방어: 로그인 성공 시 세션 재발급
+    await establishUserSession(req, newUser.id);
     const callbackUrl = new URL(`${frontendUrl}/oauth/callback`);
     callbackUrl.searchParams.set("success", "true");
     callbackUrl.searchParams.set("returnUrl", returnUrl);
